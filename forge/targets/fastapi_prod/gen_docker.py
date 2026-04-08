@@ -199,6 +199,7 @@ def _generate_requirements(ir: DomainIR, has_auth: bool) -> GeneratedFile:
         "pydantic>=2.0",
         "asyncpg>=0.29",
         "httpx>=0.27",
+        "pytest>=8.0",
     ]
     if has_auth:
         deps.extend([
