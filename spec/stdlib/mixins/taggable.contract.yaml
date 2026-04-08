@@ -1,0 +1,50 @@
+# =============================================================================
+# Mixin: Taggable
+# FQN: mixin/stdlib/taggable
+# =============================================================================
+#
+# Adds a free-form tags array to any entity. Tags are simple strings
+# used for classification, filtering, and discovery. They complement
+# structured fields by providing a flexible, user-defined taxonomy.
+#
+# Behavior:
+#   - Tags are an array of strings, defaulting to an empty array.
+#   - The backend should normalize tags (lowercase, trim whitespace)
+#     to prevent duplicates caused by casing differences.
+#   - Tags are searchable -- the API should support filtering by tag
+#     (e.g., ?tag=critical or ?tags=production,monitored).
+#
+# Common tag patterns:
+#   - Environment: ["production", "staging", "development"]
+#   - Ownership: ["team-platform", "team-security"]
+#   - Compliance: ["pci", "hipaa", "sox"]
+#   - Priority: ["critical", "high-visibility"]
+#
+# Usage in an entity contract:
+#   mixins:
+#     - mixin/stdlib/taggable
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Mixin
+
+metadata:
+  name: taggable
+  domain: stdlib
+  description: >
+    Adds a tags array for free-form classification. Tags are simple strings
+    that enable flexible filtering and discovery across entities.
+  tags:
+    - classification
+    - filtering
+    - stdlib
+
+spec:
+  fields:
+
+    tags:
+      type: array
+      items_type: string
+      description: "Classification tags for filtering and discovery. Free-form strings, normalized to lowercase."
+      default: []

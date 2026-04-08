@@ -1,0 +1,26 @@
+{
+  "name": "@specora/cli",
+  "version": "0.1.0",
+  "description": "Specora interactive REPL — Claude Code-style CLI",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "specora-repl": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.tsx",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "chalk": "^5.6.2",
+    "dotenv": "^17.4.1",
+    "ora": "^8.2.0",
+    "yaml": "^2.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

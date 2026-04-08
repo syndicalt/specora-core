@@ -1,0 +1,44 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: tags
+  domain: todo_list
+  description: CRUD API for Tags
+requires:
+- entity/todo_list/tag
+spec:
+  entity: entity/todo_list/tag
+  base_path: /Tags
+  endpoints:
+  - method: GET
+    path: /
+    summary: List all Tags
+    response:
+      status: 200
+      shape: list
+  - method: POST
+    path: /
+    summary: Create a new Tag
+    auto_fields:
+      id: uuid
+      created_at: now
+    response:
+      status: 201
+      shape: entity
+  - method: GET
+    path: /{id}
+    summary: Get a Tag by ID
+    response:
+      status: 200
+      shape: entity
+  - method: PATCH
+    path: /{id}
+    summary: Update a Tag
+    response:
+      status: 200
+      shape: entity
+  - method: DELETE
+    path: /{id}
+    summary: Delete a Tag
+    response:
+      status: 204

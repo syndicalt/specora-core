@@ -1,0 +1,54 @@
+# =============================================================================
+# Mixin: Commentable
+# FQN: mixin/stdlib/commentable
+# =============================================================================
+#
+# Adds a comments array to any entity, enabling threaded discussion
+# directly on the record. This is the standard pattern for work notes,
+# customer-visible comments, and internal annotations in ITSM and
+# operational contexts.
+#
+# Behavior:
+#   - Comments are stored as an array of objects on the entity.
+#   - Each comment object typically contains: body (text), author
+#     (user reference), created_at (timestamp), and optionally
+#     visibility (internal vs. customer-facing).
+#   - The exact structure of comment objects is defined by the
+#     route contract for the entity's comment sub-resource, not
+#     by this mixin. This mixin only declares the field exists.
+#   - Comments are append-only in most workflows -- edits and
+#     deletions are tracked via audit history.
+#
+# Why a mixin instead of a sub-entity:
+#   - For simple use cases, embedding comments directly on the record
+#     avoids an extra join/query. For high-volume comment streams,
+#     a dedicated comment entity with a reference back may be more
+#     appropriate. This mixin handles the common embedded case.
+#
+# Usage in an entity contract:
+#   mixins:
+#     - mixin/stdlib/commentable
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Mixin
+
+metadata:
+  name: commentable
+  domain: stdlib
+  description: >
+    Adds a comments array for threaded discussion on any record. Supports
+    work notes, customer-visible comments, and internal annotations.
+  tags:
+    - collaboration
+    - discussion
+    - stdlib
+
+spec:
+  fields:
+
+    comments:
+      type: array
+      items_type: object
+      description: "Discussion thread attached to this record. Each entry is a comment object with body, author, and timestamp."

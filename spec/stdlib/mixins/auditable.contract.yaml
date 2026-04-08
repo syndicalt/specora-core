@@ -1,0 +1,66 @@
+# =============================================================================
+# Mixin: Auditable
+# FQN: mixin/stdlib/auditable
+# =============================================================================
+#
+# Extends timestamped with user attribution -- who created and who last
+# updated the record. Together with timestamped, this provides the full
+# four-column audit trail (created_at, created_by, updated_at, updated_by)
+# that enterprise systems require.
+#
+# This mixin requires mixin/stdlib/timestamped. The compiler resolves
+# this dependency and expands timestamped fields first, then adds the
+# auditable fields on top.
+#
+# Behavior:
+#   - created_by is set once at record creation to the authenticated user.
+#   - updated_by is set at creation and refreshed on every update.
+#   - Both fields reference an entity (typically a user entity) so the
+#     backend can validate the reference and the frontend can render a
+#     display name.
+#
+# Usage in an entity contract:
+#   mixins:
+#     - mixin/stdlib/auditable
+#
+#   Note: You do NOT need to also list mixin/stdlib/timestamped -- the
+#   compiler follows the requires chain and includes it automatically.
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Mixin
+
+metadata:
+  name: auditable
+  domain: stdlib
+  description: >
+    Adds created_by and updated_by user attribution fields. Requires the
+    timestamped mixin, forming the standard four-column audit trail:
+    created_at, created_by, updated_at, updated_by.
+  tags:
+    - audit
+    - attribution
+    - stdlib
+
+requires:
+  - mixin/stdlib/timestamped
+
+spec:
+  fields:
+
+    created_by:
+      type: string
+      description: "The user who created this record. Set automatically from the authenticated session."
+      computed: "current_user"
+      immutable: true
+      references:
+        entity: user
+        display: name
+
+    updated_by:
+      type: string
+      description: "The user who last modified this record. Refreshed automatically on every mutation."
+      computed: "current_user"
+      references:
+        entity: user

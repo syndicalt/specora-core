@@ -1,0 +1,111 @@
+# =============================================================================
+# Specora Infra Meta-Schema
+# =============================================================================
+#
+# Validates contracts with kind: Infra
+#
+# An Infra contract defines infrastructure configuration: authentication,
+# deployment, database settings, graph schema, middleware, and component
+# frameworks. These contracts configure the runtime environment rather
+# than defining domain data.
+#
+# Infra contracts are intentionally flexible — the `config` section
+# is loosely typed because infrastructure concerns vary widely. The
+# `category` field provides enough structure for the compiler to
+# route infra contracts to the appropriate generators.
+#
+# Example FQN: infra/itsm/auth, infra/library/deployment
+#
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specora.dev/meta/infra"
+title: "Specora Infra Contract"
+description: "Meta-schema for Infra contracts — infrastructure and runtime configuration"
+
+type: object
+required: [apiVersion, kind, metadata, spec]
+additionalProperties: false
+
+properties:
+  apiVersion:
+    type: string
+    const: "specora.dev/v1"
+  kind:
+    type: string
+    const: "Infra"
+  metadata:
+    $ref: "https://specora.dev/meta/envelope#/properties/metadata"
+  requires:
+    $ref: "https://specora.dev/meta/envelope#/properties/requires"
+
+  spec:
+    type: object
+    required: [category]
+    additionalProperties: true
+    description: "The infra specification — category and category-specific configuration."
+    properties:
+
+      # ── Category ──────────────────────────────────────────────────────
+      category:
+        type: string
+        enum: [auth, deployment, database, graph, middleware, components, monitoring, search]
+        description: >
+          The infrastructure category. Determines which generator
+          and runtime module processes this contract.
+
+          auth        — Authentication strategy, RBAC, tokens, bootstrap users
+          deployment  — Docker, environment variables, port mappings
+          database    — PostgreSQL/Neo4j connection settings, migration strategy
+          graph       — Neo4j node labels, relationship types, sync rules
+          middleware  — Request pipeline (CORS, auth, logging, rate limiting)
+          components  — Frontend component framework and rendering rules
+          monitoring  — Health checks, telemetry, alerting rules
+          search      — Full-text search, semantic search, indexing strategy
+
+      # ── Config ────────────────────────────────────────────────────────
+      config:
+        type: object
+        additionalProperties: true
+        description: >
+          Category-specific configuration. The structure varies by
+          category. This is intentionally loosely typed — infra
+          concerns are too diverse for a single rigid schema.
+
+          The compiler validates that required keys for each category
+          are present, but allows additional keys for extensibility.
+
+      # ── Environment variables ─────────────────────────────────────────
+      env_vars:
+        type: object
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          properties:
+            default:
+              type: string
+              description: "Default value."
+            description:
+              type: string
+              description: "What this variable controls."
+            required:
+              type: boolean
+              default: false
+              description: "Whether this variable must be set."
+            secret:
+              type: boolean
+              default: false
+              description: "If true, this value should not be logged or displayed."
+        description: >
+          Environment variables this infra contract requires.
+          Used by the deployment generator to produce .env templates
+          and Docker Compose environment blocks.
+
+      # ── Bootstrap ─────────────────────────────────────────────────────
+      bootstrap:
+        type: object
+        additionalProperties: true
+        description: >
+          Data that should be seeded on first database creation.
+          Example: default admin user, default roles, default categories.
+          The runtime checks if the table is empty and seeds if needed.

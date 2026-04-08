@@ -1,0 +1,55 @@
+# =============================================================================
+# Entity: Author
+# Domain: Library
+# =============================================================================
+#
+# An author who writes books. The simplest entity in the library domain —
+# no state machine, no AI agents. Demonstrates basic entity definition
+# with fields, mixins, and a reference (books by this author are linked
+# via the book entity's author_id field).
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: author
+  domain: library
+  description: "A person who writes books in the library catalog"
+  tags: [catalog, person]
+
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+
+spec:
+  icon: pen-tool
+
+  fields:
+    name:
+      type: string
+      required: true
+      description: "Author's full name"
+      constraints:
+        maxLength: 300
+
+    bio:
+      type: text
+      description: "Short biography of the author"
+
+    website:
+      type: string
+      format: uri
+      description: "Author's personal or publisher website"
+
+    birth_year:
+      type: integer
+      description: "Year the author was born"
+
+    nationality:
+      type: string
+      description: "Author's nationality or country of origin"
+
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

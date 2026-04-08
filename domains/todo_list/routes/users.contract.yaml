@@ -1,0 +1,54 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: users
+  domain: todo_list
+  description: CRUD API for Users
+requires:
+- entity/todo_list/user
+- workflow/todo_list/user_lifecycle
+spec:
+  entity: entity/todo_list/user
+  base_path: /Users
+  endpoints:
+  - method: GET
+    path: /
+    summary: List all Users
+    response:
+      status: 200
+      shape: list
+  - method: POST
+    path: /
+    summary: Create a new User
+    auto_fields:
+      id: uuid
+      created_at: now
+    response:
+      status: 201
+      shape: entity
+  - method: GET
+    path: /{id}
+    summary: Get a User by ID
+    response:
+      status: 200
+      shape: entity
+  - method: PATCH
+    path: /{id}
+    summary: Update a User
+    response:
+      status: 200
+      shape: entity
+  - method: DELETE
+    path: /{id}
+    summary: Delete a User
+    response:
+      status: 204
+  - method: PUT
+    path: /{id}/state
+    summary: Transition User state
+    request_body:
+      required_fields:
+      - state
+    response:
+      status: 200
+      shape: entity

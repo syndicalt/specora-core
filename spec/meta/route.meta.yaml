@@ -1,0 +1,214 @@
+# =============================================================================
+# Specora Route Meta-Schema
+# =============================================================================
+#
+# Validates contracts with kind: Route
+#
+# A Route contract defines API behavior for a set of endpoints:
+# validation rules, auto-computed fields, side effects, response
+# shapes, and HATEOAS links. This replaces the ad-hoc "route
+# blueprint" YAML files from the reference implementation.
+#
+# Routes are bound to entities — each route contract manages the
+# API surface for one entity. The compiler validates that all
+# referenced fields and state machines exist.
+#
+# Generators use Route contracts to produce:
+#   - FastAPI route handlers
+#   - Request/response Pydantic models
+#   - OpenAPI specification entries
+#   - HATEOAS link structures
+#
+# Example FQN: route/itsm/incidents, route/library/books
+#
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specora.dev/meta/route"
+title: "Specora Route Contract"
+description: "Meta-schema for Route contracts — API endpoint behavior definitions"
+
+type: object
+required: [apiVersion, kind, metadata, spec]
+additionalProperties: false
+
+properties:
+  apiVersion:
+    type: string
+    const: "specora.dev/v1"
+  kind:
+    type: string
+    const: "Route"
+  metadata:
+    $ref: "https://specora.dev/meta/envelope#/properties/metadata"
+  requires:
+    $ref: "https://specora.dev/meta/envelope#/properties/requires"
+
+  spec:
+    type: object
+    required: [entity, endpoints]
+    additionalProperties: false
+    description: "The route specification — entity binding, endpoints, and global behaviors."
+    properties:
+
+      # ── Entity binding ────────────────────────────────────────────────
+      entity:
+        type: string
+        description: >
+          FQN of the entity this route manages.
+          Example: "entity/library/book"
+
+      # ── Base path ─────────────────────────────────────────────────────
+      base_path:
+        type: string
+        pattern: "^/"
+        description: >
+          Base URL path for all endpoints. If omitted, inferred from
+          entity name (e.g., entity "book" -> "/books").
+
+      # ── Endpoints ─────────────────────────────────────────────────────
+      endpoints:
+        type: array
+        items:
+          type: object
+          required: [method, path, summary]
+          additionalProperties: false
+          properties:
+            method:
+              type: string
+              enum: [GET, POST, PUT, PATCH, DELETE]
+              description: "HTTP method."
+            path:
+              type: string
+              description: >
+                URL path relative to base_path. Use {id} for record ID.
+                Examples: "/", "/{id}", "/{id}/state", "/{id}/comments"
+            summary:
+              type: string
+              description: "Human-readable endpoint summary for docs."
+
+            # ── Request ────────────────────────────────────
+            request_body:
+              type: object
+              additionalProperties: false
+              properties:
+                required_fields:
+                  type: array
+                  items:
+                    type: string
+                  description: "Fields that must be present in the request body."
+                optional_fields:
+                  type: array
+                  items:
+                    type: string
+                  description: "Fields that may be present in the request body."
+
+            # ── Validation ─────────────────────────────────
+            validation:
+              type: array
+              items:
+                type: object
+                required: [rule, on_fail]
+                additionalProperties: false
+                properties:
+                  rule:
+                    type: string
+                    description: "Human-readable validation rule."
+                  on_fail:
+                    type: object
+                    required: [status, error]
+                    additionalProperties: false
+                    properties:
+                      status:
+                        type: integer
+                        description: "HTTP status code on validation failure."
+                      error:
+                        type: string
+                        description: "Error code (snake_case)."
+                      message:
+                        type: string
+                        description: "Human-readable error message."
+              description: "Validation rules applied to the request."
+
+            # ── Auto-computed fields ───────────────────────
+            auto_fields:
+              type: object
+              additionalProperties:
+                type: string
+              description: >
+                Fields automatically computed on this endpoint.
+                Key is field name, value is computation expression.
+                Examples: { id: "uuid", number: "sequence(INC{:07d})", created_at: "now" }
+
+            # ── Side effects ───────────────────────────────
+            side_effects:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+                properties:
+                  name:
+                    type: string
+                    description: "Side effect name for documentation."
+                  trigger:
+                    type: string
+                    description: "When this side effect fires (e.g., 'after_save')."
+                  dispatch:
+                    type: string
+                    description: "Agent FQN to dispatch."
+                  emit_event:
+                    type: string
+                    description: "Event name to emit."
+                  graph_sync:
+                    type: string
+                    description: "Graph operation (create_node, update_node, delete_node)."
+              description: "Side effects triggered by this endpoint."
+
+            # ── Response ───────────────────────────────────
+            response:
+              type: object
+              additionalProperties: false
+              properties:
+                status:
+                  type: integer
+                  description: "HTTP status code for successful response."
+                shape:
+                  type: string
+                  description: "Response shape identifier (e.g., 'entity', 'list', 'message')."
+                body_example:
+                  type: object
+                  description: "Example response body for documentation."
+
+            # ── HATEOAS ────────────────────────────────────
+            hateoas:
+              type: object
+              additionalProperties: true
+              description: >
+                HATEOAS link definitions for this endpoint's response.
+                Keys are link relation names, values are URL templates.
+                Example: { self: "/books/{id}", collection: "/books" }
+
+      # ── Global behaviors ──────────────────────────────────────────────
+      global_behaviors:
+        type: object
+        additionalProperties: true
+        properties:
+          input_validation:
+            type: array
+            items:
+              type: string
+            description: "Global input validation rules (apply to all endpoints)."
+          response_format:
+            type: array
+            items:
+              type: string
+            description: "Global response format rules."
+          error_format:
+            type: array
+            items:
+              type: string
+            description: "Global error response format rules."
+        description: >
+          Behaviors that apply to all endpoints in this route set.
+          These are inherited by every endpoint and don't need to
+          be repeated per-endpoint.

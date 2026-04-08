@@ -1,0 +1,120 @@
+# =============================================================================
+# Specora Contract Envelope — Meta-Schema
+# =============================================================================
+#
+# This defines the structure common to EVERY Specora contract, regardless of
+# kind. All contracts must have: apiVersion, kind, metadata, and spec.
+#
+# The `spec` section is kind-specific — each kind has its own meta-schema
+# that extends this envelope with validation for the spec body.
+#
+# Contracts use the file extension `.contract.yaml` and are identified by
+# their Fully Qualified Name (FQN): `kind/domain/name`
+# Example: `entity/itsm/incident`, `workflow/library/book_lifecycle`
+#
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specora.dev/meta/envelope"
+title: "Specora Contract Envelope"
+description: >
+  The common structure for all Specora contracts. Every contract file must
+  contain apiVersion, kind, metadata, and spec at the top level. The
+  `requires` array declares explicit dependencies on other contracts,
+  enabling the compiler to build a dependency graph and resolve references.
+
+type: object
+required: [apiVersion, kind, metadata, spec]
+additionalProperties: false
+
+properties:
+
+  apiVersion:
+    type: string
+    const: "specora.dev/v1"
+    description: >
+      The contract language version. All v1 contracts use "specora.dev/v1".
+      This field enables future schema evolution without breaking existing
+      contracts — the compiler routes to the appropriate meta-schema based
+      on this version.
+
+  kind:
+    type: string
+    enum: [Entity, Workflow, Page, Route, Agent, Mixin, Infra]
+    description: >
+      The contract kind. Determines which meta-schema validates the `spec`
+      section and how the compiler processes this contract.
+
+      - Entity:   Data model (fields, references, mixins, state machine)
+      - Workflow:  State machine (states, transitions, guards, side effects)
+      - Page:      UI specification (route, views, actions, generation tier)
+      - Route:     API behavior (endpoints, validation, auto-fields, HATEOAS)
+      - Agent:     AI behavior (trigger, input, output, constraints)
+      - Mixin:     Reusable field group (composable into entities)
+      - Infra:     Infrastructure (auth, deployment, database, graph)
+
+  metadata:
+    type: object
+    required: [name, domain]
+    additionalProperties: false
+    description: >
+      Contract identity and classification. The combination of
+      kind + domain + name forms the Fully Qualified Name (FQN)
+      used everywhere: requires arrays, diff tracking, IR nodes, CLI.
+    properties:
+      name:
+        type: string
+        pattern: "^[a-z][a-z0-9_]*$"
+        description: >
+          The contract name. Must be lowercase with underscores.
+          Examples: "incident", "book_lifecycle", "timestamped"
+      domain:
+        type: string
+        pattern: "^[a-z][a-z0-9_]*$"
+        description: >
+          The domain namespace. Groups related contracts together.
+          Examples: "itsm", "library", "stdlib"
+          The stdlib domain is reserved for the standard library.
+      description:
+        type: string
+        description: >
+          Human-readable description of what this contract defines.
+          Used in documentation and by the Factory for context.
+      tags:
+        type: array
+        items:
+          type: string
+        description: >
+          Classification tags for filtering and discovery.
+          Examples: ["ticketing", "operational"], ["audit", "time"]
+      version:
+        type: string
+        description: >
+          Optional semantic version for the contract content.
+          Useful when contracts are published as packages.
+
+  requires:
+    type: array
+    items:
+      type: string
+      pattern: "^(entity|workflow|page|route|agent|mixin|infra)/[a-z][a-z0-9_/]*$"
+    description: >
+      Explicit dependencies on other contracts. Each entry is an FQN
+      (kind/domain/name). The compiler uses this to:
+      1. Build the dependency graph
+      2. Detect cycles
+      3. Determine compilation order (topological sort)
+      4. Validate that all referenced contracts exist
+
+      Examples:
+        - "entity/itsm/user"
+        - "mixin/stdlib/timestamped"
+        - "workflow/library/book_lifecycle"
+    default: []
+
+  spec:
+    type: object
+    description: >
+      The kind-specific contract body. The structure of this section
+      is defined by the meta-schema for the contract's kind.
+      See entity.meta.yaml, workflow.meta.yaml, etc.

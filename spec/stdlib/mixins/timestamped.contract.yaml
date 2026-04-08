@@ -1,0 +1,55 @@
+# =============================================================================
+# Mixin: Timestamped
+# FQN: mixin/stdlib/timestamped
+# =============================================================================
+#
+# Adds automatic creation and modification timestamps to any entity.
+#
+# This is the most fundamental mixin in the standard library. Nearly every
+# entity should include it. The two fields are fully computed -- no user
+# input is required or accepted.
+#
+# Behavior:
+#   - created_at is set once at record creation and never changes.
+#   - updated_at is set at creation and refreshed on every update.
+#
+# Usage in an entity contract:
+#   mixins:
+#     - mixin/stdlib/timestamped
+#
+# The compiler's mixin_expansion pass copies these fields into the entity.
+# If the entity already declares a field with the same name and compatible
+# type, the entity's definition takes precedence.
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Mixin
+
+metadata:
+  name: timestamped
+  domain: stdlib
+  description: >
+    Adds created_at and updated_at timestamps to any entity. Both fields
+    are auto-computed by the backend -- created_at is set once on insert,
+    updated_at is refreshed on every mutation.
+  tags:
+    - time
+    - audit
+    - stdlib
+
+spec:
+  fields:
+
+    created_at:
+      type: datetime
+      description: "Timestamp when the record was first created. Set automatically by the backend."
+      computed: "now"
+      immutable: true
+      required: true
+
+    updated_at:
+      type: datetime
+      description: "Timestamp of the most recent update. Refreshed automatically on every mutation."
+      computed: "now_on_update"
+      required: true

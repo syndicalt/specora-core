@@ -1,0 +1,112 @@
+# =============================================================================
+# Entity: Book
+# Domain: Library
+# =============================================================================
+#
+# The central entity of the library domain. A book in the catalog with:
+#   - Basic metadata (title, ISBN, published year)
+#   - A reference to its author (demonstrates cross-entity references)
+#   - A state machine for circulation (available, checked out, etc.)
+#   - Mixins for timestamps and identifiers
+#
+# This entity exercises most of the contract system's features:
+#   - Field types (string, integer, text, uuid, reference, enum)
+#   - Constraints (maxLength, required)
+#   - References (author_id -> entity/library/author)
+#   - State machine binding (workflow/library/book_lifecycle)
+#   - Mixins (timestamped, identifiable)
+#   - Number prefix (BOOK0000001)
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: book
+  domain: library
+  description: "A book in the library catalog"
+  tags: [catalog, circulation]
+
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/library/author
+  - workflow/library/book_lifecycle
+
+spec:
+  icon: book-open
+  number_prefix: BOOK
+
+  fields:
+    title:
+      type: string
+      required: true
+      description: "The book's title"
+      constraints:
+        maxLength: 500
+
+    isbn:
+      type: string
+      description: "International Standard Book Number (ISBN-10 or ISBN-13)"
+      constraints:
+        maxLength: 17
+
+    author_id:
+      type: string
+      description: "The author of this book"
+      references:
+        entity: entity/library/author
+        display: name
+        graph_edge: WRITTEN_BY
+        graph_direction: forward
+
+    published_year:
+      type: integer
+      description: "Year the book was published"
+
+    genre:
+      type: string
+      enum: [fiction, non_fiction, science, history, biography, technology, children, reference, other]
+      description: "Book genre/category"
+
+    summary:
+      type: text
+      description: "A brief summary or description of the book"
+
+    page_count:
+      type: integer
+      description: "Number of pages"
+
+    checked_out_to:
+      type: string
+      description: "Patron who currently has this book"
+      references:
+        entity: entity/library/patron
+        display: name
+        graph_edge: CHECKED_OUT_BY
+        graph_direction: forward
+
+    reserved_for:
+      type: string
+      description: "Patron who has reserved this book"
+      references:
+        entity: entity/library/patron
+        display: name
+
+    checked_out_at:
+      type: datetime
+      description: "When the book was checked out"
+
+    returned_at:
+      type: datetime
+      description: "When the book was last returned"
+
+    loss_reason:
+      type: text
+      description: "Reason the book was marked as lost"
+
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+
+  state_machine: workflow/library/book_lifecycle

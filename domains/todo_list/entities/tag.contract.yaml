@@ -1,0 +1,18 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: tag
+  domain: todo_list
+  description: A label used to categorize and organize tasks within lists.
+requires:
+- mixin/stdlib/timestamped
+- mixin/stdlib/identifiable
+spec:
+  fields:
+    name:
+      type: string
+      description: The name of the tag
+      required: true
+  mixins:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable

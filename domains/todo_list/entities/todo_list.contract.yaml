@@ -1,0 +1,35 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: todo_list
+  domain: todo_list
+  description: A collection of tasks belonging to a user
+requires:
+- mixin/stdlib/timestamped
+- mixin/stdlib/identifiable
+- entity/todo_list/user
+spec:
+  fields:
+    number:
+      type: integer
+      required: true
+      description: Unique sequential number for the TodoList
+    short_description:
+      type: string
+      required: true
+      description: Brief title or summary of the TodoList
+    description:
+      type: text
+      required: false
+      description: Detailed description of the TodoList
+    assigned_to:
+      type: uuid
+      required: true
+      description: The user this TodoList is assigned to
+      references:
+        entity: entity/todo_list/user
+        display: name
+        graph_edge: ASSIGNED_TO
+  mixins:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable

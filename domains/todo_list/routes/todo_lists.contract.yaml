@@ -1,0 +1,44 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: todo_lists
+  domain: todo_list
+  description: CRUD API for TodoLists
+requires:
+- entity/todo_list/todo_list
+spec:
+  entity: entity/todo_list/todo_list
+  base_path: /TodoLists
+  endpoints:
+  - method: GET
+    path: /
+    summary: List all TodoLists
+    response:
+      status: 200
+      shape: list
+  - method: POST
+    path: /
+    summary: Create a new TodoList
+    auto_fields:
+      id: uuid
+      created_at: now
+    response:
+      status: 201
+      shape: entity
+  - method: GET
+    path: /{id}
+    summary: Get a TodoList by ID
+    response:
+      status: 200
+      shape: entity
+  - method: PATCH
+    path: /{id}
+    summary: Update a TodoList
+    response:
+      status: 200
+      shape: entity
+  - method: DELETE
+    path: /{id}
+    summary: Delete a TodoList
+    response:
+      status: 204

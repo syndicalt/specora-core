@@ -1,0 +1,44 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: task_lifecycle
+  domain: task_manager
+  description: "Task lifecycle from backlog through completion"
+  tags: [lifecycle, core]
+
+requires: []
+
+spec:
+  initial: backlog
+  states:
+    backlog:
+      label: Backlog
+      category: open
+    todo:
+      label: To Do
+      category: open
+    in_progress:
+      label: In Progress
+      category: open
+    in_review:
+      label: In Review
+      category: hold
+    done:
+      label: Done
+      category: closed
+      terminal: true
+    cancelled:
+      label: Cancelled
+      category: closed
+      terminal: true
+  transitions:
+    backlog: [todo, cancelled]
+    todo: [in_progress, cancelled]
+    in_progress: [in_review, cancelled]
+    in_review: [in_progress, done]
+  guards:
+    "todo -> in_progress":
+      require_fields: [assignee_id]
+  side_effects:
+    "* -> done":
+      - set_field: {completed_at: "now"}

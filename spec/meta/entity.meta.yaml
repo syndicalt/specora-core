@@ -1,0 +1,227 @@
+# =============================================================================
+# Specora Entity Meta-Schema
+# =============================================================================
+#
+# Validates contracts with kind: Entity
+#
+# An Entity contract defines a data model: its fields, their types,
+# relationships to other entities, composable mixins, state machine
+# binding, AI integration hooks, and display metadata.
+#
+# Entities are the primary building blocks of a domain. They compile to:
+#   - Database tables (PostgreSQL DDL)
+#   - TypeScript interfaces (frontend types)
+#   - Pydantic models (backend validation)
+#   - Neo4j nodes + edges (graph relationships)
+#   - API CRUD endpoints (when paired with a Route contract)
+#
+# Example FQN: entity/itsm/incident, entity/library/book
+#
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specora.dev/meta/entity"
+title: "Specora Entity Contract"
+description: "Meta-schema for Entity contracts — data models with fields, references, and behaviors"
+
+type: object
+required: [apiVersion, kind, metadata, spec]
+additionalProperties: false
+
+properties:
+  apiVersion:
+    type: string
+    const: "specora.dev/v1"
+  kind:
+    type: string
+    const: "Entity"
+  metadata:
+    $ref: "https://specora.dev/meta/envelope#/properties/metadata"
+  requires:
+    $ref: "https://specora.dev/meta/envelope#/properties/requires"
+
+  spec:
+    type: object
+    required: [fields]
+    additionalProperties: false
+    description: "The entity specification — fields, mixins, state machine, and behaviors."
+    properties:
+
+      # ── Table override ────────────────────────────────────────────────
+      table:
+        type: string
+        pattern: "^[a-z][a-z0-9_]*$"
+        description: >
+          Override the database table name. If omitted, the compiler
+          infers it by pluralizing the entity name (e.g., "book" -> "books").
+
+      # ── Number prefix ─────────────────────────────────────────────────
+      number_prefix:
+        type: string
+        pattern: "^[A-Z]{2,6}$"
+        description: >
+          Prefix for human-readable sequential IDs.
+          Examples: "INC" for INC0000001, "BOOK" for BOOK0000001.
+          If present, the entity gets an auto-generated `number` field.
+
+      # ── Icon ──────────────────────────────────────────────────────────
+      icon:
+        type: string
+        description: >
+          Lucide icon name for UI display.
+          Examples: "alert-triangle", "book", "user"
+
+      # ── Fields ────────────────────────────────────────────────────────
+      fields:
+        type: object
+        description: >
+          Map of field name to field definition. Field names must be
+          snake_case. Each field defines its type, constraints, and
+          optional reference to another entity.
+        additionalProperties:
+          type: object
+          required: [type]
+          additionalProperties: false
+          properties:
+            type:
+              type: string
+              enum: [string, integer, number, boolean, text, array, object, datetime, date, uuid, email]
+              description: >
+                The field's data type. Normalized types that map to
+                language-specific types in each generator target:
+                  string   -> str / string / TEXT
+                  integer  -> int / number / INTEGER
+                  number   -> float / number / NUMERIC
+                  boolean  -> bool / boolean / BOOLEAN
+                  text     -> str / string / TEXT (long content)
+                  array    -> list / Array / JSONB
+                  object   -> dict / Record / JSONB
+                  datetime -> datetime / string / TIMESTAMPTZ
+                  date     -> date / string / DATE
+                  uuid     -> str / string / UUID
+                  email    -> str / string / TEXT (with email validation)
+            description:
+              type: string
+              description: "Human-readable field description. Used in docs and JSDoc."
+            required:
+              type: boolean
+              default: false
+              description: "Whether this field is required on creation."
+            immutable:
+              type: boolean
+              default: false
+              description: "If true, field cannot be changed after creation."
+            default:
+              description: "Default value if not provided."
+            format:
+              type: string
+              description: "Additional format hint (e.g., 'uri', 'hostname')."
+            enum:
+              type: array
+              items: {}
+              description: "Allowed values. Type is inferred from items."
+            items_type:
+              type: string
+              description: "For array fields, the type of items in the array."
+            computed:
+              type: string
+              description: >
+                Auto-computed value expression. Recognized expressions:
+                  "now"            -> current UTC timestamp
+                  "now_on_update"  -> updated on every write
+                  "current_user"   -> authenticated user ID
+                  "sequence(FMT)"  -> sequential number with format
+                  "agent.NAME"     -> computed by an AI agent
+            constraints:
+              type: object
+              description: "Validation constraints."
+              additionalProperties: false
+              properties:
+                min:
+                  type: number
+                  description: "Minimum value (for numbers) or minimum length (for strings)."
+                max:
+                  type: number
+                  description: "Maximum value (for numbers) or maximum length (for strings)."
+                maxLength:
+                  type: integer
+                  description: "Maximum string length."
+                minLength:
+                  type: integer
+                  description: "Minimum string length."
+                pattern:
+                  type: string
+                  description: "Regex pattern the value must match."
+            references:
+              type: object
+              description: >
+                Declares this field as a reference to another entity.
+                This single annotation drives:
+                  - Frontend: renders a search picker, displays the target's display_field
+                  - Database: treated as a foreign key
+                  - Graph: creates a Neo4j edge of the specified type
+              required: [entity]
+              additionalProperties: false
+              properties:
+                entity:
+                  type: string
+                  description: >
+                    FQN of the target entity contract.
+                    Example: "entity/itsm/user"
+                display:
+                  type: string
+                  description: >
+                    Field name on the target entity to display instead of the UUID.
+                    Example: "name" shows the user's name instead of their ID.
+                graph_edge:
+                  type: string
+                  pattern: "^[A-Z][A-Z0-9_]*$"
+                  description: >
+                    Neo4j relationship type. Must be UPPER_SNAKE_CASE.
+                    Example: "ASSIGNED_TO", "REPORTED_BY"
+                graph_direction:
+                  type: string
+                  enum: [forward, reverse]
+                  description: >
+                    Direction of the graph edge.
+                    forward: this entity -> target entity
+                    reverse: target entity -> this entity
+
+      # ── Mixins ────────────────────────────────────────────────────────
+      mixins:
+        type: array
+        items:
+          type: string
+        description: >
+          List of mixin contract FQNs to compose into this entity.
+          Mixin fields are merged into the entity's field set during
+          the mixin_expansion IR pass. Conflicts (same field name,
+          different type) are compilation errors.
+
+          Example: ["mixin/stdlib/timestamped", "mixin/stdlib/taggable"]
+
+      # ── State Machine ─────────────────────────────────────────────────
+      state_machine:
+        type: string
+        description: >
+          FQN of the Workflow contract that defines this entity's state machine.
+          The compiler binds the workflow to the entity during the
+          state_machine_binding IR pass. The entity gets a `state` field
+          with valid values from the workflow's states.
+
+          Example: "workflow/itsm/incident_lifecycle"
+
+      # ── AI Integration ────────────────────────────────────────────────
+      ai_integration:
+        type: object
+        description: >
+          Declares which AI agents fire on which lifecycle events.
+          These are references to Agent contracts. The compiler validates
+          that the referenced agents exist.
+        additionalProperties:
+          type: array
+          items:
+            type: string
+          description: >
+            Map of event name to list of agent FQNs.
+            Example: { on_create: ["agent/itsm/prioritizer", "agent/itsm/assigner"] }

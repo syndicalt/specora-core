@@ -1,0 +1,49 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: task
+  domain: todo_list
+  description: An individual to-do item with a title, description, due date, and status
+requires:
+- mixin/stdlib/timestamped
+- mixin/stdlib/identifiable
+- entity/todo_list/user
+- workflow/todo_list/task_lifecycle
+spec:
+  fields:
+    title:
+      type: string
+      required: true
+      description: Short description or title of the task
+    description:
+      type: text
+      required: false
+      description: Detailed description of the task
+    due_date:
+      type: date
+      required: false
+      description: The due date for completing the task
+    status:
+      type: string
+      required: true
+      enum:
+      - pending
+      - in_progress
+      - completed
+      description: The current status of the task
+    assigned_to:
+      type: uuid
+      required: false
+      description: The user assigned to the task
+      references:
+        entity: entity/todo_list/user
+        display: name
+        graph_edge: ASSIGNED_TO
+    number:
+      type: integer
+      required: false
+      description: A numerical identifier or order for the task
+  mixins:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  state_machine: workflow/todo_list/task_lifecycle

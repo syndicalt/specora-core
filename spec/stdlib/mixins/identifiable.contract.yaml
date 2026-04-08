@@ -1,0 +1,58 @@
+# =============================================================================
+# Mixin: Identifiable
+# FQN: mixin/stdlib/identifiable
+# =============================================================================
+#
+# Provides the standard identity fields for any entity: a UUID primary
+# key and a human-readable sequential number.
+#
+# Behavior:
+#   - id is a UUID v4, generated automatically by the backend on
+#     record creation. It is the primary key and never changes.
+#   - number is a human-readable sequential identifier (e.g., INC-0001,
+#     CHG-0042, SRV-0007). The prefix and format are defined by the
+#     entity contract or its route blueprint, not by this mixin.
+#   - Both fields are immutable -- once set at creation, they cannot
+#     be modified by any update operation.
+#
+# Why both id and number:
+#   - id is the stable, globally unique key used in APIs, references,
+#     and graph edges. It never changes and never collides.
+#   - number is the human-friendly identifier used in conversation,
+#     search, ticketing workflows, and audit logs. It is scoped to
+#     the entity type and sequential within that scope.
+#
+# Usage in an entity contract:
+#   mixins:
+#     - mixin/stdlib/identifiable
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Mixin
+
+metadata:
+  name: identifiable
+  domain: stdlib
+  description: >
+    Provides the standard identity pair: a UUID primary key (id) and a
+    human-readable sequential number. Both are immutable and auto-generated.
+  tags:
+    - identity
+    - primary-key
+    - stdlib
+
+spec:
+  fields:
+
+    id:
+      type: uuid
+      description: "UUID v4 primary key. Generated automatically on creation. Globally unique and immutable."
+      computed: "uuid"
+      immutable: true
+      required: true
+
+    number:
+      type: string
+      description: "Human-readable sequential identifier (e.g., INC-0001). Format is defined by the entity's route blueprint."
+      immutable: true

@@ -1,0 +1,121 @@
+# =============================================================================
+# Specora Mixin Meta-Schema
+# =============================================================================
+#
+# Validates contracts with kind: Mixin
+#
+# A Mixin contract defines a reusable group of fields that can be
+# composed into Entity contracts. Mixins are the primary mechanism
+# for sharing common field patterns across entities without
+# copy-pasting field definitions.
+#
+# During compilation, the mixin_expansion IR pass copies mixin fields
+# into every entity that lists the mixin in its `mixins` array.
+# Field name conflicts (same name, different type) are compilation errors.
+#
+# The stdlib provides common mixins: timestamped, auditable, taggable,
+# commentable, soft_deletable, identifiable. Domains can define their
+# own mixins for domain-specific field groups.
+#
+# Example FQN: mixin/stdlib/timestamped, mixin/itsm/sla_tracked
+#
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specora.dev/meta/mixin"
+title: "Specora Mixin Contract"
+description: "Meta-schema for Mixin contracts — reusable field groups composable into entities"
+
+type: object
+required: [apiVersion, kind, metadata, spec]
+additionalProperties: false
+
+properties:
+  apiVersion:
+    type: string
+    const: "specora.dev/v1"
+  kind:
+    type: string
+    const: "Mixin"
+  metadata:
+    $ref: "https://specora.dev/meta/envelope#/properties/metadata"
+  requires:
+    $ref: "https://specora.dev/meta/envelope#/properties/requires"
+
+  spec:
+    type: object
+    required: [fields]
+    additionalProperties: false
+    description: "The mixin specification — a set of fields to compose into entities."
+    properties:
+
+      # ── Fields ────────────────────────────────────────────────────────
+      fields:
+        type: object
+        description: >
+          Map of field name to field definition. Uses the same field
+          schema as Entity contracts. When composed into an entity,
+          these fields are added to the entity's field set.
+
+          If a mixin field has the same name as an entity field and
+          the types match, the entity's definition takes precedence
+          (allowing the entity to override defaults). If types
+          conflict, it's a compilation error.
+        additionalProperties:
+          type: object
+          required: [type]
+          additionalProperties: false
+          properties:
+            type:
+              type: string
+              enum: [string, integer, number, boolean, text, array, object, datetime, date, uuid, email]
+            description:
+              type: string
+            required:
+              type: boolean
+              default: false
+            immutable:
+              type: boolean
+              default: false
+            default: {}
+            format:
+              type: string
+            enum:
+              type: array
+              items: {}
+            items_type:
+              type: string
+            computed:
+              type: string
+              description: >
+                Auto-computed value expression. Same syntax as Entity fields:
+                "now", "now_on_update", "current_user", "uuid"
+            constraints:
+              type: object
+              additionalProperties: false
+              properties:
+                min:
+                  type: number
+                max:
+                  type: number
+                maxLength:
+                  type: integer
+                minLength:
+                  type: integer
+                pattern:
+                  type: string
+            references:
+              type: object
+              required: [entity]
+              additionalProperties: false
+              properties:
+                entity:
+                  type: string
+                display:
+                  type: string
+                graph_edge:
+                  type: string
+                  pattern: "^[A-Z][A-Z0-9_]*$"
+                graph_direction:
+                  type: string
+                  enum: [forward, reverse]

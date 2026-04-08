@@ -1,0 +1,61 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: task
+  domain: task_manager
+  description: "An individual task with assignee, priority, and lifecycle state"
+  tags: [work, core]
+
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/task_manager/user
+  - entity/task_manager/project
+  - workflow/task_manager/task_lifecycle
+
+spec:
+  icon: check-square
+  number_prefix: TSK
+  fields:
+    title:
+      type: string
+      required: true
+      description: "Task title"
+      constraints:
+        maxLength: 300
+    description:
+      type: text
+      description: "Detailed task description (markdown supported)"
+    priority:
+      type: string
+      required: true
+      enum: [critical, high, medium, low]
+      description: "Task priority level"
+    assignee_id:
+      type: uuid
+      description: "User assigned to this task"
+      references:
+        entity: entity/task_manager/user
+        display: name
+        graph_edge: ASSIGNED_TO
+    project_id:
+      type: uuid
+      required: true
+      description: "Project this task belongs to"
+      references:
+        entity: entity/task_manager/project
+        display: name
+        graph_edge: BELONGS_TO
+    due_date:
+      type: date
+      description: "Task deadline"
+    estimated_hours:
+      type: number
+      description: "Estimated effort in hours"
+    tags:
+      type: array
+      description: "Labels for categorization"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/task_manager/task_lifecycle

@@ -1,0 +1,100 @@
+# =============================================================================
+# Workflow: Approval
+# FQN: workflow/stdlib/approval
+# =============================================================================
+#
+# A standard approval workflow for any entity that requires review and
+# sign-off before taking effect. Suitable for change requests, policy
+# documents, budget approvals, vendor onboarding, and any record that
+# moves through a draft -> submit -> approve/reject cycle.
+#
+# States:
+#   draft              -- Initial state. The record is being prepared.
+#   submitted          -- The record has been submitted for review.
+#   approved           -- The record has been approved. Closed state.
+#   rejected           -- The record has been rejected. Closed state.
+#   revision_requested -- The reviewer has requested changes. The
+#                         author must revise and resubmit.
+#
+# Flow:
+#   draft -> submitted -> approved
+#                      -> rejected -> draft (rework and resubmit)
+#                      -> revision_requested -> submitted (revise and resubmit)
+#
+# Guards:
+#   The transition from submitted to approved requires the approver
+#   and approval_notes fields to be populated. This ensures every
+#   approval has attribution and justification.
+#
+# Note: approved and rejected are categorized as "closed" but are
+# NOT marked terminal. The rejected -> draft transition allows rework
+# cycles. If your domain requires truly final states, override this
+# workflow or create a domain-specific variant.
+#
+# Usage:
+#   Bind this workflow to an entity contract:
+#     state_machine:
+#       workflow: workflow/stdlib/approval
+#       field: approval_status
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Workflow
+
+metadata:
+  name: approval
+  domain: stdlib
+  description: >
+    Standard approval workflow with draft, submit, approve, reject, and
+    revision request states. Includes a guard requiring approver and
+    approval_notes before approval.
+  tags:
+    - approval
+    - review
+    - governance
+    - stdlib
+
+spec:
+
+  initial: draft
+
+  states:
+    draft:
+      label: Draft
+      category: open
+      color: gray
+    submitted:
+      label: Submitted
+      category: open
+      color: blue
+    approved:
+      label: Approved
+      category: closed
+      color: green
+    rejected:
+      label: Rejected
+      category: closed
+      color: red
+    revision_requested:
+      label: Revision Requested
+      category: open
+      color: orange
+
+  transitions:
+    draft:
+      - submitted
+    submitted:
+      - approved
+      - rejected
+      - revision_requested
+    revision_requested:
+      - submitted
+    rejected:
+      - draft
+
+  guards:
+    "submitted -> approved":
+      require_fields:
+        - approver
+        - approval_notes

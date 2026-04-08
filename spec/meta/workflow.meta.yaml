@@ -1,0 +1,177 @@
+# =============================================================================
+# Specora Workflow Meta-Schema
+# =============================================================================
+#
+# Validates contracts with kind: Workflow
+#
+# A Workflow contract defines a state machine: states, transitions,
+# guards (conditions that must be true for a transition), and side
+# effects (actions triggered on transition).
+#
+# Workflows are first-class contracts, not embedded JSON Schema enums.
+# This makes state machines composable, validatable, and visualizable.
+#
+# The compiler:
+#   - Validates all states are reachable from initial
+#   - Detects dead-end states (unless marked terminal)
+#   - Validates guard references point to real fields
+#   - Binds workflows to entities via the state_machine_binding pass
+#
+# Example FQN: workflow/itsm/incident_lifecycle, workflow/stdlib/approval
+#
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specora.dev/meta/workflow"
+title: "Specora Workflow Contract"
+description: "Meta-schema for Workflow contracts — state machines with transitions, guards, and side effects"
+
+type: object
+required: [apiVersion, kind, metadata, spec]
+additionalProperties: false
+
+properties:
+  apiVersion:
+    type: string
+    const: "specora.dev/v1"
+  kind:
+    type: string
+    const: "Workflow"
+  metadata:
+    $ref: "https://specora.dev/meta/envelope#/properties/metadata"
+  requires:
+    $ref: "https://specora.dev/meta/envelope#/properties/requires"
+
+  spec:
+    type: object
+    required: [initial, states, transitions]
+    additionalProperties: false
+    description: "The workflow specification — states, transitions, and optional guards/side effects."
+    properties:
+
+      # ── Initial state ─────────────────────────────────────────────────
+      initial:
+        type: string
+        description: >
+          The starting state for new records. Must be one of the
+          declared states. When an entity with this workflow is
+          created, its state field is set to this value.
+
+      # ── States ────────────────────────────────────────────────────────
+      states:
+        type: object
+        description: >
+          Map of state name to state definition. State names must be
+          snake_case. Each state can optionally declare a label
+          (human-readable name), category (for grouping in UI), and
+          whether it's a terminal state (no outgoing transitions).
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          properties:
+            label:
+              type: string
+              description: "Human-readable label. Example: 'In Progress'"
+            category:
+              type: string
+              enum: [open, hold, closed]
+              description: >
+                State category for UI grouping and analytics:
+                  open   — active work states
+                  hold   — waiting/paused states
+                  closed — terminal/completed states
+            terminal:
+              type: boolean
+              default: false
+              description: >
+                If true, this is a terminal state — no transitions out.
+                Terminal states are exempt from the "all states must
+                have at least one outgoing transition" check.
+            color:
+              type: string
+              description: "Optional color hint for UI badges (e.g., 'green', 'red', 'blue')."
+
+      # ── Transitions ───────────────────────────────────────────────────
+      transitions:
+        type: object
+        description: >
+          Map of source state to array of valid target states.
+          Each entry defines which states can be reached from a given state.
+
+          Example:
+            new: [assigned, cancelled]
+            assigned: [in_progress, pending, cancelled]
+            in_progress: [resolved, pending, assigned]
+        additionalProperties:
+          type: array
+          items:
+            type: string
+          description: "List of valid target states from this source state."
+
+      # ── Guards ────────────────────────────────────────────────────────
+      guards:
+        type: object
+        description: >
+          Conditions that must be satisfied for a specific transition.
+          Keys use the format "source -> target" (arrow with spaces).
+
+          Example:
+            "in_progress -> resolved":
+              require_fields: [resolution_notes]
+            "assigned -> in_progress":
+              require_fields: [assigned_to]
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          properties:
+            require_fields:
+              type: array
+              items:
+                type: string
+              description: "Fields that must be non-null for this transition."
+            condition:
+              type: string
+              description: >
+                Free-text condition description. Used by the Factory
+                (LLM) to generate validation logic. The Forge can't
+                interpret arbitrary conditions mechanically.
+
+      # ── Side effects ──────────────────────────────────────────────────
+      side_effects:
+        type: object
+        description: >
+          Actions triggered on specific transitions. Keys use the same
+          "source -> target" format as guards, or "*" for any transition.
+
+          Example:
+            "* -> resolved":
+              - set_field: { resolved_at: "now" }
+              - dispatch: "agent/itsm/kb_suggester"
+            "* -> closed":
+              - set_field: { closed_at: "now" }
+        additionalProperties:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          description: "List of side effect actions for this transition."
+
+      # ── Type overrides ────────────────────────────────────────────────
+      type_overrides:
+        type: object
+        description: >
+          Per-subtype workflow overrides. Useful when an entity has
+          subtypes with different valid transitions (e.g., change
+          requests: standard vs emergency vs normal).
+
+          Each key is a subtype name, value is a partial workflow spec
+          that overrides the base transitions for that subtype.
+        additionalProperties:
+          type: object
+          properties:
+            transitions:
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: string

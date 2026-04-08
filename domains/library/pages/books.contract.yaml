@@ -1,0 +1,61 @@
+# =============================================================================
+# Page: Books
+# Domain: Library
+# =============================================================================
+#
+# The main books page — list, search, and manage books in the catalog.
+# This is a mechanical (tier 1) page, meaning the Forge can generate
+# it entirely from templates without LLM assistance.
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: books
+  domain: library
+  description: "Browse and manage the book catalog"
+  tags: [catalog, ui]
+
+requires:
+  - entity/library/book
+
+spec:
+  route: /books
+  title: Books
+  entity: entity/library/book
+  generation_tier: mechanical
+
+  data_sources:
+    - endpoint: /books
+      alias: books
+
+  display_rules:
+    identifier_field: number
+    internal_id_field: id
+
+  views:
+    - type: table
+      default: true
+      columns: [number, title, author_id, genre, state, published_year]
+      sortable: [title, published_year, state]
+      filterable: [genre, state]
+
+    - type: kanban
+      group_by: state
+      card_fields: [number, title, author_id, genre]
+
+    - type: card
+      card_fields: [title, author_id, genre, published_year, summary]
+
+  actions:
+    create:
+      form: auto
+      fields: [title, isbn, author_id, published_year, genre, summary, page_count]
+    bulk:
+      - change_state
+      - delete
+
+  filters:
+    sidebar: [state, genre, author_id]
+    quick: [available, checked_out, my_checkouts]

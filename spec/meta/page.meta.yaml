@@ -1,0 +1,209 @@
+# =============================================================================
+# Specora Page Meta-Schema
+# =============================================================================
+#
+# Validates contracts with kind: Page
+#
+# A Page contract defines a frontend page: what entity it displays,
+# what views are available, what actions users can take, and whether
+# the page can be mechanically generated (tier 1) or requires LLM
+# generation (tier 2).
+#
+# Pages are bound to entities — a page always shows data from one
+# primary entity. The compiler uses this binding to:
+#   - Validate that referenced fields exist on the entity
+#   - Generate type-safe page configs
+#   - Wire up API data sources automatically
+#
+# Example FQN: page/itsm/incidents, page/library/books
+#
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specora.dev/meta/page"
+title: "Specora Page Contract"
+description: "Meta-schema for Page contracts — UI specifications with views, actions, and generation tier"
+
+type: object
+required: [apiVersion, kind, metadata, spec]
+additionalProperties: false
+
+properties:
+  apiVersion:
+    type: string
+    const: "specora.dev/v1"
+  kind:
+    type: string
+    const: "Page"
+  metadata:
+    $ref: "https://specora.dev/meta/envelope#/properties/metadata"
+  requires:
+    $ref: "https://specora.dev/meta/envelope#/properties/requires"
+
+  spec:
+    type: object
+    required: [route, entity, generation_tier]
+    additionalProperties: false
+    description: "The page specification — route, entity binding, views, and actions."
+    properties:
+
+      # ── Route ─────────────────────────────────────────────────────────
+      route:
+        type: string
+        pattern: "^/"
+        description: >
+          The URL path for this page. Must start with /.
+          Examples: "/incidents", "/library/books", "/dashboard"
+
+      # ── Title ─────────────────────────────────────────────────────────
+      title:
+        type: string
+        description: "Page title displayed in the header and browser tab."
+
+      # ── Entity binding ────────────────────────────────────────────────
+      entity:
+        type: string
+        description: >
+          FQN of the entity this page displays.
+          Example: "entity/itsm/incident"
+
+      # ── Generation tier ───────────────────────────────────────────────
+      generation_tier:
+        type: string
+        enum: [mechanical, creative]
+        description: >
+          Determines how this page is generated:
+
+          mechanical (tier 1):
+            The Forge generates this page from templates. Standard
+            list/detail/form pages with table/kanban/card views.
+            Zero tokens, instant, deterministic.
+
+          creative (tier 2):
+            The Factory (LLM) generates this page by reading the
+            contract as a specification. Complex interactive pages
+            like dashboards, graph explorers, analytics views.
+            Requires LLM tokens, one-time generation.
+
+      # ── Data sources ──────────────────────────────────────────────────
+      data_sources:
+        type: array
+        items:
+          type: object
+          required: [endpoint]
+          additionalProperties: false
+          properties:
+            endpoint:
+              type: string
+              description: "API endpoint path. Example: /incidents"
+            alias:
+              type: string
+              description: "Variable name for this data in the page. Example: incidents"
+        description: "API endpoints this page fetches data from."
+
+      # ── Display rules ─────────────────────────────────────────────────
+      display_rules:
+        type: object
+        additionalProperties: false
+        properties:
+          identifier_field:
+            type: string
+            description: >
+              The field shown to users as the record identifier.
+              Example: "number" (shows INC0000001 instead of UUID).
+          internal_id_field:
+            type: string
+            default: "id"
+            description: "The field used for API calls and href construction."
+        description: "Rules for how records are identified and linked."
+
+      # ── Views ─────────────────────────────────────────────────────────
+      views:
+        type: array
+        items:
+          type: object
+          required: [type]
+          additionalProperties: true
+          properties:
+            type:
+              type: string
+              enum: [table, kanban, list, card, timeline, calendar, chart, custom]
+              description: "The view type."
+            default:
+              type: boolean
+              description: "If true, this view is shown by default."
+            columns:
+              type: array
+              items:
+                type: string
+              description: "Field names to display as columns (for table view)."
+            card_fields:
+              type: array
+              items:
+                type: string
+              description: "Field names to display on cards (for kanban/card view)."
+            group_by:
+              type: string
+              description: "Field to group by (for kanban view)."
+            sort_by:
+              type: string
+              description: "Default sort field."
+            sortable:
+              type: [boolean, array]
+              description: "True for all fields sortable, or array of sortable field names."
+            filterable:
+              type: [boolean, array]
+              description: "True for all fields filterable, or array of filterable field names."
+        description: >
+          Available views for this page. Users can switch between them.
+          Each view type has specific fields (columns for table,
+          card_fields for kanban, etc.).
+
+      # ── Sections ──────────────────────────────────────────────────────
+      sections:
+        type: array
+        items:
+          type: object
+          required: [name, type]
+          additionalProperties: true
+          properties:
+            name:
+              type: string
+            type:
+              type: string
+        description: >
+          Page sections for detail views. Each section defines a
+          group of fields or a specialized component.
+
+      # ── Actions ───────────────────────────────────────────────────────
+      actions:
+        type: object
+        additionalProperties: true
+        properties:
+          create:
+            type: object
+            additionalProperties: true
+            description: "Create action configuration (form, fields, redirect)."
+          bulk:
+            type: array
+            items:
+              type: string
+            description: "Bulk actions available when multiple items are selected."
+        description: "User actions available on this page."
+
+      # ── Filters ───────────────────────────────────────────────────────
+      filters:
+        type: object
+        additionalProperties: true
+        properties:
+          sidebar:
+            type: array
+            items:
+              type: string
+            description: "Fields available as sidebar filters."
+          quick:
+            type: array
+            items:
+              type: string
+            description: "Named quick-filter presets (e.g., 'my_incidents', 'unassigned')."
+        description: "Filter configuration for the page."

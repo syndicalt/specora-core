@@ -1,0 +1,174 @@
+# =============================================================================
+# Specora Agent Meta-Schema
+# =============================================================================
+#
+# Validates contracts with kind: Agent
+#
+# An Agent contract defines AI behavior: what event triggers it,
+# what input it receives, what output it produces, what constraints
+# it must follow, and what fallback to use when confidence is low.
+#
+# Agents are contract-bound AI — they can only modify fields declared
+# in their output, can only fire on declared events, and must respect
+# declared constraints. This prevents AI hallucination at the
+# specification level: the contract defines the box the AI operates in.
+#
+# The compiler validates that:
+#   - Trigger events correspond to Route side_effects
+#   - Input fields exist on the referenced entity
+#   - Output fields exist on the referenced entity
+#   - Referenced entities actually exist
+#
+# Example FQN: agent/itsm/prioritizer, agent/itsm/classifier
+#
+# =============================================================================
+
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://specora.dev/meta/agent"
+title: "Specora Agent Contract"
+description: "Meta-schema for Agent contracts — AI behavior definitions with constraints and fallbacks"
+
+type: object
+required: [apiVersion, kind, metadata, spec]
+additionalProperties: false
+
+properties:
+  apiVersion:
+    type: string
+    const: "specora.dev/v1"
+  kind:
+    type: string
+    const: "Agent"
+  metadata:
+    $ref: "https://specora.dev/meta/envelope#/properties/metadata"
+  requires:
+    $ref: "https://specora.dev/meta/envelope#/properties/requires"
+
+  spec:
+    type: object
+    required: [trigger, input, output]
+    additionalProperties: false
+    description: "The agent specification — trigger, input/output, constraints, and fallback."
+    properties:
+
+      # ── Trigger ───────────────────────────────────────────────────────
+      trigger:
+        type: string
+        description: >
+          The event that activates this agent. Must correspond to an
+          emit_event in a Route contract's side_effects.
+          Examples: "incident_created", "change_created", "interaction_created"
+
+      # ── Confidence threshold ──────────────────────────────────────────
+      threshold:
+        type: number
+        minimum: 0
+        maximum: 1
+        default: 0.7
+        description: >
+          Minimum confidence score (0.0 - 1.0) for the agent's output
+          to be automatically applied. Below this threshold, the result
+          is logged but not applied — requires human review.
+
+      # ── Input ─────────────────────────────────────────────────────────
+      input:
+        type: object
+        required: [entity]
+        additionalProperties: false
+        properties:
+          entity:
+            type: string
+            description: >
+              FQN of the entity this agent analyzes.
+              Example: "entity/itsm/incident"
+          fields:
+            type: array
+            items:
+              type: string
+            description: >
+              Specific fields from the entity that the agent needs.
+              If omitted, the agent receives the full entity record.
+          context:
+            type: array
+            items:
+              type: string
+            description: >
+              Additional context sources (e.g., "related_incidents",
+              "ci_graph_neighbors"). Interpreted by the agent runtime.
+        description: "What the agent receives as input."
+
+      # ── Output ────────────────────────────────────────────────────────
+      output:
+        type: object
+        required: [updates]
+        additionalProperties: false
+        properties:
+          updates:
+            type: object
+            description: >
+              Map of field name to expected output type/constraints.
+              The agent can ONLY modify these fields — anything else
+              is rejected by the runtime.
+
+              Example:
+                priority: { type: integer, range: [1, 5] }
+                assignment_group: { type: string }
+            additionalProperties:
+              type: object
+              additionalProperties: true
+        description: "What the agent produces as output."
+
+      # ── Approach ──────────────────────────────────────────────────────
+      approach:
+        type: string
+        description: >
+          Description of the algorithm or strategy the agent uses.
+          This is documentation for humans and the Factory — it
+          guides LLM implementation of the agent's logic.
+          Examples: "TF-IDF + keyword scoring", "Keyword severity + urgency/impact matrix"
+
+      # ── Constraints ───────────────────────────────────────────────────
+      constraints:
+        type: array
+        items:
+          type: string
+        description: >
+          Rules the agent MUST follow. These are the contract's
+          guardrails on AI behavior. Violations are bugs in the
+          agent implementation.
+
+          Examples:
+            - "Can boost priority by at most 1 level above matrix calculation"
+            - "Must provide confidence score 0.0-1.0"
+            - "Must not override explicit user-set priority"
+
+      # ── Fallback ──────────────────────────────────────────────────────
+      fallback:
+        type: object
+        additionalProperties: true
+        properties:
+          strategy:
+            type: string
+            description: >
+              What to do when the agent fails or confidence is below
+              threshold. Examples: "matrix_default", "no_change", "queue_for_human"
+          default_value:
+            description: "Default value to use in fallback."
+        description: "Fallback behavior when the agent can't produce a confident result."
+
+      # ── Feedback ──────────────────────────────────────────────────────
+      feedback:
+        type: object
+        additionalProperties: false
+        properties:
+          enabled:
+            type: boolean
+            default: true
+            description: "Whether human corrections are collected for this agent."
+          endpoint:
+            type: string
+            description: "API endpoint for submitting corrections."
+        description: >
+          Feedback loop configuration. When a human corrects an
+          agent's output, the correction is stored as training data
+          for future agent improvement.

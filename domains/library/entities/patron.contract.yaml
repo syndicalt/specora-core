@@ -1,0 +1,63 @@
+# =============================================================================
+# Entity: Patron
+# Domain: Library
+# =============================================================================
+#
+# A library patron (member) who can check out books. Demonstrates
+# entity definition with a simple lifecycle state machine and
+# the auditable mixin.
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: patron
+  domain: library
+  description: "A library member who borrows books"
+  tags: [membership, person]
+
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+
+spec:
+  icon: user
+  number_prefix: PAT
+
+  fields:
+    name:
+      type: string
+      required: true
+      description: "Patron's full name"
+      constraints:
+        maxLength: 300
+
+    email:
+      type: email
+      required: true
+      description: "Contact email address"
+
+    phone:
+      type: string
+      description: "Contact phone number"
+
+    membership_type:
+      type: string
+      enum: [standard, premium, student, senior]
+      default: standard
+      description: "Type of library membership"
+
+    active:
+      type: boolean
+      default: true
+      description: "Whether the patron's membership is active"
+
+    books_checked_out:
+      type: integer
+      default: 0
+      description: "Current number of books checked out"
+
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

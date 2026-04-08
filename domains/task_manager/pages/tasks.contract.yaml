@@ -1,0 +1,24 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: tasks
+  domain: task_manager
+  description: "Browse and manage tasks"
+
+requires:
+  - entity/task_manager/task
+
+spec:
+  route: /tasks
+  title: Tasks
+  entity: entity/task_manager/task
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /tasks
+      alias: tasks
+  views:
+    - type: table
+      default: true
+      columns: [title, priority, assignee_id, due_date, tags]
+    - type: kanban
+      card_fields: [title, priority, assignee_id]

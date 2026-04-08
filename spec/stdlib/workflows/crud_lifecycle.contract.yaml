@@ -1,0 +1,65 @@
+# =============================================================================
+# Workflow: CRUD Lifecycle
+# FQN: workflow/stdlib/crud_lifecycle
+# =============================================================================
+#
+# The simplest standard workflow -- a two-state active/archived lifecycle
+# suitable for reference data, configuration items, and any entity that
+# doesn't need a complex state machine.
+#
+# States:
+#   active   -- The record is live and in use. This is the initial state.
+#   archived -- The record is retired. It remains queryable for historical
+#               reference but should not appear in active selection lists.
+#
+# Transitions:
+#   active   -> archived   (retire/archive the record)
+#   archived -> active     (restore/reactivate the record)
+#
+# Note: The archived state is categorized as "closed" for UI grouping
+# but is NOT marked terminal, because records can be restored back to
+# active. A truly terminal state would have no outgoing transitions.
+#
+# This workflow is intentionally minimal. It provides just enough
+# structure to track whether a record is current or retired, without
+# imposing approval gates, hold states, or resolution tracking.
+#
+# Usage:
+#   Bind this workflow to an entity contract:
+#     state_machine:
+#       workflow: workflow/stdlib/crud_lifecycle
+#       field: status
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Workflow
+
+metadata:
+  name: crud_lifecycle
+  domain: stdlib
+  description: >
+    Simple active/archived lifecycle for reference data and configuration
+    entities. Records start active and can be archived or restored freely.
+  tags:
+    - lifecycle
+    - crud
+    - stdlib
+
+spec:
+
+  initial: active
+
+  states:
+    active:
+      label: Active
+      category: open
+    archived:
+      label: Archived
+      category: closed
+
+  transitions:
+    active:
+      - archived
+    archived:
+      - active

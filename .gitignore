@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# Specora generated artifacts
+runtime/backend/*
+runtime/frontend/*
+!runtime/backend/.gitkeep
+!runtime/frontend/.gitkeep
+
+# Forge state
+.forge/manifest.json
+.forge/diffs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Runtime state (not source code)
+.forge/
+.factory/
+runtime/
+
+# IDE / OS
+.claude/worktrees/
+*.db
+*.pyc
+__pycache__/

@@ -1,0 +1,118 @@
+# =============================================================================
+# Workflow: Ticket
+# FQN: workflow/stdlib/ticket
+# =============================================================================
+#
+# The standard ticket lifecycle for operational work items: incidents,
+# service requests, tasks, and any entity that follows the pattern of
+# triage -> assignment -> work -> resolution -> closure.
+#
+# States:
+#   new         -- Ticket has been created but not yet triaged or assigned.
+#   assigned    -- Ticket has been assigned to an individual or group.
+#   in_progress -- Active work is underway.
+#   on_hold     -- Work is paused, waiting on external input or dependency.
+#   resolved    -- The issue has been addressed. Awaiting confirmation.
+#   closed      -- Resolution confirmed. Terminal state.
+#   cancelled   -- Ticket was abandoned or duplicated. Terminal state.
+#
+# Key flows:
+#   Happy path:   new -> assigned -> in_progress -> resolved -> closed
+#   With hold:    in_progress -> on_hold -> in_progress -> resolved -> closed
+#   Reassignment: in_progress -> assigned -> in_progress (escalation/transfer)
+#   Reopen:       resolved -> in_progress (resolution rejected by requester)
+#   Cancel:       new|assigned|on_hold -> cancelled
+#
+# Guards:
+#   The transition from in_progress to resolved requires resolution_notes.
+#   This ensures every resolution has documentation for knowledge base
+#   extraction and audit purposes.
+#
+# Terminal states:
+#   closed and cancelled are terminal -- no transitions out. Once a ticket
+#   reaches either state, it is complete. If the issue recurs, a new
+#   ticket should be created (optionally linked to the original).
+#
+# Usage:
+#   Bind this workflow to an entity contract:
+#     state_machine:
+#       workflow: workflow/stdlib/ticket
+#       field: state
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Workflow
+
+metadata:
+  name: ticket
+  domain: stdlib
+  description: >
+    Standard ticket lifecycle for operational work items. Covers triage,
+    assignment, active work, hold, resolution, closure, and cancellation
+    with a guard requiring resolution_notes before resolving.
+  tags:
+    - ticketing
+    - operational
+    - itsm
+    - stdlib
+
+spec:
+
+  initial: new
+
+  states:
+    new:
+      label: New
+      category: open
+      color: gray
+    assigned:
+      label: Assigned
+      category: open
+      color: blue
+    in_progress:
+      label: In Progress
+      category: open
+      color: blue
+    on_hold:
+      label: On Hold
+      category: hold
+      color: orange
+    resolved:
+      label: Resolved
+      category: closed
+      color: green
+    closed:
+      label: Closed
+      category: closed
+      terminal: true
+      color: green
+    cancelled:
+      label: Cancelled
+      category: closed
+      terminal: true
+      color: red
+
+  transitions:
+    new:
+      - assigned
+      - cancelled
+    assigned:
+      - in_progress
+      - on_hold
+      - cancelled
+    in_progress:
+      - resolved
+      - on_hold
+      - assigned
+    on_hold:
+      - in_progress
+      - cancelled
+    resolved:
+      - closed
+      - in_progress
+
+  guards:
+    "in_progress -> resolved":
+      require_fields:
+        - resolution_notes

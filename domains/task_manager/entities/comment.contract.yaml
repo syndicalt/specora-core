@@ -1,0 +1,40 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: comment
+  domain: task_manager
+  description: "A comment on a task"
+  tags: [collaboration]
+
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/task_manager/user
+  - entity/task_manager/task
+
+spec:
+  icon: message-square
+  fields:
+    body:
+      type: text
+      required: true
+      description: "Comment content (markdown supported)"
+    author_id:
+      type: uuid
+      required: true
+      description: "User who wrote this comment"
+      references:
+        entity: entity/task_manager/user
+        display: name
+        graph_edge: AUTHORED_BY
+    task_id:
+      type: uuid
+      required: true
+      description: "Task this comment is on"
+      references:
+        entity: entity/task_manager/task
+        display: title
+        graph_edge: COMMENTED_ON
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

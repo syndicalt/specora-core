@@ -1,0 +1,89 @@
+# =============================================================================
+# Route: Books API
+# Domain: Library
+# =============================================================================
+#
+# API endpoints for the book entity. Defines CRUD operations plus
+# a state transition endpoint for the book lifecycle.
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: books
+  domain: library
+  description: "CRUD and lifecycle API for books"
+  tags: [api, catalog]
+
+requires:
+  - entity/library/book
+  - workflow/library/book_lifecycle
+
+spec:
+  entity: entity/library/book
+  base_path: /books
+
+  endpoints:
+    - method: GET
+      path: /
+      summary: List all books
+      response:
+        status: 200
+        shape: list
+
+    - method: POST
+      path: /
+      summary: Add a new book to the catalog
+      request_body:
+        required_fields: [title]
+        optional_fields: [isbn, author_id, published_year, genre, summary, page_count]
+      validation:
+        - rule: "title is required"
+          on_fail: { status: 422, error: validation_error }
+      auto_fields:
+        id: uuid
+        number: "sequence(BOOK{:07d})"
+        state: available
+        created_at: now
+      response:
+        status: 201
+        shape: entity
+
+    - method: GET
+      path: /{id}
+      summary: Get a book by ID
+      response:
+        status: 200
+        shape: entity
+      hateoas:
+        self: /books/{id}
+        collection: /books
+        author: /authors/{author_id}
+
+    - method: PATCH
+      path: /{id}
+      summary: Update a book's details
+      response:
+        status: 200
+        shape: entity
+
+    - method: DELETE
+      path: /{id}
+      summary: Remove a book from the catalog
+      response:
+        status: 204
+
+    - method: PUT
+      path: /{id}/state
+      summary: Transition book lifecycle state
+      request_body:
+        required_fields: [state]
+      validation:
+        - rule: "New state must be a valid transition from current state per book_lifecycle"
+          on_fail: { status: 409, error: invalid_transition }
+      side_effects:
+        - emit_event: book_state_changed
+      response:
+        status: 200
+        shape: entity

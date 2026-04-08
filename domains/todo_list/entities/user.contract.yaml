@@ -1,0 +1,24 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: user
+  domain: todo_list
+  description: Represents the users who create and manage to-do lists.
+requires:
+- mixin/stdlib/timestamped
+- mixin/stdlib/identifiable
+- workflow/todo_list/user_lifecycle
+spec:
+  fields:
+    name:
+      type: string
+      required: true
+      description: The full name of the user
+    email:
+      type: email
+      required: true
+      description: The email address of the user
+  mixins:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  state_machine: workflow/todo_list/user_lifecycle

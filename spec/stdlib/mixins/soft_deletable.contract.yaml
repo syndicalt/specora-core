@@ -1,0 +1,63 @@
+# =============================================================================
+# Mixin: Soft Deletable
+# FQN: mixin/stdlib/soft_deletable
+# =============================================================================
+#
+# Enables soft deletion for any entity. Instead of physically removing
+# rows, the record is marked with a deletion timestamp and the user who
+# performed the delete. The is_deleted boolean provides a fast filter
+# for queries that should exclude deleted records.
+#
+# Behavior:
+#   - When a DELETE request is received, the backend sets deleted_at to
+#     the current timestamp, deleted_by to the authenticated user, and
+#     is_deleted to true.
+#   - Standard list/get endpoints MUST filter out records where
+#     is_deleted is true, unless an explicit query parameter
+#     (e.g., ?include_deleted=true) is provided.
+#   - Soft-deleted records can be restored by clearing deleted_at,
+#     deleted_by, and setting is_deleted back to false.
+#
+# Why soft delete:
+#   - Audit trail preservation -- deleted records remain queryable for
+#     compliance and forensic analysis.
+#   - Undo support -- accidental deletions can be reversed.
+#   - Referential integrity -- foreign keys to soft-deleted records
+#     don't break; they just point to inactive records.
+#
+# Usage in an entity contract:
+#   mixins:
+#     - mixin/stdlib/soft_deletable
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Mixin
+
+metadata:
+  name: soft_deletable
+  domain: stdlib
+  description: >
+    Adds soft-delete support via deleted_at, deleted_by, and is_deleted
+    fields. Records are marked as deleted rather than physically removed,
+    preserving audit trails and enabling undo.
+  tags:
+    - deletion
+    - audit
+    - stdlib
+
+spec:
+  fields:
+
+    deleted_at:
+      type: datetime
+      description: "Timestamp when the record was soft-deleted. Null if the record is active."
+
+    deleted_by:
+      type: string
+      description: "The user who soft-deleted this record. Null if the record is active."
+
+    is_deleted:
+      type: boolean
+      description: "Fast-filter flag for soft deletion. True if the record has been soft-deleted."
+      default: false

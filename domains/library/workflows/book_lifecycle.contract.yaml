@@ -1,0 +1,80 @@
+# =============================================================================
+# Workflow: Book Lifecycle
+# Domain: Library
+# =============================================================================
+#
+# Defines the lifecycle of a book in the library. Books transition
+# between availability states as patrons check them out, reserve them,
+# return them, or report them lost.
+#
+# State diagram:
+#
+#   available ──> checked_out ──> available (returned)
+#       │              │
+#       └──> reserved ─┘
+#       │
+#       └──> lost
+#       │
+#       └──> withdrawn (terminal)
+#
+# Guards:
+#   - Checking out requires a patron (checked_out_to field)
+#   - Marking as lost requires a reason
+#
+# =============================================================================
+
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: book_lifecycle
+  domain: library
+  description: "Library book availability lifecycle — available, checked out, reserved, lost, withdrawn"
+  tags: [catalog, circulation]
+
+requires: []
+
+spec:
+  initial: available
+
+  states:
+    available:
+      label: Available
+      category: open
+      color: green
+    checked_out:
+      label: Checked Out
+      category: open
+      color: blue
+    reserved:
+      label: Reserved
+      category: hold
+      color: yellow
+    lost:
+      label: Lost
+      category: closed
+      color: red
+    withdrawn:
+      label: Withdrawn
+      category: closed
+      terminal: true
+      color: gray
+
+  transitions:
+    available: [checked_out, reserved, lost, withdrawn]
+    checked_out: [available, lost]
+    reserved: [checked_out, available]
+    lost: [available, withdrawn]
+
+  guards:
+    "available -> checked_out":
+      require_fields: [checked_out_to]
+    "available -> reserved":
+      require_fields: [reserved_for]
+    "checked_out -> lost":
+      require_fields: [loss_reason]
+
+  side_effects:
+    "checked_out -> available":
+      - set_field: { returned_at: "now" }
+    "available -> checked_out":
+      - set_field: { checked_out_at: "now" }
