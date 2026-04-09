@@ -95,7 +95,11 @@ services:
     depends_on:
       - app
 
+  # Frontend — behind a profile because npm install is slow in Docker on Windows.
+  # Run locally with: cd frontend && npm install && npm run dev
+  # Or include in Docker with: docker compose --profile frontend up
   frontend:
+    profiles: [frontend]
     build:
       context: ./frontend
       dockerfile: Dockerfile.frontend

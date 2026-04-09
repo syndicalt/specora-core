@@ -285,7 +285,15 @@ Every generated file includes a provenance header:
 | PostgreSQL | `postgres` | `CREATE TABLE` DDL with indexes |
 | FastAPI (production) | `fastapi-prod` | Config, models, repositories, routes, app, auth |
 | Docker | `docker` | Dockerfile, docker-compose.yml, .env.example, requirements.txt |
-| Tests | `tests` | Black-box pytest tests (stub -- Task 7) |
+| Tests | `tests` | Black-box pytest tests from route contracts |
+| Next.js | `nextjs` | Frontend pages, components, API client |
+| Migrations | `migrations` | Incremental SQL migration files |
+
+**Aliases:**
+
+| Alias | Expands to |
+|-------|-----------|
+| `prod` (default) | `fastapi-prod` + `postgres` + `docker` + `tests` + `nextjs` |
 
 ### Adding a New Generator
 

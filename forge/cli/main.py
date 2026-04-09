@@ -184,8 +184,8 @@ def compile(path: str, output_format: str) -> None:
 
 @forge.command()
 @click.argument("path", default="domains/", type=click.Path())
-@click.option("-t", "--target", multiple=True, default=["typescript", "fastapi", "postgres"],
-              help="Target generators to run")
+@click.option("-t", "--target", multiple=True, default=["prod"],
+              help="Target generators (prod = full stack, or specify individually)")
 @click.option("-o", "--output", default="runtime/", type=click.Path(),
               help="Output directory for generated files")
 def generate(path: str, target: tuple[str, ...], output: str) -> None:
@@ -233,6 +233,14 @@ def generate(path: str, target: tuple[str, ...], output: str) -> None:
             console.print(f"  [red]Error in {gen.name()}:[/red] {e}")
 
     console.print(f"\n[green]Generated {total_files} files[/green] in {output_path}")
+
+    # Auto-create .env from .env.example if it doesn't exist
+    env_example = output_path / ".env.example"
+    env_file = output_path / ".env"
+    if env_example.exists() and not env_file.exists():
+        import shutil
+        shutil.copy2(env_example, env_file)
+        console.print(f"[cyan]Created .env from .env.example[/cyan] — edit secrets before deploying")
 
 
 @forge.command()
@@ -513,14 +521,31 @@ def _get_generators(target_names: tuple[str, ...]) -> list:
         "nextjs": NextJSGenerator,
     }
 
-    generators = []
+    # Aliases — expand shorthand names into multiple generators
+    aliases = {
+        "prod": ["fastapi-prod", "postgres", "docker", "tests", "nextjs"],
+    }
+
+    # Expand aliases
+    expanded = []
     for name in target_names:
+        if name in aliases:
+            expanded.extend(aliases[name])
+        else:
+            expanded.append(name)
+
+    generators = []
+    seen = set()
+    for name in expanded:
+        if name in seen:
+            continue
+        seen.add(name)
         cls = registry.get(name)
         if cls:
             generators.append(cls())
         else:
             console.print(f"[yellow]Unknown target '{name}', skipping[/yellow]")
-            console.print(f"  Available: {', '.join(registry.keys())}")
+            console.print(f"  Available: {', '.join(list(registry.keys()) + list(aliases.keys()))}")
 
     return generators
 
