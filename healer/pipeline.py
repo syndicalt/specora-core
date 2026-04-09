@@ -24,11 +24,13 @@ class HealerPipeline:
         self,
         queue: HealerQueue,
         domains_root: Path = Path("domains"),
+        output_root: Path | None = None,
         diff_root: Path = Path(".forge/diffs"),
         log_path: Path = Path(".forge/healer/notifications.jsonl"),
     ) -> None:
         self.queue = queue
         self.domains_root = domains_root
+        self.output_root = output_root if output_root is not None else domains_root.parent
         self.diff_root = diff_root
         self.notifier = Notifier(log_path=log_path)
 
@@ -182,8 +184,8 @@ class HealerPipeline:
             compiler = Compiler(contract_root=self.domains_root)
             ir = compiler.compile()
 
-            # Determine output directory (sibling of domains/)
-            output_root = self.domains_root.parent
+            # Determine output directory
+            output_root = self.output_root
 
             # Generate
             generators = [

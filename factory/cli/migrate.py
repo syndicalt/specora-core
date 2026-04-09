@@ -71,7 +71,9 @@ Output each contract separated by `---` (YAML document separator).
     default="auto",
     help="Source format",
 )
-def factory_migrate(source: str, domain: str, fmt: str) -> None:
+@click.option("--input", "-i", "input_dir", default="domains/", type=click.Path(),
+              help="Base directory for contract output (default: domains/)")
+def factory_migrate(source: str, domain: str, fmt: str, input_dir: str) -> None:
     """Import external schemas into Specora contracts via LLM."""
     source_path = Path(source)
     content = source_path.read_text(encoding="utf-8")
@@ -149,7 +151,7 @@ def factory_migrate(source: str, domain: str, fmt: str) -> None:
 
     response_input = (
         console.input(
-            f"\n[bold]Write {len(valid_contracts)} contracts to domains/{domain}/? [Y/n] [/bold]"
+            f"\n[bold]Write {len(valid_contracts)} contracts to {Path(input_dir) / domain}/? [Y/n] [/bold]"
         )
         .strip()
         .lower()
@@ -159,7 +161,7 @@ def factory_migrate(source: str, domain: str, fmt: str) -> None:
         return
 
     # Write
-    domain_path = Path("domains") / domain
+    domain_path = Path(input_dir) / domain
     for rel_path, yaml_content in valid_contracts.items():
         file_path = domain_path / rel_path
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -167,7 +169,7 @@ def factory_migrate(source: str, domain: str, fmt: str) -> None:
         console.print(f"  [green]wrote[/green] {file_path}")
 
     console.print(
-        f"\n[bold green]Migrated {len(valid_contracts)} contracts to domains/{domain}/[/bold green]"
+        f"\n[bold green]Migrated {len(valid_contracts)} contracts to {Path(input_dir) / domain}/[/bold green]"
     )
 
 

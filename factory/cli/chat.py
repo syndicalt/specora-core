@@ -25,19 +25,21 @@ from engine.providers.base import Message, ToolDefinition
 
 console = Console()
 
+# Module-level contracts base directory — set by the CLI command
+_contracts_base = Path("domains")
+
 
 # ─── Domain Context ──────────────────────────────────────────────────
 
 def _discover_domains() -> list[str]:
-    domains_dir = Path("domains")
-    if not domains_dir.exists():
+    if not _contracts_base.exists():
         return []
-    return [d.name for d in domains_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
+    return [d.name for d in _contracts_base.iterdir() if d.is_dir() and not d.name.startswith(".")]
 
 
 def _build_domain_context(domain: str) -> str:
     from forge.parser.loader import load_all_contracts
-    domain_path = Path("domains") / domain
+    domain_path = _contracts_base / domain
     if not domain_path.exists():
         return f"Domain '{domain}' has no contracts yet."
     try:
@@ -64,7 +66,7 @@ def _build_domain_context(domain: str) -> str:
 def _load_contract_yaml(domain: str, kind: str, name: str) -> Optional[str]:
     kind_dirs = {"entity": "entities", "workflow": "workflows", "route": "routes", "page": "pages"}
     subdir = kind_dirs.get(kind, f"{kind}s")
-    path = Path("domains") / domain / subdir / f"{name}.contract.yaml"
+    path = _contracts_base / domain / subdir / f"{name}.contract.yaml"
     if path.exists():
         return path.read_text(encoding="utf-8")
     return None
@@ -195,7 +197,7 @@ def _propose_entity(params: dict, domain: str) -> str:
     # Write
     from forge.normalize import normalize_name
     safe_name = normalize_name(name)
-    path = Path("domains") / domain / "entities" / f"{safe_name}.contract.yaml"
+    path = _contracts_base / domain / "entities" / f"{safe_name}.contract.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml_str, encoding="utf-8")
     console.print(f"  [green]✓ Wrote {path}[/green]")
@@ -208,12 +210,12 @@ def _propose_entity(params: dict, domain: str) -> str:
     plural = safe_name + "s"
     field_names = list(params.get("fields", {}).keys())
 
-    route_path = Path("domains") / domain / "routes" / f"{plural}.contract.yaml"
+    route_path = _contracts_base / domain / "routes" / f"{plural}.contract.yaml"
     route_path.parent.mkdir(parents=True, exist_ok=True)
     route_path.write_text(emit_route(plural, domain, entity_fqn), encoding="utf-8")
     console.print(f"  [green]✓ Wrote {route_path}[/green]")
 
-    page_path = Path("domains") / domain / "pages" / f"{plural}.contract.yaml"
+    page_path = _contracts_base / domain / "pages" / f"{plural}.contract.yaml"
     page_path.parent.mkdir(parents=True, exist_ok=True)
     page_path.write_text(emit_page(plural, domain, entity_fqn, field_names), encoding="utf-8")
     console.print(f"  [green]✓ Wrote {page_path}[/green]")
@@ -234,7 +236,7 @@ def _propose_modification(params: dict, domain: str) -> str:
     kind, dom, name = parts
     kind_dirs = {"entity": "entities", "workflow": "workflows", "route": "routes", "page": "pages"}
     subdir = kind_dirs.get(kind, f"{kind}s")
-    path = Path("domains") / dom / subdir / f"{name}.contract.yaml"
+    path = _contracts_base / dom / subdir / f"{name}.contract.yaml"
 
     if not path.exists():
         return f"Contract not found: {path}"
@@ -268,7 +270,7 @@ def _validate_domain(domain: str) -> str:
     from forge.parser.loader import load_all_contracts
     from forge.parser.validator import validate_all
 
-    domain_path = Path("domains") / domain
+    domain_path = _contracts_base / domain
     contracts = load_all_contracts(domain_path)
     errors = validate_all(contracts)
     real_errors = [e for e in errors if e.severity == "error"]
@@ -287,8 +289,13 @@ def _validate_domain(domain: str) -> str:
 
 @click.command("chat")
 @click.option("--domain", "-d", default="", help="Domain to chat about")
-def factory_chat(domain: str) -> None:
+@click.option("--input", "-i", "input_dir", default="domains/", type=click.Path(),
+              help="Base directory for contracts (default: domains/)")
+def factory_chat(domain: str, input_dir: str) -> None:
     """Agentic domain conversation — discuss, propose, and build contracts."""
+    global _contracts_base
+    _contracts_base = Path(input_dir)
+
     if not domain:
         domains = _discover_domains()
         if len(domains) == 1:

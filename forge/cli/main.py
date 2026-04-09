@@ -369,12 +369,14 @@ def show(diff_id: str) -> None:
 
 @cli.command()
 @click.argument("domain")
-def init(domain: str) -> None:
+@click.option("--input", "-i", "input_dir", default="domains/", type=click.Path(),
+              help="Base directory for contracts (default: domains/)")
+def init(domain: str, input_dir: str) -> None:
     """Scaffold a new domain with starter contracts.
 
     Creates the directory structure and a starter entity contract.
     """
-    domain_path = Path("domains") / domain
+    domain_path = Path(input_dir) / domain
 
     if domain_path.exists():
         console.print(f"[red]Domain directory already exists:[/red] {domain_path}")
@@ -425,8 +427,8 @@ spec:
     console.print(f"  1. Edit entities in {domain_path}/entities/")
     console.print(f"  2. Add workflows in {domain_path}/workflows/")
     console.print(f"  3. Add pages in {domain_path}/pages/")
-    console.print(f"  4. Run: specora forge validate domains/{domain}")
-    console.print(f"  5. Run: specora forge generate domains/{domain}")
+    console.print(f"  4. Run: specora forge validate {domain_path}")
+    console.print(f"  5. Run: specora forge generate {domain_path}")
 
 
 # =============================================================================

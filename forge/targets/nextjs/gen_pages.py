@@ -30,7 +30,7 @@ def generate_pages(ir: DomainIR) -> list[GeneratedFile]:
 
 def _generate_list_page(page: PageIR, entity: EntityIR, route_name: str) -> GeneratedFile:
     cls = _to_pascal(entity.name)
-    has_kanban = any(v.get("type") == "kanban" for v in page.views)
+    has_kanban = any(v.get("type") == "kanban" for v in page.views) and entity.state_machine is not None
     has_table = any(v.get("type") == "table" for v in page.views)
 
     imports = [

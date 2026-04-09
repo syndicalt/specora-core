@@ -222,16 +222,11 @@ class TestPageEmitter:
         assert spec["generation_tier"] == "mechanical"
         assert "entity/helpdesk/task" in parsed["requires"]
 
-        # Views
+        # Views — only table by default (kanban requires a state machine)
         views = spec["views"]
-        assert len(views) >= 2  # table + kanban at minimum
+        assert len(views) >= 1
 
         # Table view: first 6 fields
         table_view = next(v for v in views if v["type"] == "table")
         assert len(table_view["columns"]) == 6
         assert table_view["columns"] == field_names[:6]
-
-        # Kanban view: first 4 fields
-        kanban_view = next(v for v in views if v["type"] == "kanban")
-        assert len(kanban_view["card_fields"]) == 4
-        assert kanban_view["card_fields"] == field_names[:4]

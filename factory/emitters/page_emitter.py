@@ -22,17 +22,12 @@ def emit_page(name: str, domain: str, entity_fqn: str, field_names: list[str]) -
         Valid YAML string matching the Page meta-schema envelope.
     """
     table_columns = field_names[:6]
-    card_fields = field_names[:4]
 
     views: list[dict] = [
         {
             "type": "table",
             "default": True,
             "columns": table_columns,
-        },
-        {
-            "type": "kanban",
-            "card_fields": card_fields,
         },
     ]
 
