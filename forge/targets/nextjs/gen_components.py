@@ -220,21 +220,64 @@ def _generate_data_table(entity: EntityIR, page: PageIR) -> GeneratedFile:
     table_view = next((v for v in page.views if v.get("type") == "table"), None)
     columns = table_view.get("columns", []) if table_view else [f.name for f in entity.fields[:6]]
 
+    # Identify reference fields that need display name resolution
+    ref_fields = []
+    for col in columns:
+        field = next((f for f in entity.fields if f.name == col), None)
+        if field and field.reference:
+            ref_entity = field.reference.target_entity.split("/")[-1]
+            display = field.reference.display_field or "name"
+            ref_fields.append((col, ref_entity, display))
+
+    # Build imports for referenced entity APIs
+    ref_api_imports = []
+    ref_state_hooks = []
+    ref_fetch_calls = []
+    for col, ref_entity, display in ref_fields:
+        ref_plural = ref_entity + "s"
+        if ref_plural not in [r[0] for r in ref_api_imports]:
+            ref_api_imports.append((ref_plural, ref_entity))
+            ref_state_hooks.append(f'  const [{ref_entity}Map, set{_to_pascal(ref_entity)}Map] = useState<Record<string, string>>({{}})')
+            ref_fetch_calls.append(
+                f'    {ref_plural}.list(1000, 0).then((d: any) => {{\n'
+                f'      const m: Record<string, string> = {{}};\n'
+                f'      (d.items || []).forEach((i: any) => {{ m[i.id] = i.{display} || i.id; }});\n'
+                f'      set{_to_pascal(ref_entity)}Map(m);\n'
+                f'    }});'
+            )
+
+    extra_imports = "\n".join(f'import {{ {plural} }} from "@/lib/api";' for plural, _ in ref_api_imports)
+    hooks_str = "\n".join(ref_state_hooks)
+    fetches_str = "\n".join(ref_fetch_calls)
+
+    use_effect_block = ""
+    if ref_fields:
+        use_effect_block = f"""
+  useEffect(() => {{
+{fetches_str}
+  }}, []);"""
+
     col_headers = "\n".join(f'            <TableHead>{col.replace("_", " ").title()}</TableHead>' for col in columns)
     col_cells = []
     for col in columns:
         field = next((f for f in entity.fields if f.name == col), None)
-        if field and field.enum_values:
+        ref_match = next(((rf_col, rf_ent, rf_disp) for rf_col, rf_ent, rf_disp in ref_fields if rf_col == col), None)
+        if ref_match:
+            _, ref_entity, _ = ref_match
+            col_cells.append(f'            <TableCell>{{{ref_entity}Map[item.{col}] || item.{col} || "\u2014"}}</TableCell>')
+        elif field and field.enum_values:
             col_cells.append(f'            <TableCell><Badge value={{String(item.{col} || "")}} /></TableCell>')
         else:
             col_cells.append(f'            <TableCell>{{String(item.{col} ?? "\u2014")}}</TableCell>')
     col_cells_str = "\n".join(col_cells)
 
     content = f'''"use client";
+import {{ useEffect, useState }} from "react";
 import {{ useRouter }} from "next/navigation";
 import {{ Table, TableHeader, TableBody, TableRow, TableHead, TableCell }} from "@/components/ui/table";
 import {{ Badge }} from "@/components/ui/badge";
 import {{ {page.name} }} from "@/lib/api";
+{extra_imports}
 
 interface {cls}TableProps {{
   items: any[];
@@ -244,6 +287,8 @@ interface {cls}TableProps {{
 
 export function {cls}Table({{ items, basePath, onRefresh }}: {cls}TableProps) {{
   const router = useRouter();
+{hooks_str}
+{use_effect_block}
 
   async function handleDelete(e: React.MouseEvent, id: string) {{
     e.stopPropagation();
@@ -412,12 +457,51 @@ export function {cls}Form({{ data, onSubmit, submitLabel = "Save" }}: {cls}FormP
 def _generate_detail_view(entity: EntityIR) -> GeneratedFile:
     cls = _to_pascal(entity.name)
 
+    # Identify reference fields
+    ref_fields = []
+    for f in entity.fields:
+        if f.reference:
+            ref_entity = f.reference.target_entity.split("/")[-1]
+            display = f.reference.display_field or "name"
+            ref_fields.append((f.name, ref_entity, display))
+
+    ref_api_imports = []
+    ref_state_hooks = []
+    ref_fetch_calls = []
+    for col, ref_entity, display in ref_fields:
+        ref_plural = ref_entity + "s"
+        if ref_plural not in [r[0] for r in ref_api_imports]:
+            ref_api_imports.append((ref_plural, ref_entity))
+            ref_state_hooks.append(f'  const [{ref_entity}Map, set{_to_pascal(ref_entity)}Map] = useState<Record<string, string>>({{}})')
+            ref_fetch_calls.append(
+                f'    {ref_plural}.list(1000, 0).then((d: any) => {{\n'
+                f'      const m: Record<string, string> = {{}};\n'
+                f'      (d.items || []).forEach((i: any) => {{ m[i.id] = i.{display} || i.id; }});\n'
+                f'      set{_to_pascal(ref_entity)}Map(m);\n'
+                f'    }});'
+            )
+
+    extra_imports = "\n".join(f'import {{ {plural} }} from "@/lib/api";' for plural, _ in ref_api_imports)
+    hooks_str = "\n".join(ref_state_hooks)
+    fetches_str = "\n".join(ref_fetch_calls)
+
+    use_effect_block = ""
+    if ref_fields:
+        use_effect_block = f"""
+  useEffect(() => {{
+{fetches_str}
+  }}, []);"""
+
     field_rows = []
     for f in entity.fields:
         if f.computed and f.name in ("id", "created_at", "updated_at"):
             continue
         label = f.name.replace("_", " ").title()
-        if f.enum_values:
+        ref_match = next(((rf_col, rf_ent, rf_disp) for rf_col, rf_ent, rf_disp in ref_fields if rf_col == f.name), None)
+        if ref_match:
+            _, ref_entity, _ = ref_match
+            field_rows.append(f'        <div><span className="text-gray-500 text-sm">{label}</span><div>{{{ref_entity}Map[data.{f.name}] || data.{f.name} || "\u2014"}}</div></div>')
+        elif f.enum_values:
             field_rows.append(f'        <div><span className="text-gray-500 text-sm">{label}</span><div><Badge value={{String(data.{f.name} || "\u2014")}} /></div></div>')
         else:
             field_rows.append(f'        <div><span className="text-gray-500 text-sm">{label}</span><div>{{String(data.{f.name} ?? "\u2014")}}</div></div>')
@@ -434,13 +518,18 @@ def _generate_detail_view(entity: EntityIR) -> GeneratedFile:
       )}'''
 
     content = f'''"use client";
+import {{ useEffect, useState }} from "react";
 import {{ Badge }} from "@/components/ui/badge";
+{extra_imports}
 
 interface {cls}DetailProps {{
   data: any;
 }}
 
 export function {cls}Detail({{ data }}: {cls}DetailProps) {{
+{hooks_str}
+{use_effect_block}
+
   return (
     <div>{state_widget}
       <div className="grid grid-cols-2 gap-4">
