@@ -226,7 +226,9 @@ def generate(path: str, target: tuple[str, ...], output: str) -> None:
             for f in files:
                 file_path = output_path / f.path
                 file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(f.content, encoding="utf-8")
+                # Shell scripts must use LF line endings for Linux containers
+                newline = "\n" if f.path.endswith(".sh") else None
+                file_path.write_text(f.content, encoding="utf-8", newline=newline)
                 console.print(f"  [green]wrote[/green] {f.path}")
                 total_files += 1
         except Exception as e:
@@ -523,7 +525,7 @@ def _get_generators(target_names: tuple[str, ...]) -> list:
 
     # Aliases — expand shorthand names into multiple generators
     aliases = {
-        "prod": ["fastapi-prod", "postgres", "docker", "tests", "nextjs"],
+        "prod": ["fastapi-prod", "postgres", "docker", "tests", "nextjs", "migrations"],
     }
 
     # Expand aliases

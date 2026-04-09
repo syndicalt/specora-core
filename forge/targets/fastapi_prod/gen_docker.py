@@ -9,6 +9,7 @@ def generate_docker(ir: DomainIR) -> list[GeneratedFile]:
     has_auth = any(i.category == "auth" for i in ir.infra)
     return [
         _generate_dockerfile(ir),
+        _generate_entrypoint(ir),
         _generate_healer_dockerfile(ir),
         _generate_compose(ir),
         _generate_env_example(ir, has_auth),
@@ -24,10 +25,107 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ backend/
 COPY database/ database/
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
 EXPOSE 8000
-CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["./entrypoint.sh"]
 """
     return GeneratedFile(path="Dockerfile", content=content, provenance=f"domain/{ir.domain}")
+
+
+def _generate_entrypoint(ir: DomainIR) -> GeneratedFile:
+    content = '''#!/bin/bash
+set -e
+
+# Wait for database to be ready
+echo "[specora] Waiting for database..."
+until python -c "
+import asyncio, asyncpg, os
+async def check():
+    conn = await asyncpg.connect(os.environ['DATABASE_URL'])
+    await conn.close()
+asyncio.run(check())
+" 2>/dev/null; do
+    sleep 1
+done
+echo "[specora] Database is ready."
+
+# Apply baseline schema if tables don't exist
+TABLE_COUNT=$(python -c "
+import asyncio, asyncpg, os
+async def count():
+    conn = await asyncpg.connect(os.environ['DATABASE_URL'])
+    result = await conn.fetchval(
+        \\"SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'\\"
+    )
+    await conn.close()
+    print(result)
+asyncio.run(count())
+")
+
+if [ "$TABLE_COUNT" = "0" ]; then
+    echo "[specora] Fresh database — applying baseline schema..."
+    python -c "
+import asyncio, asyncpg, os
+from pathlib import Path
+async def apply():
+    conn = await asyncpg.connect(os.environ['DATABASE_URL'])
+    schema = Path('database/schema.sql').read_text()
+    await conn.execute(schema)
+    # Create migrations tracking table
+    await conn.execute(\\"CREATE TABLE IF NOT EXISTS _specora_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ DEFAULT NOW())\\")
+    # Mark all existing migrations as applied (they're included in the baseline)
+    migrations_dir = Path('database/migrations')
+    if migrations_dir.exists():
+        for f in sorted(migrations_dir.glob('*.sql')):
+            await conn.execute(\\"INSERT INTO _specora_migrations (filename) VALUES (\\\\$1) ON CONFLICT DO NOTHING\\", f.name)
+    await conn.close()
+asyncio.run(apply())
+"
+    echo "[specora] Baseline schema applied."
+else
+    echo "[specora] Existing database — checking for pending migrations..."
+    # Create tracking table if it doesn't exist (upgrade from pre-migration installs)
+    python -c "
+import asyncio, asyncpg, os
+async def ensure():
+    conn = await asyncpg.connect(os.environ['DATABASE_URL'])
+    await conn.execute(\\"CREATE TABLE IF NOT EXISTS _specora_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ DEFAULT NOW())\\")
+    await conn.close()
+asyncio.run(ensure())
+"
+fi
+
+# Apply pending migrations
+python -c "
+import asyncio, asyncpg, os
+from pathlib import Path
+async def migrate():
+    conn = await asyncpg.connect(os.environ['DATABASE_URL'])
+    migrations_dir = Path('database/migrations')
+    if not migrations_dir.exists():
+        await conn.close()
+        return
+    applied = set(row['filename'] for row in await conn.fetch('SELECT filename FROM _specora_migrations'))
+    pending = sorted(f for f in migrations_dir.glob('*.sql') if f.name not in applied)
+    for migration in pending:
+        print(f'[specora] Applying migration: {migration.name}')
+        sql = migration.read_text()
+        await conn.execute(sql)
+        await conn.execute('INSERT INTO _specora_migrations (filename) VALUES (\\$1)', migration.name)
+    if not pending:
+        print('[specora] No pending migrations.')
+    else:
+        print(f'[specora] Applied {len(pending)} migration(s).')
+    await conn.close()
+asyncio.run(migrate())
+"
+
+# Start the app
+echo "[specora] Starting app..."
+exec uvicorn backend.app:app --host 0.0.0.0 --port 8000
+'''
+    return GeneratedFile(path="entrypoint.sh", content=content, provenance=f"domain/{ir.domain}")
 
 
 def _generate_healer_dockerfile(ir: DomainIR) -> GeneratedFile:
@@ -53,7 +151,6 @@ services:
       POSTGRES_USER: specora
       POSTGRES_PASSWORD: specora
     volumes:
-      - ./database/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql
       - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
