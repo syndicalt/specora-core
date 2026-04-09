@@ -52,8 +52,11 @@ SPLASH = """
 
 
 @click.command("new")
-def factory_new() -> None:
+@click.option("--input", "-i", "input_dir", default="domains/", type=click.Path(),
+              help="Base directory for contract output (default: domains/)")
+def factory_new(input_dir: str) -> None:
     """Bootstrap a new domain from a conversational interview."""
+    contracts_base = Path(input_dir)
 
     console.print(SPLASH)
 
@@ -203,7 +206,7 @@ def factory_new() -> None:
             return
 
         # Write atomically
-        domain_path = Path("domains") / domain
+        domain_path = contracts_base / domain
         for rel_path, content in final_contracts.items():
             file_path = domain_path / rel_path
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -218,8 +221,8 @@ def factory_new() -> None:
         )
         console.print()
         console.print("Next steps:")
-        console.print(f"  specora forge validate domains/{domain}")
-        console.print(f"  specora forge generate domains/{domain}")
+        console.print(f"  specora forge validate {domain_path}")
+        console.print(f"  specora forge generate {domain_path}")
 
 
 def _validate_emitted_contracts(

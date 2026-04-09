@@ -36,9 +36,11 @@ KIND_SUBDIRS = {
 @click.option("--domain", "-d", required=True, help="Target domain name")
 @click.option("--name", "-n", required=True, help="Contract name (snake_case)")
 @click.option("--entity", "-e", default="", help="Entity FQN (required for route/page)")
-def factory_add(kind: str, domain: str, name: str, entity: str) -> None:
+@click.option("--input", "-i", "input_dir", default="domains/", type=click.Path(),
+              help="Base directory for contracts (default: domains/)")
+def factory_add(kind: str, domain: str, name: str, entity: str, input_dir: str) -> None:
     """Add a single contract to an existing domain via LLM interview."""
-    domain_path = Path("domains") / domain
+    domain_path = Path(input_dir) / domain
     if not domain_path.exists():
         console.print(f"[red]Domain not found:[/red] {domain_path}")
         console.print(f"  Run 'specora init {domain}' or 'specora factory new' first.")
