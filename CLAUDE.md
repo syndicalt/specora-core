@@ -608,7 +608,17 @@ pipeline.approve_ticket(proposed[0].id)
 ### Deploy
 
 ```bash
+# Generate full stack (default: -t prod)
+spc forge generate domains/helpdesk -o /path/to/output
+
+# Start backend + database + healer (frontend runs locally)
 docker compose up -d --build
+
+# Run frontend locally
+cd frontend && npm install && npm run dev
+
+# Or include frontend in Docker (slow on Windows)
+docker compose --profile frontend up -d --build
 ```
 
 ---
