@@ -204,7 +204,7 @@ pip install "specora-core[all]"
 ### Development
 
 ```bash
-git clone https://github.com/specora/specora-core.git
+git clone https://github.com/syndicalt/specora-core.git
 cd specora-core
 pip install -e ".[all]"
 pytest
