@@ -188,6 +188,17 @@ properties:
                 Keys are link relation names, values are URL templates.
                 Example: { self: "/books/{id}", collection: "/books" }
 
+            # ── RBAC ──────────────────────────────────────
+            roles:
+              type: array
+              items:
+                type: string
+              description: >
+                Roles permitted to call this endpoint. When present,
+                the generator emits require_role(*roles) instead of
+                require_auth. Values should be a subset of the roles
+                defined in the domain's infra/auth contract.
+
       # ── Global behaviors ──────────────────────────────────────────────
       global_behaviors:
         type: object

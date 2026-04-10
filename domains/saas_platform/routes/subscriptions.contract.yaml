@@ -1,0 +1,46 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: subscriptions
+  domain: saas_platform
+  description: "CRUD API for subscriptions"
+  tags: [saas, enterprise]
+requires:
+  - entity/saas_platform/subscription
+  - workflow/saas_platform/subscription_lifecycle
+spec:
+  entity: entity/saas_platform/subscription
+  base_path: /subscriptions
+  endpoints:
+    - method: GET
+      path: /
+      summary: List subscriptions
+      roles: [admin, owner]
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create subscription
+      roles: [admin]
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get subscription
+      roles: [admin, owner]
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update subscription
+      roles: [admin]
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete subscription
+      roles: [admin]
+      response: {status: 204}
+    - method: PUT
+      path: /{id}/state
+      summary: Transition subscription state
+      roles: [admin]
+      request_body: {required_fields: [state]}
+      response: {status: 200, shape: entity}

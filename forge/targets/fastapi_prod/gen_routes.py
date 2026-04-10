@@ -78,7 +78,11 @@ def _generate_endpoint(endpoint, entity_name, cls, base_path, entity, auth_infra
     repo_dep = f"repo: {cls}Repository = Depends(get_{entity_name}_repo)"
     auth_dep = ""
     if auth_infra:
-        auth_dep = ", user = Depends(require_auth)"
+        if endpoint.roles:
+            roles_str = ", ".join(f'"{r}"' for r in endpoint.roles)
+            auth_dep = f", user = Depends(require_role({roles_str}))"
+        else:
+            auth_dep = ", user = Depends(require_auth)"
 
     if method == "get" and path == "/":
         lines.append(f'@router.get("/")')

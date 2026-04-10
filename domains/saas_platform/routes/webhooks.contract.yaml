@@ -1,0 +1,39 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: webhooks
+  domain: saas_platform
+  description: "CRUD API for webhooks"
+  tags: [saas, enterprise]
+requires:
+  - entity/saas_platform/webhook
+spec:
+  entity: entity/saas_platform/webhook
+  base_path: /webhooks
+  endpoints:
+    - method: GET
+      path: /
+      summary: List webhooks
+      roles: [admin, owner]
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create webhook
+      roles: [admin]
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get webhook
+      roles: [admin, owner]
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update webhook
+      roles: [admin]
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete webhook
+      roles: [admin]
+      response: {status: 204}

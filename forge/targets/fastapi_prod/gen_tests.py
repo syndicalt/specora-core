@@ -228,12 +228,22 @@ def _generate_entity_tests(
     lines.append("    return resp.json()")
     lines.append("")
 
+    # Collect all domain roles for computing unauth_role per endpoint
+    all_roles = auth_infra.config.get("roles", []) if auth_infra else []
+
     # Generate tests for each endpoint
     for ep in route.endpoints:
+        # Per-endpoint role override
+        ep_auth_role = auth_role
+        ep_unauth_role = unauth_role
+        if ep.roles and auth_infra:
+            ep_auth_role = ep.roles[0]
+            ep_unauth_role = next((r for r in all_roles if r not in ep.roles), None)
+
         lines.append("")
         lines.extend(
             _generate_endpoint_tests(
-                ep, entity_name, base_path, entity, auth_role, unauth_role, pipeline_marker,
+                ep, entity_name, base_path, entity, ep_auth_role, ep_unauth_role, pipeline_marker,
             )
         )
 

@@ -1,0 +1,39 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: usage_records
+  domain: saas_platform
+  description: "CRUD API for usage records"
+  tags: [saas, enterprise]
+requires:
+  - entity/saas_platform/usage_record
+spec:
+  entity: entity/saas_platform/usage_record
+  base_path: /usage-records
+  endpoints:
+    - method: GET
+      path: /
+      summary: List usage records
+      roles: [admin, owner]
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create usage record
+      roles: [admin]
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get usage record
+      roles: [admin, owner]
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update usage record
+      roles: [admin]
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete usage record
+      roles: [admin]
+      response: {status: 204}

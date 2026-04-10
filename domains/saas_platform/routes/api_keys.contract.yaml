@@ -1,0 +1,39 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: api_keys
+  domain: saas_platform
+  description: "CRUD API for API keys"
+  tags: [saas, enterprise]
+requires:
+  - entity/saas_platform/api_key
+spec:
+  entity: entity/saas_platform/api_key
+  base_path: /api-keys
+  endpoints:
+    - method: GET
+      path: /
+      summary: List API keys
+      roles: [admin, owner]
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create API key
+      roles: [admin]
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get API key
+      roles: [admin, owner]
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update API key
+      roles: [admin]
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete API key
+      roles: [admin]
+      response: {status: 204}

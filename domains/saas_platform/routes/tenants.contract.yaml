@@ -1,0 +1,46 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: tenants
+  domain: saas_platform
+  description: "CRUD API for tenants"
+  tags: [saas, enterprise]
+requires:
+  - entity/saas_platform/tenant
+  - workflow/saas_platform/tenant_lifecycle
+spec:
+  entity: entity/saas_platform/tenant
+  base_path: /tenants
+  endpoints:
+    - method: GET
+      path: /
+      summary: List tenants
+      roles: [admin]
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create tenant
+      roles: [admin]
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get tenant
+      roles: [admin, owner, member, viewer]
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update tenant
+      roles: [admin, owner]
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete tenant
+      roles: [admin]
+      response: {status: 204}
+    - method: PUT
+      path: /{id}/state
+      summary: Transition tenant state
+      roles: [admin]
+      request_body: {required_fields: [state]}
+      response: {status: 200, shape: entity}
