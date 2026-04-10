@@ -1,0 +1,29 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: customer
+  domain: helpdesk
+  description: A customer who submits support tickets
+requires:
+- mixin/stdlib/timestamped
+- mixin/stdlib/identifiable
+spec:
+  icon: user
+  fields:
+    name:
+      type: string
+      required: true
+    email:
+      type: email
+      required: true
+    company:
+      type: string
+    plan:
+      type: string
+      enum:
+      - free
+      - pro
+      - enterprise
+  mixins:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable

@@ -1,0 +1,24 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: knowledge_articles
+  domain: helpdesk
+  description: Browse and manage knowledge_articles
+requires:
+- entity/helpdesk/knowledge_article
+spec:
+  route: /knowledge_articles
+  title: Knowledge Articles
+  entity: entity/helpdesk/knowledge_article
+  generation_tier: mechanical
+  data_sources:
+  - endpoint: /knowledge_articles
+    alias: knowledge_articles
+  views:
+  - type: table
+    default: true
+    columns:
+    - title
+    - body
+    - category
+    - author

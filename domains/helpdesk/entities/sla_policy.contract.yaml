@@ -1,0 +1,40 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: sla_policy
+  domain: helpdesk
+  description: A service level agreement policy defining response and resolution time
+    targets by priority
+requires:
+- mixin/stdlib/timestamped
+- mixin/stdlib/identifiable
+spec:
+  fields:
+    name:
+      type: string
+      required: true
+      description: Name of the SLA policy
+    response_hours:
+      type: integer
+      required: true
+      description: Target hours to first response
+    resolution_hours:
+      type: integer
+      required: true
+      description: Target hours to resolution
+    priority:
+      type: string
+      required: true
+      description: Priority level this policy applies to
+      enum:
+      - critical
+      - high
+      - medium
+      - low
+    active:
+      type: boolean
+      required: true
+      description: Whether this SLA policy is currently active
+  mixins:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable

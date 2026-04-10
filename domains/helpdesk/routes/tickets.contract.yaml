@@ -1,0 +1,54 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: tickets
+  domain: helpdesk
+  description: CRUD API for tickets with state transitions
+requires:
+- entity/helpdesk/ticket
+- workflow/helpdesk/ticket_lifecycle
+spec:
+  entity: entity/helpdesk/ticket
+  base_path: /tickets
+  endpoints:
+  - method: GET
+    path: /
+    summary: List tickets
+    response:
+      status: 200
+      shape: list
+  - method: POST
+    path: /
+    summary: Create ticket
+    auto_fields:
+      id: uuid
+      created_at: now
+    response:
+      status: 201
+      shape: entity
+  - method: GET
+    path: /{id}
+    summary: Get ticket
+    response:
+      status: 200
+      shape: entity
+  - method: PATCH
+    path: /{id}
+    summary: Update ticket
+    response:
+      status: 200
+      shape: entity
+  - method: DELETE
+    path: /{id}
+    summary: Delete ticket
+    response:
+      status: 204
+  - method: PUT
+    path: /{id}/state
+    summary: Transition ticket state
+    request_body:
+      required_fields:
+      - state
+    response:
+      status: 200
+      shape: entity

@@ -1,0 +1,44 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: sla_policys
+  domain: helpdesk
+  description: CRUD API for sla_policys
+requires:
+- entity/helpdesk/sla_policy
+spec:
+  entity: entity/helpdesk/sla_policy
+  base_path: /sla_policys
+  endpoints:
+  - method: GET
+    path: /
+    summary: List all sla_policys
+    response:
+      status: 200
+      shape: list
+  - method: POST
+    path: /
+    summary: Create a new sla_policy
+    auto_fields:
+      id: uuid
+      created_at: now
+    response:
+      status: 201
+      shape: entity
+  - method: GET
+    path: /{id}
+    summary: Get a sla_policy by ID
+    response:
+      status: 200
+      shape: entity
+  - method: PATCH
+    path: /{id}
+    summary: Update a sla_policy
+    response:
+      status: 200
+      shape: entity
+  - method: DELETE
+    path: /{id}
+    summary: Delete a sla_policy
+    response:
+      status: 204

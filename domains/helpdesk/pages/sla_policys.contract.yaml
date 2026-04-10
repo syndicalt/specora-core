@@ -1,0 +1,25 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: sla_policys
+  domain: helpdesk
+  description: Browse and manage sla_policys
+requires:
+- entity/helpdesk/sla_policy
+spec:
+  route: /sla_policys
+  title: Sla Policys
+  entity: entity/helpdesk/sla_policy
+  generation_tier: mechanical
+  data_sources:
+  - endpoint: /sla_policys
+    alias: sla_policys
+  views:
+  - type: table
+    default: true
+    columns:
+    - name
+    - response_hours
+    - resolution_hours
+    - priority
+    - active

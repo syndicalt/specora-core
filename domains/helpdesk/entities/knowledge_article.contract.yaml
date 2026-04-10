@@ -1,0 +1,36 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: knowledge_article
+  domain: helpdesk
+  description: A knowledge base article written by an agent to help resolve common
+    issues
+requires:
+- mixin/stdlib/timestamped
+- mixin/stdlib/identifiable
+- entity/helpdesk/agent
+spec:
+  fields:
+    title:
+      type: string
+      required: true
+      description: Title of the knowledge article
+    body:
+      type: text
+      required: true
+      description: Full content of the article
+    category:
+      type: string
+      required: true
+      description: Category for organizing articles
+    author_id:
+      type: uuid
+      required: true
+      description: The agent who wrote the article
+      references:
+        entity: entity/helpdesk/agent
+        display: name
+        graph_edge: AUTHORED_BY
+  mixins:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable

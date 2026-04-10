@@ -1,0 +1,70 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: ticket
+  domain: helpdesk
+  description: A support ticket submitted by a customer
+requires:
+- mixin/stdlib/timestamped
+- mixin/stdlib/identifiable
+- entity/helpdesk/customer
+- entity/helpdesk/agent
+- workflow/helpdesk/ticket_lifecycle
+spec:
+  icon: ticket
+  number_prefix: TKT
+  fields:
+    subject:
+      type: string
+      required: true
+      description: Ticket subject line
+    body:
+      type: text
+      required: true
+      description: Detailed description of the issue
+    category:
+      type: string
+      required: true
+      description: Classification of the ticket type
+      enum:
+      - bug
+      - feature_request
+      - question
+    priority:
+      type: string
+      required: true
+      enum:
+      - critical
+      - high
+      - medium
+      - low
+    severity:
+      type: string
+      required: true
+      description: Severity level of the ticket for SLA tracking
+      enum:
+      - low
+      - medium
+      - high
+      - critical
+    customer_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/helpdesk/customer
+        display: name
+        graph_edge: SUBMITTED_BY
+    assigned_agent_id:
+      type: uuid
+      required: false
+      references:
+        entity: entity/helpdesk/agent
+        display: name
+        graph_edge: ASSIGNED_TO
+    resolution:
+      type: text
+      description: Resolution notes
+  mixins:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  state_machine: workflow/helpdesk/ticket_lifecycle
