@@ -275,6 +275,8 @@ See [CLAUDE.md](CLAUDE.md) for the full list.
 
 ---
 
-## License
+## License & Patents
 
 [Apache License 2.0](LICENSE) -- Copyright 2026 Nicholas Blanchard / Specora
+
+This software is protected by U.S. Patent Pending Application No. 75240207. See [NOTICE](NOTICE).
