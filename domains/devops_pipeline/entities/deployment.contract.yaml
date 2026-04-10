@@ -1,0 +1,82 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: deployment
+  domain: devops_pipeline
+  description: "A deployment of a service to an environment through the pipeline"
+  tags: [devops, deployment, cicd]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/devops_pipeline/service
+  - entity/devops_pipeline/environment
+  - entity/devops_pipeline/artifact
+  - workflow/devops_pipeline/deployment_pipeline
+spec:
+  icon: rocket
+  number_prefix: DPL
+  fields:
+    service_id:
+      type: uuid
+      required: true
+      description: "Service being deployed"
+      references:
+        entity: entity/devops_pipeline/service
+        display: name
+        graph_edge: DEPLOYS
+    environment_id:
+      type: uuid
+      required: true
+      description: "Target environment"
+      references:
+        entity: entity/devops_pipeline/environment
+        display: name
+        graph_edge: TARGETS
+    artifact_id:
+      type: uuid
+      required: true
+      description: "Artifact being deployed"
+      references:
+        entity: entity/devops_pipeline/artifact
+        display: image_tag
+        graph_edge: USES_ARTIFACT
+    version:
+      type: string
+      required: true
+      description: "Semantic version being deployed"
+    commit_sha:
+      type: string
+      required: true
+      description: "Git commit SHA"
+      constraints:
+        maxLength: 40
+    deployed_by:
+      type: string
+      required: true
+      description: "User or system that initiated the deployment"
+    approved_by:
+      type: string
+      description: "User who approved the deployment"
+    canary_percentage:
+      type: integer
+      description: "Percentage of traffic routed to canary"
+      constraints:
+        min: 0
+        max: 100
+    health_status:
+      type: string
+      description: "Current health check result"
+      enum: [healthy, degraded, unhealthy, unknown]
+    rollback_reason:
+      type: text
+      description: "Reason for rollback if rolled back"
+    started_at:
+      type: datetime
+      description: "When the deployment pipeline started"
+    completed_at:
+      type: datetime
+      description: "When the deployment finished, failed, or was rolled back"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/devops_pipeline/deployment_pipeline

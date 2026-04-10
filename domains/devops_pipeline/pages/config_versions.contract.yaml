@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: config_versions
+  domain: devops_pipeline
+  description: "Configuration version history"
+  tags: [devops, config]
+requires:
+  - entity/devops_pipeline/config_version
+spec:
+  route: /config-versions
+  title: Configuration Versions
+  entity: entity/devops_pipeline/config_version
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /config-versions
+      alias: config_versions
+  views:
+    - type: table
+      default: true
+      columns: [service_id, environment_id, version_number, config_hash, applied_by, is_active]

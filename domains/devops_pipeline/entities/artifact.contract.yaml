@@ -1,0 +1,53 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: artifact
+  domain: devops_pipeline
+  description: "A build artifact — container image, binary, or package"
+  tags: [devops, build, cicd]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/devops_pipeline/service
+spec:
+  icon: package
+  number_prefix: ART
+  fields:
+    service_id:
+      type: uuid
+      required: true
+      description: "Service this artifact was built from"
+      references:
+        entity: entity/devops_pipeline/service
+        display: name
+        graph_edge: BUILT_FOR
+    image_tag:
+      type: string
+      required: true
+      description: "Container image tag or version identifier"
+    commit_sha:
+      type: string
+      required: true
+      description: "Git commit SHA that produced this artifact"
+      constraints:
+        maxLength: 40
+    branch:
+      type: string
+      description: "Git branch name"
+    build_url:
+      type: string
+      description: "CI/CD build URL"
+    size_mb:
+      type: number
+      description: "Artifact size in megabytes"
+    checksum:
+      type: string
+      description: "SHA256 checksum for integrity verification"
+    build_status:
+      type: string
+      required: true
+      description: "Build result"
+      enum: [success, failure, cancelled]
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: environments
+  domain: devops_pipeline
+  description: "Environment management"
+  tags: [devops, infrastructure]
+requires:
+  - entity/devops_pipeline/environment
+spec:
+  route: /environments
+  title: Environments
+  entity: entity/devops_pipeline/environment
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /environments
+      alias: environments
+  views:
+    - type: table
+      default: true
+      columns: [name, tier, region, cluster_url, requires_approval, is_active]

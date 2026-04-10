@@ -1,0 +1,34 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: environments
+  domain: devops_pipeline
+  description: "CRUD API for environments"
+  tags: [devops, api]
+requires:
+  - entity/devops_pipeline/environment
+spec:
+  entity: entity/devops_pipeline/environment
+  base_path: /environments
+  endpoints:
+    - method: GET
+      path: /
+      summary: List all environments
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create a new environment
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get environment details
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update environment
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Remove an environment
+      response: {status: 204}

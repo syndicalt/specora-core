@@ -1,0 +1,46 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: service
+  domain: devops_pipeline
+  description: "A deployable microservice or application"
+  tags: [devops, service]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+spec:
+  icon: server
+  number_prefix: SVC
+  fields:
+    name:
+      type: string
+      required: true
+      description: "Service name"
+      constraints:
+        maxLength: 100
+    repository_url:
+      type: string
+      required: true
+      description: "Git repository URL"
+    language:
+      type: string
+      required: true
+      description: "Primary language or runtime"
+      enum: [python, typescript, go, rust, java, ruby, elixir, other]
+    team:
+      type: string
+      required: true
+      description: "Owning team"
+    health_check_url:
+      type: string
+      description: "Health check endpoint path"
+    description:
+      type: text
+      description: "What this service does"
+    is_active:
+      type: boolean
+      default: true
+      description: "Whether this service is actively deployed"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

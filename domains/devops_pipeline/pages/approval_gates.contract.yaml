@@ -1,0 +1,24 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: approval_gates
+  domain: devops_pipeline
+  description: "Approval gate decisions"
+  tags: [devops, approval]
+requires:
+  - entity/devops_pipeline/approval_gate
+spec:
+  route: /approval-gates
+  title: Approval Gates
+  entity: entity/devops_pipeline/approval_gate
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /approval-gates
+      alias: approval_gates
+  views:
+    - type: kanban
+      default: true
+      group_by: state
+      card_fields: [deployment_id, role, approver, comment]
+    - type: table
+      columns: [deployment_id, role, approver, decision, comment, decided_at]

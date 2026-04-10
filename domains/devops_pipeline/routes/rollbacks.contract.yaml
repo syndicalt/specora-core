@@ -1,0 +1,26 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: rollbacks
+  domain: devops_pipeline
+  description: "CRUD API for rollback records"
+  tags: [devops, api, rollback]
+requires:
+  - entity/devops_pipeline/rollback
+spec:
+  entity: entity/devops_pipeline/rollback
+  base_path: /rollbacks
+  endpoints:
+    - method: GET
+      path: /
+      summary: List all rollbacks
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Record a rollback
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get rollback details
+      response: {status: 200, shape: entity}

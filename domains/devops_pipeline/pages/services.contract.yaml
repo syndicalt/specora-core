@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: services
+  domain: devops_pipeline
+  description: "Service registry overview"
+  tags: [devops, services]
+requires:
+  - entity/devops_pipeline/service
+spec:
+  route: /services
+  title: Service Registry
+  entity: entity/devops_pipeline/service
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /services
+      alias: services
+  views:
+    - type: table
+      default: true
+      columns: [name, language, team, repository_url, health_check_url, is_active]

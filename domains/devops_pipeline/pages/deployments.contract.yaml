@@ -1,0 +1,24 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: deployments
+  domain: devops_pipeline
+  description: "Deployment pipeline dashboard — the hero page"
+  tags: [devops, dashboard, deployment]
+requires:
+  - entity/devops_pipeline/deployment
+spec:
+  route: /deployments
+  title: Deployment Pipeline
+  entity: entity/devops_pipeline/deployment
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /deployments
+      alias: deployments
+  views:
+    - type: kanban
+      default: true
+      group_by: state
+      card_fields: [service_id, version, environment_id, deployed_by, health_status]
+    - type: table
+      columns: [service_id, environment_id, version, commit_sha, deployed_by, health_status, canary_percentage, started_at]

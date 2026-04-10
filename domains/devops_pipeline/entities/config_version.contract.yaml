@@ -1,0 +1,54 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: config_version
+  domain: devops_pipeline
+  description: "A versioned configuration snapshot for a service in an environment"
+  tags: [devops, config, versioning]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/devops_pipeline/service
+  - entity/devops_pipeline/environment
+spec:
+  icon: settings
+  number_prefix: CFG
+  fields:
+    service_id:
+      type: uuid
+      required: true
+      description: "Service this config applies to"
+      references:
+        entity: entity/devops_pipeline/service
+        display: name
+        graph_edge: CONFIGURES
+    environment_id:
+      type: uuid
+      required: true
+      description: "Environment this config is for"
+      references:
+        entity: entity/devops_pipeline/environment
+        display: name
+        graph_edge: APPLIED_TO
+    version_number:
+      type: integer
+      required: true
+      description: "Incrementing config version"
+    config_hash:
+      type: string
+      required: true
+      description: "SHA256 hash of the configuration content"
+    change_summary:
+      type: text
+      description: "What changed in this version"
+    applied_by:
+      type: string
+      required: true
+      description: "User or system that applied this config"
+    is_active:
+      type: boolean
+      default: true
+      description: "Whether this is the currently active config version"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

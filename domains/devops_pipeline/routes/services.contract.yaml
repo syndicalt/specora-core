@@ -1,0 +1,34 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: services
+  domain: devops_pipeline
+  description: "CRUD API for services"
+  tags: [devops, api]
+requires:
+  - entity/devops_pipeline/service
+spec:
+  entity: entity/devops_pipeline/service
+  base_path: /services
+  endpoints:
+    - method: GET
+      path: /
+      summary: List all services
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Register a new service
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get service details
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update service
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Deregister a service
+      response: {status: 204}
