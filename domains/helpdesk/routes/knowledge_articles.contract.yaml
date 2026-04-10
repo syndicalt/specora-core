@@ -1,0 +1,44 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: knowledge_articles
+  domain: helpdesk
+  description: CRUD API for knowledge_articles
+requires:
+- entity/helpdesk/knowledge_article
+spec:
+  entity: entity/helpdesk/knowledge_article
+  base_path: /knowledge_articles
+  endpoints:
+  - method: GET
+    path: /
+    summary: List all knowledge_articles
+    response:
+      status: 200
+      shape: list
+  - method: POST
+    path: /
+    summary: Create a new knowledge_article
+    auto_fields:
+      id: uuid
+      created_at: now
+    response:
+      status: 201
+      shape: entity
+  - method: GET
+    path: /{id}
+    summary: Get a knowledge_article by ID
+    response:
+      status: 200
+      shape: entity
+  - method: PATCH
+    path: /{id}
+    summary: Update a knowledge_article
+    response:
+      status: 200
+      shape: entity
+  - method: DELETE
+    path: /{id}
+    summary: Delete a knowledge_article
+    response:
+      status: 204

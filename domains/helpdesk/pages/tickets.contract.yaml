@@ -1,0 +1,29 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: tickets
+  domain: helpdesk
+  description: Browse and manage support tickets
+requires:
+- entity/helpdesk/ticket
+spec:
+  route: /tickets
+  title: Support Tickets
+  entity: entity/helpdesk/ticket
+  generation_tier: mechanical
+  data_sources:
+  - endpoint: /tickets
+    alias: tickets
+  views:
+  - type: table
+    default: true
+    columns:
+    - subject
+    - priority
+    - customer_id
+    - assigned_agent_id
+  - type: kanban
+    card_fields:
+    - subject
+    - priority
+    - customer_id

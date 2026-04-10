@@ -1,0 +1,23 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: customers
+  domain: helpdesk
+  description: Browse and manage customers
+requires:
+- entity/helpdesk/customer
+spec:
+  route: /customers
+  title: Customers
+  entity: entity/helpdesk/customer
+  generation_tier: mechanical
+  data_sources:
+  - endpoint: /customers
+    alias: customers
+  views:
+  - type: table
+    default: true
+    columns:
+    - name
+    - email
+    - phone

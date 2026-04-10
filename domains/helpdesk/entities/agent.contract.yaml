@@ -1,0 +1,32 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: agent
+  domain: helpdesk
+  description: A support agent who handles tickets
+requires:
+- mixin/stdlib/timestamped
+- mixin/stdlib/identifiable
+spec:
+  icon: headphones
+  number_prefix: AGT
+  fields:
+    name:
+      type: string
+      required: true
+      description: Agent's full name
+    email:
+      type: email
+      required: true
+    department:
+      type: string
+      enum:
+      - billing
+      - technical
+      - general
+    active:
+      type: boolean
+      default: true
+  mixins:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable

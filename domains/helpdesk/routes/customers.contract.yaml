@@ -1,0 +1,44 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: customers
+  domain: helpdesk
+  description: CRUD API for customers
+requires:
+- entity/helpdesk/customer
+spec:
+  entity: entity/helpdesk/customer
+  base_path: /customers
+  endpoints:
+  - method: GET
+    path: /
+    summary: List customers
+    response:
+      status: 200
+      shape: list
+  - method: POST
+    path: /
+    summary: Create customer
+    auto_fields:
+      id: uuid
+      created_at: now
+    response:
+      status: 201
+      shape: entity
+  - method: GET
+    path: /{id}
+    summary: Get customer
+    response:
+      status: 200
+      shape: entity
+  - method: PATCH
+    path: /{id}
+    summary: Update customer
+    response:
+      status: 200
+      shape: entity
+  - method: DELETE
+    path: /{id}
+    summary: Delete customer
+    response:
+      status: 204

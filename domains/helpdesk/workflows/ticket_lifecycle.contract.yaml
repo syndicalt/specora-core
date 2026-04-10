@@ -1,0 +1,42 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: ticket_lifecycle
+  domain: helpdesk
+  description: Support ticket lifecycle
+requires: []
+spec:
+  initial: new
+  states:
+    new:
+      label: New
+      category: open
+    assigned:
+      label: Assigned
+      category: open
+    in_progress:
+      label: In Progress
+      category: open
+    waiting_customer:
+      label: Waiting on Customer
+      category: hold
+    resolved:
+      label: Resolved
+      category: closed
+      terminal: true
+    closed:
+      label: Closed
+      category: closed
+      terminal: true
+  transitions:
+    new: [assigned, in_progress, waiting_customer, resolved, closed]
+    assigned: [new, in_progress, waiting_customer, resolved, closed]
+    in_progress: [new, assigned, waiting_customer, resolved, closed]
+    waiting_customer: [new, assigned, in_progress, resolved, closed]
+  guards:
+    new -> assigned:
+      require_fields:
+      - assigned_agent_id
+    in_progress -> resolved:
+      require_fields:
+      - resolution

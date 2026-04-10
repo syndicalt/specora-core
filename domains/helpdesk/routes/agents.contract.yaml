@@ -1,0 +1,44 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: agents
+  domain: helpdesk
+  description: CRUD API for agents
+requires:
+- entity/helpdesk/agent
+spec:
+  entity: entity/helpdesk/agent
+  base_path: /agents
+  endpoints:
+  - method: GET
+    path: /
+    summary: List agents
+    response:
+      status: 200
+      shape: list
+  - method: POST
+    path: /
+    summary: Create agent
+    auto_fields:
+      id: uuid
+      created_at: now
+    response:
+      status: 201
+      shape: entity
+  - method: GET
+    path: /{id}
+    summary: Get agent
+    response:
+      status: 200
+      shape: entity
+  - method: PATCH
+    path: /{id}
+    summary: Update agent
+    response:
+      status: 200
+      shape: entity
+  - method: DELETE
+    path: /{id}
+    summary: Delete agent
+    response:
+      status: 204

@@ -1,0 +1,23 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: agents
+  domain: helpdesk
+  description: Browse and manage agents
+requires:
+- entity/helpdesk/agent
+spec:
+  route: /agents
+  title: Agents
+  entity: entity/helpdesk/agent
+  generation_tier: mechanical
+  data_sources:
+  - endpoint: /agents
+    alias: agents
+  views:
+  - type: table
+    default: true
+    columns:
+    - name
+    - email
+    - department
