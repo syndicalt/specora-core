@@ -1,0 +1,34 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: ground_stations
+  domain: satellite_constellation
+  description: "CRUD API for ground stations"
+  tags: [satellite, ground, api]
+requires:
+  - entity/satellite_constellation/ground_station
+spec:
+  entity: entity/satellite_constellation/ground_station
+  base_path: /ground-stations
+  endpoints:
+    - method: GET
+      path: /
+      summary: List ground stations
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create ground station
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get ground station
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update ground station
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete ground station
+      response: {status: 204}

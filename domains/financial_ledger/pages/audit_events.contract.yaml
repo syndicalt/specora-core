@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: audit_events
+  domain: financial_ledger
+  description: "Browse the immutable audit trail"
+  tags: [finance, ledger, audit]
+requires:
+  - entity/financial_ledger/audit_event
+spec:
+  route: /audit-events
+  title: Audit Events
+  entity: entity/financial_ledger/audit_event
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /audit-events
+      alias: audit_events
+  views:
+    - type: table
+      default: true
+      columns: [entity_type, entity_id, action, actor, timestamp]

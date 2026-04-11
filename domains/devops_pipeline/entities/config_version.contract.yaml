@@ -10,6 +10,7 @@ requires:
   - mixin/stdlib/identifiable
   - entity/devops_pipeline/service
   - entity/devops_pipeline/environment
+  - entity/devops_pipeline/user
 spec:
   icon: settings
   number_prefix: CFG
@@ -42,9 +43,13 @@ spec:
       type: text
       description: "What changed in this version"
     applied_by:
-      type: string
+      type: uuid
       required: true
-      description: "User or system that applied this config"
+      description: "User who applied this config"
+      references:
+        entity: entity/devops_pipeline/user
+        display: display_name
+        graph_edge: APPLIED_BY
     is_active:
       type: boolean
       default: true

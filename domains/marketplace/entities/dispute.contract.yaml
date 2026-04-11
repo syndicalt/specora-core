@@ -1,0 +1,54 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: dispute
+  domain: marketplace
+  description: "A dispute filed on a transaction"
+  tags: [marketplace]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/marketplace/transaction
+  - workflow/marketplace/dispute_resolution
+spec:
+  icon: alert-circle
+  number_prefix: DSP
+  fields:
+    transaction_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/marketplace/transaction
+        display: final_amount_cents
+        graph_edge: DISPUTED_IN
+    filed_by:
+      type: string
+      required: true
+      enum: [buyer, seller]
+      description: "Who filed the dispute"
+    reason:
+      type: string
+      required: true
+      enum: [item_not_received, item_not_as_described, payment_issue, fraud, other]
+      description: "Reason for the dispute"
+    description:
+      type: text
+      required: true
+      description: "Detailed dispute description"
+    evidence_urls:
+      type: text
+      description: "URLs to supporting evidence"
+    resolution_type:
+      type: string
+      enum: [refund_full, refund_partial, no_refund, replacement]
+      description: "Type of resolution applied"
+    resolution_notes:
+      type: text
+      description: "Notes about the resolution"
+    mediator:
+      type: string
+      description: "Assigned mediator"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/marketplace/dispute_resolution

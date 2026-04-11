@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: api_keys
+  domain: saas_platform
+  description: "Browse and manage API keys"
+  tags: [saas, enterprise]
+requires:
+  - entity/saas_platform/api_key
+spec:
+  route: /api-keys
+  title: API Keys
+  entity: entity/saas_platform/api_key
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /api-keys
+      alias: api_keys
+  views:
+    - type: table
+      default: true
+      columns: [tenant_id, key_name, key_prefix, scopes, rate_limit_rpm, is_active]

@@ -1,0 +1,44 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: tenant_lifecycle
+  domain: saas_platform
+  description: "Tenant lifecycle from trial through active usage to churn or cancellation"
+  tags: [saas, enterprise]
+requires: []
+spec:
+  initial: trial
+  states:
+    trial:
+      label: Trial
+      category: open
+    onboarding:
+      label: Onboarding
+      category: open
+    active:
+      label: Active
+      category: open
+    suspended:
+      label: Suspended
+      category: hold
+    churned:
+      label: Churned
+      category: closed
+      terminal: true
+    cancelled:
+      label: Cancelled
+      category: closed
+      terminal: true
+  transitions:
+    trial: [onboarding, cancelled]
+    onboarding: [active, cancelled]
+    active: [suspended, cancelled]
+    suspended: [active, churned]
+  guards:
+    "trial -> onboarding":
+      require_fields: [primary_contact_email]
+  side_effects:
+    "* -> cancelled":
+      - set_field: {is_active: false}
+    "* -> churned":
+      - set_field: {is_active: false}

@@ -1,0 +1,40 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: reconciliations
+  domain: financial_ledger
+  description: "CRUD API for reconciliations"
+  tags: [finance, ledger]
+requires:
+  - entity/financial_ledger/reconciliation
+  - workflow/financial_ledger/reconciliation_flow
+spec:
+  entity: entity/financial_ledger/reconciliation
+  base_path: /reconciliations
+  endpoints:
+    - method: GET
+      path: /
+      summary: List reconciliations
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create reconciliation
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get reconciliation
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update reconciliation
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete reconciliation
+      response: {status: 204}
+    - method: PUT
+      path: /{id}/state
+      summary: Transition reconciliation state
+      request_body: {required_fields: [state]}
+      response: {status: 200, shape: entity}

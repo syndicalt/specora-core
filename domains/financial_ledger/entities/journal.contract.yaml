@@ -1,0 +1,52 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: journal
+  domain: financial_ledger
+  description: "A journal entry representing a balanced set of debits and credits"
+  tags: [finance, ledger]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/financial_ledger/period
+  - workflow/financial_ledger/journal_lifecycle
+spec:
+  icon: book-open
+  number_prefix: JRN
+  fields:
+    reference_number:
+      type: string
+      required: true
+    description:
+      type: text
+      required: true
+    total_debit_cents:
+      type: integer
+      required: true
+    total_credit_cents:
+      type: integer
+      required: true
+    posted_by:
+      type: string
+      required: true
+    posted_at:
+      type: datetime
+    period_id:
+      type: uuid
+      references:
+        entity: entity/financial_ledger/period
+        display: name
+        graph_edge: POSTED_IN
+    reversal_of_id:
+      type: uuid
+      references:
+        entity: entity/financial_ledger/journal
+        display: reference_number
+        graph_edge: REVERSES
+    is_reversing:
+      type: boolean
+      default: false
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/financial_ledger/journal_lifecycle

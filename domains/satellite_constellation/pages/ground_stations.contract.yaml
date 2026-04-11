@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: ground_stations
+  domain: satellite_constellation
+  description: "Browse and manage ground stations"
+  tags: [satellite, ground, ui]
+requires:
+  - entity/satellite_constellation/ground_station
+spec:
+  route: /ground-stations
+  title: Ground Stations
+  entity: entity/satellite_constellation/ground_station
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /ground-stations
+      alias: ground_stations
+  views:
+    - type: table
+      default: true
+      columns: [name, location, antenna_type, frequency_band, status]

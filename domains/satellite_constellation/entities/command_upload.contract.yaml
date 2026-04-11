@@ -1,0 +1,57 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: command_upload
+  domain: satellite_constellation
+  description: "A command uploaded to a satellite"
+  tags: [satellite, command, ops]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/satellite_constellation/satellite
+  - entity/satellite_constellation/pass_window
+  - workflow/satellite_constellation/command_workflow
+spec:
+  icon: upload
+  number_prefix: CMD
+  fields:
+    satellite_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/satellite_constellation/satellite
+        display: designation
+        graph_edge: COMMANDED
+    command_type:
+      type: string
+      required: true
+      enum: [attitude_adjust, orbit_maneuver, payload_config, telemetry_request, safe_mode_enter, safe_mode_exit, firmware_update, decommission]
+      description: "Type of command"
+    payload_data:
+      type: text
+      description: "Command payload data"
+    priority:
+      type: string
+      required: true
+      enum: [critical, high, normal, low]
+      description: "Command priority level"
+    scheduled_pass_id:
+      type: uuid
+      references:
+        entity: entity/satellite_constellation/pass_window
+        display: aos_time
+        graph_edge: SCHEDULED_FOR
+    uploaded_by:
+      type: string
+      required: true
+      description: "Operator who uploaded the command"
+    response_code:
+      type: string
+      description: "Response code from the satellite"
+    executed_at:
+      type: datetime
+      description: "Timestamp when command was executed"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/satellite_constellation/command_workflow

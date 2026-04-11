@@ -1,0 +1,37 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: dispute_resolution
+  domain: marketplace
+  description: "Dispute resolution workflow with mediation and escalation"
+  tags: [marketplace]
+requires: []
+spec:
+  initial: opened
+  states:
+    opened:
+      label: Opened
+      category: open
+    under_review:
+      label: Under Review
+      category: open
+    mediation:
+      label: Mediation
+      category: hold
+    resolved:
+      label: Resolved
+      category: closed
+      terminal: true
+    escalated:
+      label: Escalated
+      category: hold
+  transitions:
+    opened: [under_review]
+    under_review: [mediation, resolved]
+    mediation: [resolved, escalated]
+    escalated: [resolved]
+  guards:
+    "under_review -> resolved":
+      require_fields: [resolution_type, resolution_notes]
+    "mediation -> resolved":
+      require_fields: [resolution_type, resolution_notes, mediator]

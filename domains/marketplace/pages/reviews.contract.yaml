@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: reviews
+  domain: marketplace
+  description: "Browse and manage reviews"
+  tags: [marketplace]
+requires:
+  - entity/marketplace/review
+spec:
+  route: /reviews
+  title: Reviews
+  entity: entity/marketplace/review
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /reviews
+      alias: reviews
+  views:
+    - type: table
+      default: true
+      columns: [transaction_id, reviewer_type, rating, title, comment]

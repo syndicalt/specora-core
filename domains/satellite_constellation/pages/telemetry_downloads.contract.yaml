@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: telemetry_downloads
+  domain: satellite_constellation
+  description: "Browse telemetry downloads"
+  tags: [satellite, telemetry, ui]
+requires:
+  - entity/satellite_constellation/telemetry_download
+spec:
+  route: /telemetry-downloads
+  title: Telemetry Downloads
+  entity: entity/satellite_constellation/telemetry_download
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /telemetry-downloads
+      alias: telemetry_downloads
+  views:
+    - type: table
+      default: true
+      columns: [satellite_id, ground_station_id, data_size_mb, signal_quality, downloaded_at]

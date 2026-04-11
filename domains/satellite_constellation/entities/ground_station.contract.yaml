@@ -1,0 +1,48 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: ground_station
+  domain: satellite_constellation
+  description: "A ground station for satellite communications"
+  tags: [satellite, ground, communications]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+spec:
+  icon: radio
+  number_prefix: GND
+  fields:
+    name:
+      type: string
+      required: true
+      description: "Ground station name"
+    location:
+      type: string
+      required: true
+      description: "Geographic location description"
+    latitude:
+      type: number
+      required: true
+      description: "Latitude in decimal degrees"
+    longitude:
+      type: number
+      required: true
+      description: "Longitude in decimal degrees"
+    antenna_type:
+      type: string
+      enum: [parabolic, phased_array, yagi, helical]
+      description: "Type of antenna"
+    frequency_band:
+      type: string
+      enum: [uhf, s_band, x_band, ka_band]
+      description: "Operating frequency band"
+    status:
+      type: string
+      enum: [online, offline, maintenance]
+      description: "Current operational status"
+    operator:
+      type: string
+      description: "Organization operating the station"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

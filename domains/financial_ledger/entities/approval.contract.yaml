@@ -1,0 +1,41 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: approval
+  domain: financial_ledger
+  description: "An approval or rejection decision on a journal entry"
+  tags: [finance, ledger]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/financial_ledger/journal
+  - workflow/financial_ledger/approval_flow
+spec:
+  icon: check-circle
+  number_prefix: APV
+  fields:
+    journal_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/financial_ledger/journal
+        display: reference_number
+        graph_edge: APPROVES
+    approver:
+      type: string
+      required: true
+    role:
+      type: string
+      required: true
+      enum: [controller, cfo, auditor]
+    decision:
+      type: string
+      enum: [approved, rejected]
+    comment:
+      type: text
+    decided_at:
+      type: datetime
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/financial_ledger/approval_flow

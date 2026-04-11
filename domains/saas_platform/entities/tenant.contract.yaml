@@ -1,0 +1,54 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: tenant
+  domain: saas_platform
+  description: "A tenant organization in the multi-tenant SaaS platform"
+  tags: [saas, enterprise]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - workflow/saas_platform/tenant_lifecycle
+spec:
+  icon: building
+  number_prefix: TNT
+  fields:
+    name:
+      type: string
+      required: true
+      constraints:
+        maxLength: 100
+    slug:
+      type: string
+      required: true
+      description: "URL-safe identifier"
+    industry:
+      type: string
+      enum: [technology, healthcare, finance, retail, manufacturing, education, other]
+    tier:
+      type: string
+      required: true
+      enum: [free, starter, professional, enterprise]
+    primary_contact_email:
+      type: email
+      required: true
+    primary_contact_name:
+      type: string
+      required: true
+    max_users:
+      type: integer
+      default: 5
+    max_storage_gb:
+      type: integer
+      default: 1
+    custom_domain:
+      type: string
+    logo_url:
+      type: string
+    is_active:
+      type: boolean
+      default: true
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/saas_platform/tenant_lifecycle

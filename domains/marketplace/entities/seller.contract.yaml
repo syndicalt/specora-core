@@ -1,0 +1,47 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: seller
+  domain: marketplace
+  description: "A marketplace seller account"
+  tags: [marketplace]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+spec:
+  icon: store
+  number_prefix: SLR
+  fields:
+    display_name:
+      type: string
+      required: true
+      description: "Seller display name"
+    email:
+      type: email
+      required: true
+      description: "Seller email address"
+    business_name:
+      type: string
+      description: "Business name"
+    verification_status:
+      type: string
+      enum: [unverified, pending, verified, suspended]
+      description: "Seller verification status"
+    rating_avg:
+      type: number
+      description: "Average seller rating"
+    total_sales:
+      type: integer
+      default: 0
+      description: "Total number of sales"
+    commission_rate_pct:
+      type: number
+      default: 10
+      description: "Commission rate percentage"
+    payout_method:
+      type: string
+      enum: [bank_transfer, paypal, stripe]
+      description: "Preferred payout method"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

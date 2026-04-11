@@ -1,0 +1,23 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: transactions
+  domain: marketplace
+  description: "Browse and manage transactions"
+  tags: [marketplace]
+requires:
+  - entity/marketplace/transaction
+spec:
+  route: /transactions
+  title: Transactions
+  entity: entity/marketplace/transaction
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /transactions
+      alias: transactions
+  views:
+    - type: kanban
+      default: true
+      card_fields: [listing_id, buyer_id, seller_id, final_amount_cents]
+    - type: table
+      columns: [listing_id, buyer_id, seller_id, final_amount_cents, commission_cents, tracking_number]

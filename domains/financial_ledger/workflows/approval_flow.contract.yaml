@@ -1,0 +1,34 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: approval_flow
+  domain: financial_ledger
+  description: "Approval workflow for journal entries requiring sign-off"
+  tags: [finance, ledger]
+requires: []
+spec:
+  initial: pending
+  states:
+    pending:
+      label: Pending
+      category: open
+    approved:
+      label: Approved
+      category: closed
+      terminal: true
+    rejected:
+      label: Rejected
+      category: closed
+      terminal: true
+  transitions:
+    pending: [approved, rejected]
+  guards:
+    "pending -> approved":
+      require_fields: [approver, comment]
+    "pending -> rejected":
+      require_fields: [approver, comment]
+  side_effects:
+    "pending -> approved":
+      - set_field: {decided_at: "now"}
+    "pending -> rejected":
+      - set_field: {decided_at: "now"}

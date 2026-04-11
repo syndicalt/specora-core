@@ -1,0 +1,36 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: period
+  domain: financial_ledger
+  description: "An accounting period such as a month, quarter, or fiscal year"
+  tags: [finance, ledger]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - workflow/financial_ledger/period_lifecycle
+spec:
+  icon: calendar
+  number_prefix: PER
+  fields:
+    name:
+      type: string
+      required: true
+      description: "e.g. 2026-Q1, 2026-03"
+    period_type:
+      type: string
+      required: true
+      enum: [monthly, quarterly, annual]
+    start_date:
+      type: date
+      required: true
+    end_date:
+      type: date
+      required: true
+    fiscal_year:
+      type: integer
+      required: true
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/financial_ledger/period_lifecycle

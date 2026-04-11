@@ -1,0 +1,42 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: reconciliation_flow
+  domain: financial_ledger
+  description: "Reconciliation process from pending through matching or exception resolution"
+  tags: [finance, ledger]
+requires: []
+spec:
+  initial: pending
+  states:
+    pending:
+      label: Pending
+      category: open
+    in_progress:
+      label: In Progress
+      category: open
+    matched:
+      label: Matched
+      category: closed
+      terminal: true
+    exception:
+      label: Exception
+      category: hold
+    resolved:
+      label: Resolved
+      category: closed
+      terminal: true
+  transitions:
+    pending: [in_progress]
+    in_progress: [matched, exception]
+    exception: [resolved]
+  guards:
+    "in_progress -> matched":
+      require_fields: [reconciled_by]
+    "exception -> resolved":
+      require_fields: [notes, reconciled_by]
+  side_effects:
+    "* -> matched":
+      - set_field: {reconciled_at: "now"}
+    "* -> resolved":
+      - set_field: {reconciled_at: "now"}

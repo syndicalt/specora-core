@@ -1,0 +1,40 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: command_uploads
+  domain: satellite_constellation
+  description: "CRUD API for command uploads"
+  tags: [satellite, command, api]
+requires:
+  - entity/satellite_constellation/command_upload
+  - workflow/satellite_constellation/command_workflow
+spec:
+  entity: entity/satellite_constellation/command_upload
+  base_path: /command-uploads
+  endpoints:
+    - method: GET
+      path: /
+      summary: List command uploads
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create command upload
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get command upload
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update command upload
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete command upload
+      response: {status: 204}
+    - method: PUT
+      path: /{id}/state
+      summary: Transition command upload state
+      request_body: {required_fields: [state]}
+      response: {status: 200, shape: entity}

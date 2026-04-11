@@ -1,0 +1,49 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: journal_lifecycle
+  domain: financial_ledger
+  description: "Journal entry lifecycle from draft through posting or rejection"
+  tags: [finance, ledger]
+requires: []
+spec:
+  initial: draft
+  states:
+    draft:
+      label: Draft
+      category: open
+    pending_approval:
+      label: Pending Approval
+      category: hold
+    approved:
+      label: Approved
+      category: open
+    posted:
+      label: Posted
+      category: closed
+      terminal: true
+    rejected:
+      label: Rejected
+      category: closed
+      terminal: true
+    reversed:
+      label: Reversed
+      category: closed
+      terminal: true
+  transitions:
+    draft: [pending_approval]
+    pending_approval: [approved, rejected]
+    approved: [posted]
+    posted: [reversed]
+  guards:
+    "draft -> pending_approval":
+      require_fields: [total_debit_cents, total_credit_cents, description]
+    "approved -> posted":
+      require_fields: [posted_by]
+    "posted -> reversed":
+      require_fields: [reversal_of_id]
+  side_effects:
+    "* -> posted":
+      - set_field: {posted_at: "now"}
+    "* -> reversed":
+      - set_field: {is_reversing: true}

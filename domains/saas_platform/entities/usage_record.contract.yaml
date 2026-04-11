@@ -1,0 +1,38 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: usage_record
+  domain: saas_platform
+  description: "A metered usage record for tenant billing"
+  tags: [saas, enterprise]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/saas_platform/tenant
+spec:
+  icon: bar-chart-2
+  number_prefix: USG
+  fields:
+    tenant_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/saas_platform/tenant
+        display: name
+        graph_edge: USAGE_OF
+    metric:
+      type: string
+      required: true
+      enum: [api_calls, storage_bytes, active_users, bandwidth_bytes, compute_minutes]
+    quantity:
+      type: number
+      required: true
+    recorded_at:
+      type: datetime
+      required: true
+    billing_period:
+      type: string
+      required: true
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

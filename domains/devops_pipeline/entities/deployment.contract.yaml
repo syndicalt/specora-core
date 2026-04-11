@@ -70,6 +70,9 @@ spec:
     rollback_reason:
       type: text
       description: "Reason for rollback if rolled back"
+    retry_reason:
+      type: text
+      description: "Reason for retrying a failed deployment"
     started_at:
       type: datetime
       description: "When the deployment pipeline started"

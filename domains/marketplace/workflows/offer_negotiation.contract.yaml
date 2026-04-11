@@ -1,0 +1,41 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: offer_negotiation
+  domain: marketplace
+  description: "Two-sided offer negotiation workflow between buyer and seller"
+  tags: [marketplace]
+requires: []
+spec:
+  initial: submitted
+  states:
+    submitted:
+      label: Submitted
+      category: open
+    countered:
+      label: Countered
+      category: open
+    accepted:
+      label: Accepted
+      category: closed
+      terminal: true
+    rejected:
+      label: Rejected
+      category: closed
+      terminal: true
+    expired:
+      label: Expired
+      category: closed
+      terminal: true
+    withdrawn:
+      label: Withdrawn
+      category: closed
+      terminal: true
+  transitions:
+    submitted: [countered, accepted, rejected, expired, withdrawn]
+    countered: [accepted, rejected, expired, withdrawn]
+  guards:
+    "submitted -> countered":
+      require_fields: [counter_amount_cents, counter_message]
+    "submitted -> accepted":
+      require_fields: [seller_id]

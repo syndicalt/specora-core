@@ -1,0 +1,51 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: balance_snapshot
+  domain: financial_ledger
+  description: "A point-in-time snapshot of an account balance at the end of a period"
+  tags: [finance, ledger]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/financial_ledger/account
+  - entity/financial_ledger/period
+spec:
+  icon: camera
+  number_prefix: BAL
+  fields:
+    account_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/financial_ledger/account
+        display: name
+        graph_edge: SNAPSHOT_OF
+    period_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/financial_ledger/period
+        display: name
+        graph_edge: SNAPSHOT_IN
+    balance_cents:
+      type: integer
+      required: true
+    debit_total_cents:
+      type: integer
+      required: true
+    credit_total_cents:
+      type: integer
+      required: true
+    entry_count:
+      type: integer
+      required: true
+    snapshot_at:
+      type: datetime
+      required: true
+    taken_by:
+      type: string
+      required: true
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

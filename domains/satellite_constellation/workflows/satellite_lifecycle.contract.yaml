@@ -1,0 +1,48 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: satellite_lifecycle
+  domain: satellite_constellation
+  description: "Lifecycle of a satellite from manufacture through decommission"
+  tags: [satellite, lifecycle]
+requires: []
+spec:
+  initial: manufactured
+  states:
+    manufactured:
+      label: Manufactured
+      category: open
+    launched:
+      label: Launched
+      category: open
+    commissioning:
+      label: Commissioning
+      category: open
+    operational:
+      label: Operational
+      category: open
+    safe_mode:
+      label: Safe Mode
+      category: hold
+    deorbiting:
+      label: Deorbiting
+      category: open
+    decommissioned:
+      label: Decommissioned
+      category: closed
+      terminal: true
+  transitions:
+    manufactured: [launched]
+    launched: [commissioning]
+    commissioning: [operational, safe_mode]
+    operational: [safe_mode, deorbiting]
+    safe_mode: [operational, deorbiting]
+    deorbiting: [decommissioned]
+  guards:
+    "commissioning -> operational":
+      require_fields: [signal_strength]
+  side_effects:
+    "* -> safe_mode":
+      - set_field: {signal_strength: "weak"}
+    "* -> decommissioned":
+      - set_field: {is_active: false}

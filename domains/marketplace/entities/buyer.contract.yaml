@@ -1,0 +1,39 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: buyer
+  domain: marketplace
+  description: "A marketplace buyer account"
+  tags: [marketplace]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+spec:
+  icon: shopping-cart
+  number_prefix: BYR
+  fields:
+    display_name:
+      type: string
+      required: true
+      description: "Buyer display name"
+    email:
+      type: email
+      required: true
+      description: "Buyer email address"
+    shipping_address:
+      type: text
+      description: "Default shipping address"
+    payment_verified:
+      type: boolean
+      default: false
+      description: "Whether payment method is verified"
+    total_purchases:
+      type: integer
+      default: 0
+      description: "Total number of purchases"
+    rating_avg:
+      type: number
+      description: "Average buyer rating"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

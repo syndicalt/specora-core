@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: users
+  domain: devops_pipeline
+  description: "Platform users management"
+  tags: [devops, user]
+requires:
+  - entity/devops_pipeline/user
+spec:
+  route: /users
+  title: Users
+  entity: entity/devops_pipeline/user
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /users
+      alias: users
+  views:
+    - type: table
+      default: true
+      columns: [username, display_name, email, role, team, is_active]

@@ -1,0 +1,40 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: disputes
+  domain: marketplace
+  description: "CRUD API for disputes"
+  tags: [marketplace]
+requires:
+  - entity/marketplace/dispute
+  - workflow/marketplace/dispute_resolution
+spec:
+  entity: entity/marketplace/dispute
+  base_path: /disputes
+  endpoints:
+    - method: GET
+      path: /
+      summary: List disputes
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create dispute
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get dispute
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update dispute
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete dispute
+      response: {status: 204}
+    - method: PUT
+      path: /{id}/state
+      summary: Transition dispute state
+      request_body: {required_fields: [state]}
+      response: {status: 200, shape: entity}

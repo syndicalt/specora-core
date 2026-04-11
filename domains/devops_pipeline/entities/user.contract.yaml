@@ -1,0 +1,45 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: user
+  domain: devops_pipeline
+  description: "A platform user who can deploy, approve, and configure services"
+  tags: [devops, user, identity]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+spec:
+  icon: user
+  number_prefix: USR
+  fields:
+    username:
+      type: string
+      required: true
+      description: "Unique username"
+      constraints:
+        maxLength: 50
+    display_name:
+      type: string
+      required: true
+      description: "Full display name"
+      constraints:
+        maxLength: 100
+    email:
+      type: email
+      required: true
+      description: "Email address"
+    role:
+      type: string
+      required: true
+      description: "Platform role"
+      enum: [admin, sre, developer, viewer]
+    team:
+      type: string
+      description: "Team membership"
+    is_active:
+      type: boolean
+      default: true
+      description: "Whether the user account is active"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

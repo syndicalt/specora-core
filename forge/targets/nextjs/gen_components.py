@@ -569,10 +569,18 @@ def _generate_kanban_board(entity: EntityIR, page: PageIR) -> GeneratedFile:
         transitions_entries.append(f'  "{src}": [{targets_str}]')
     transitions_str = ",\n".join(transitions_entries)
 
-    card_content = "\n".join(f'              <div className="text-sm">{{item.{cf}}}</div>' for cf in card_fields)
+    route_path = page.route or f"/{entity.name}s"
+    card_lines = []
+    for i, cf in enumerate(card_fields):
+        if i == 0:
+            card_lines.append(f'              <div className="font-medium text-sm">{{item.{cf}}}</div>')
+        else:
+            card_lines.append(f'              <div className="text-sm text-gray-600">{{item.{cf}}}</div>')
+    card_content = "\n".join(card_lines)
 
     content = f'''"use client";
 import {{ useState }} from "react";
+import Link from "next/link";
 import {{ Badge }} from "@/components/ui/badge";
 
 const STATES = [
@@ -632,7 +640,7 @@ export function {cls}Kanban({{ items, onTransition }}: {cls}KanbanProps) {{
   }}
 
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4">
+    <div className="flex gap-4 overflow-x-auto pb-4 min-w-0">
       {{STATES.map((state) => {{
         const isValidTarget = canDrop(state.name);
         const isDraggedOver = dragOver === state.name;
@@ -673,7 +681,9 @@ export function {cls}Kanban({{ items, onTransition }}: {cls}KanbanProps) {{
                       dragItem?.id === item.id ? "opacity-50 ring-2 ring-blue-300" : ""
                     }}`}}
                   >
+                    <Link href={{`{route_path}/${{item.id}}`}} className="block hover:underline">
 {card_content}
+                    </Link>
                   </div>
                 ))}}
             </div>

@@ -1,0 +1,23 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: periods
+  domain: financial_ledger
+  description: "Browse and manage accounting periods"
+  tags: [finance, ledger]
+requires:
+  - entity/financial_ledger/period
+spec:
+  route: /periods
+  title: Accounting Periods
+  entity: entity/financial_ledger/period
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /periods
+      alias: periods
+  views:
+    - type: kanban
+      default: true
+      card_fields: [name, period_type, start_date, end_date]
+    - type: table
+      columns: [name, period_type, start_date, end_date, fiscal_year]

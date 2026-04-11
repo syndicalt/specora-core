@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: webhooks
+  domain: saas_platform
+  description: "Browse and manage webhooks"
+  tags: [saas, enterprise]
+requires:
+  - entity/saas_platform/webhook
+spec:
+  route: /webhooks
+  title: Webhooks
+  entity: entity/saas_platform/webhook
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /webhooks
+      alias: webhooks
+  views:
+    - type: table
+      default: true
+      columns: [tenant_id, url, events, is_active, failure_count]

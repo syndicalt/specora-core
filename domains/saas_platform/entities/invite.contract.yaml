@@ -1,0 +1,41 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: invite
+  domain: saas_platform
+  description: "An invitation to join a tenant organization"
+  tags: [saas, enterprise]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/saas_platform/tenant
+  - workflow/saas_platform/invite_flow
+spec:
+  icon: mail
+  number_prefix: INV
+  fields:
+    tenant_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/saas_platform/tenant
+        display: name
+        graph_edge: INVITED_TO
+    email:
+      type: email
+      required: true
+    role:
+      type: string
+      required: true
+      enum: [owner, admin, member, viewer]
+    invited_by:
+      type: string
+      required: true
+    accepted_at:
+      type: datetime
+    expires_at:
+      type: datetime
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/saas_platform/invite_flow

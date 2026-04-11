@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: anomalies
+  domain: satellite_constellation
+  description: "Browse and manage satellite anomalies"
+  tags: [satellite, anomaly, ui]
+requires:
+  - entity/satellite_constellation/anomaly
+spec:
+  route: /anomalies
+  title: Anomalies
+  entity: entity/satellite_constellation/anomaly
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /anomalies
+      alias: anomalies
+  views:
+    - type: table
+      default: true
+      columns: [satellite_id, severity, subsystem, description, detected_at, resolved_at]

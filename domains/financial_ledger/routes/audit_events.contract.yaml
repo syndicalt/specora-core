@@ -1,0 +1,34 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: audit_events
+  domain: financial_ledger
+  description: "CRUD API for audit events"
+  tags: [finance, ledger, audit]
+requires:
+  - entity/financial_ledger/audit_event
+spec:
+  entity: entity/financial_ledger/audit_event
+  base_path: /audit-events
+  endpoints:
+    - method: GET
+      path: /
+      summary: List audit events
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create audit event
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get audit event
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update audit event
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete audit event
+      response: {status: 204}

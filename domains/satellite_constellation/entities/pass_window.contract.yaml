@@ -1,0 +1,48 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: pass_window
+  domain: satellite_constellation
+  description: "A scheduled communication pass between a satellite and ground station"
+  tags: [satellite, pass, scheduling]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/satellite_constellation/satellite
+  - entity/satellite_constellation/ground_station
+spec:
+  icon: clock
+  number_prefix: PAS
+  fields:
+    satellite_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/satellite_constellation/satellite
+        display: designation
+        graph_edge: PASSES_OVER
+    ground_station_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/satellite_constellation/ground_station
+        display: name
+        graph_edge: CONTACTED_BY
+    aos_time:
+      type: datetime
+      required: true
+      description: "Acquisition of signal"
+    los_time:
+      type: datetime
+      required: true
+      description: "Loss of signal"
+    max_elevation_deg:
+      type: number
+      description: "Maximum elevation angle in degrees"
+    is_utilized:
+      type: boolean
+      default: false
+      description: "Whether this pass window was used"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

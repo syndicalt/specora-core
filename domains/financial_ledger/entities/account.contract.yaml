@@ -1,0 +1,48 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: account
+  domain: financial_ledger
+  description: "A chart of accounts entry representing an asset, liability, equity, revenue, or expense account"
+  tags: [finance, ledger]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+spec:
+  icon: wallet
+  number_prefix: ACT
+  fields:
+    name:
+      type: string
+      required: true
+      constraints:
+        maxLength: 100
+    account_code:
+      type: string
+      required: true
+      description: "Chart of accounts code"
+    account_type:
+      type: string
+      required: true
+      enum: [asset, liability, equity, revenue, expense]
+    currency:
+      type: string
+      required: true
+      enum: [usd, eur, gbp, jpy, btc]
+    balance_cents:
+      type: integer
+      default: 0
+    is_active:
+      type: boolean
+      default: true
+    parent_account_id:
+      type: uuid
+      references:
+        entity: entity/financial_ledger/account
+        display: name
+        graph_edge: CHILD_OF
+    description:
+      type: text
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

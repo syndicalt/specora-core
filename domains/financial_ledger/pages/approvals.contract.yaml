@@ -1,0 +1,23 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: approvals
+  domain: financial_ledger
+  description: "Browse and manage journal approvals"
+  tags: [finance, ledger]
+requires:
+  - entity/financial_ledger/approval
+spec:
+  route: /approvals
+  title: Approvals
+  entity: entity/financial_ledger/approval
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /approvals
+      alias: approvals
+  views:
+    - type: kanban
+      default: true
+      card_fields: [journal_id, approver, role, decision]
+    - type: table
+      columns: [journal_id, approver, role, decision, comment, decided_at]

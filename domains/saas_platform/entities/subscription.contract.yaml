@@ -1,0 +1,53 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: subscription
+  domain: saas_platform
+  description: "A billing subscription tied to a tenant"
+  tags: [saas, enterprise]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/saas_platform/tenant
+  - workflow/saas_platform/subscription_lifecycle
+spec:
+  icon: credit-card
+  number_prefix: SUB
+  fields:
+    tenant_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/saas_platform/tenant
+        display: name
+        graph_edge: SUBSCRIBES
+    plan:
+      type: string
+      required: true
+      enum: [free, starter, professional, enterprise]
+    billing_cycle:
+      type: string
+      required: true
+      enum: [monthly, annual]
+    price_cents:
+      type: integer
+      required: true
+    currency:
+      type: string
+      required: true
+      enum: [usd, eur, gbp]
+    started_at:
+      type: datetime
+      required: true
+    expires_at:
+      type: datetime
+    auto_renew:
+      type: boolean
+      default: true
+    payment_method:
+      type: string
+      enum: [credit_card, bank_transfer, invoice]
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/saas_platform/subscription_lifecycle

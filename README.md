@@ -81,7 +81,7 @@ This is the core idea. Contracts are not static documents -- they evolve:
           |                      |
           v                      |
  +------------------+            |
- |  Generated Code  |           |
+ |  Generated Code  |            |
  +--------+---------+            |
           |                      |
      [Deploy & Run]         [Healer: classify & trace]
@@ -121,19 +121,20 @@ The generated backend uses a repository interface -- swap between `postgres` and
 
 ## The Demo
 
-The `domains/helpdesk/` directory contains a complete helpdesk domain: tickets, customers, agents, SLA tracking, a ticket lifecycle workflow, CRUD routes, and UI pages. It serves as both documentation and proof:
+The `domains/devops_pipeline/` directory contains a complete CI/CD deployment platform: services, environments, artifacts, deployments with a 10-state pipeline workflow, approval gates, rollback tracking, config versioning, and user management. It serves as both documentation and proof:
 
 ```bash
 # Validate the demo domain
-spc forge validate domains/helpdesk
+spc forge validate domains/devops_pipeline
 
 # Compile and generate
-spc forge generate domains/helpdesk --target fastapi-prod --target postgres --target docker
+spc forge generate domains/devops_pipeline -o runtime
 
 # Run it
 cd runtime && docker compose up -d
 
 # Visit http://localhost:8000/docs for the API
+# Visit http://localhost:3000 for the frontend (kanban + tables)
 # Visit http://localhost:8083/healer/status for the Healer dashboard
 ```
 
@@ -144,16 +145,37 @@ cd runtime && docker compose up -d
 ### Contracts In, Apps Out
 
 ```
-domains/helpdesk/
+domains/devops_pipeline/
   entities/
-    ticket.contract.yaml       # Data model: fields, references, mixins
-    customer.contract.yaml
+    approval_gate.contract.yaml   # Approval decisions for deployments
+    artifact.contract.yaml        # Build artifacts (images, binaries)
+    config_version.contract.yaml  # Versioned config snapshots
+    deployment.contract.yaml      # Deployments through the pipeline
+    environment.contract.yaml     # Deploy targets (dev, staging, prod)
+    rollback.contract.yaml        # Rollback records
+    service.contract.yaml         # Deployable microservices
+    user.contract.yaml            # Platform users
   workflows/
-    ticket_lifecycle.contract.yaml  # State machine: states, transitions, guards
+    deployment_pipeline.contract.yaml  # 10-state pipeline with guards and side effects
+    approval_flow.contract.yaml        # Approve/reject gate workflow
   routes/
-    tickets.contract.yaml      # API: endpoints, methods, response shapes
+    approval_gates.contract.yaml  # 4 endpoints
+    artifacts.contract.yaml       # 4 endpoints
+    config_versions.contract.yaml # 3 endpoints
+    deployments.contract.yaml     # 6 endpoints (CRUD + state transitions)
+    environments.contract.yaml    # 5 endpoints
+    rollbacks.contract.yaml       # 3 endpoints
+    services.contract.yaml        # 5 endpoints
+    users.contract.yaml           # 5 endpoints
   pages/
-    tickets.contract.yaml      # UI: views, columns, data sources
+    approval_gates.contract.yaml  # Kanban + table view
+    artifacts.contract.yaml       # Table view
+    config_versions.contract.yaml # Table view
+    deployments.contract.yaml     # Kanban (default) + table view
+    environments.contract.yaml    # Table view
+    rollbacks.contract.yaml       # Table view
+    services.contract.yaml        # Table view
+    users.contract.yaml           # Table view
 ```
 
 Each contract follows a strict envelope:
@@ -162,11 +184,13 @@ Each contract follows a strict envelope:
 apiVersion: specora.dev/v1
 kind: Entity
 metadata:
-  name: ticket
-  domain: helpdesk
+  name: deployment
+  domain: devops_pipeline
 requires:
   - mixin/stdlib/timestamped
   - mixin/stdlib/identifiable
+  - entity/devops_pipeline/service
+  - workflow/devops_pipeline/deployment_pipeline
 spec:
   # Kind-specific content
 ```

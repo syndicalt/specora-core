@@ -41,7 +41,6 @@ spec:
     failed:
       label: Failed
       category: closed
-      terminal: true
   transitions:
     pending: [awaiting_approval, failed]
     awaiting_approval: [approved, failed]
@@ -50,6 +49,7 @@ spec:
     deploying: [canary, failed]
     canary: [promoted, rolled_back, failed]
     promoted: [completed, rolled_back]
+    failed: [pending, building]
   guards:
     "pending -> awaiting_approval":
       require_fields: [commit_sha, artifact_id]
@@ -59,6 +59,8 @@ spec:
       require_fields: [health_status]
     "promoted -> rolled_back":
       require_fields: [rollback_reason]
+    "failed -> building":
+      require_fields: [retry_reason]
   side_effects:
     "* -> completed":
       - set_field: {completed_at: "now"}
@@ -68,3 +70,7 @@ spec:
       - set_field: {completed_at: "now"}
     "pending -> awaiting_approval":
       - set_field: {started_at: "now"}
+    "failed -> pending":
+      - set_field: {completed_at: null}
+    "failed -> building":
+      - set_field: {completed_at: null}
