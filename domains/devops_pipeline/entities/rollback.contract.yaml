@@ -1,0 +1,48 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: rollback
+  domain: devops_pipeline
+  description: "A rollback record when a deployment is reverted"
+  tags: [devops, rollback, incident]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/devops_pipeline/deployment
+spec:
+  icon: undo-2
+  number_prefix: RBK
+  fields:
+    deployment_id:
+      type: uuid
+      required: true
+      description: "Deployment that was rolled back"
+      references:
+        entity: entity/devops_pipeline/deployment
+        display: version
+        graph_edge: ROLLS_BACK
+    triggered_by:
+      type: string
+      required: true
+      description: "User or system that triggered the rollback"
+    reason:
+      type: text
+      required: true
+      description: "Why the rollback was triggered"
+    from_version:
+      type: string
+      required: true
+      description: "Version being rolled back from"
+    to_version:
+      type: string
+      required: true
+      description: "Version being rolled back to"
+    success:
+      type: boolean
+      description: "Whether the rollback completed successfully"
+    duration_seconds:
+      type: integer
+      description: "How long the rollback took"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

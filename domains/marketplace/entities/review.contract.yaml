@@ -1,0 +1,53 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: review
+  domain: marketplace
+  description: "A review left after a transaction"
+  tags: [marketplace]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/marketplace/transaction
+spec:
+  icon: star
+  number_prefix: REV
+  fields:
+    transaction_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/marketplace/transaction
+        display: final_amount_cents
+        graph_edge: REVIEWED_IN
+    reviewer_type:
+      type: string
+      required: true
+      enum: [buyer, seller]
+      description: "Whether the reviewer is a buyer or seller"
+    reviewer_id:
+      type: uuid
+      required: true
+      description: "ID of the reviewer"
+    rating:
+      type: integer
+      required: true
+      constraints:
+        min: 1
+        max: 5
+      description: "Rating from 1 to 5"
+    title:
+      type: string
+      constraints:
+        maxLength: 100
+      description: "Review title"
+    comment:
+      type: text
+      description: "Review comment"
+    is_public:
+      type: boolean
+      default: true
+      description: "Whether the review is publicly visible"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

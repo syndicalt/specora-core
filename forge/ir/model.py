@@ -283,6 +283,7 @@ class EndpointIR(BaseModel):
         response_status: HTTP status code for success.
         response_shape: Response body shape descriptor.
         hateoas_links: HATEOAS link definitions.
+        roles: Roles permitted to access this endpoint (empty = auth-only).
     """
 
     method: str
@@ -296,6 +297,7 @@ class EndpointIR(BaseModel):
     response_status: int = 200
     response_shape: dict = Field(default_factory=dict)
     hateoas_links: dict = Field(default_factory=dict)
+    roles: list[str] = Field(default_factory=list)
 
 
 class RouteIR(BaseModel):

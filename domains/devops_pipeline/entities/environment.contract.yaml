@@ -1,0 +1,45 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: environment
+  domain: devops_pipeline
+  description: "A deployment target environment"
+  tags: [devops, infrastructure]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+spec:
+  icon: cloud
+  number_prefix: ENV
+  fields:
+    name:
+      type: string
+      required: true
+      description: "Environment name"
+      constraints:
+        maxLength: 50
+    tier:
+      type: string
+      required: true
+      description: "Environment tier"
+      enum: [development, staging, canary, production]
+    cluster_url:
+      type: string
+      required: true
+      description: "Cluster or host URL"
+    region:
+      type: string
+      required: true
+      description: "Cloud region"
+      enum: [us-east-1, us-west-2, eu-west-1, eu-central-1, ap-southeast-1]
+    is_active:
+      type: boolean
+      default: true
+      description: "Whether this environment is accepting deployments"
+    requires_approval:
+      type: boolean
+      default: false
+      description: "Whether deployments to this environment require approval"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

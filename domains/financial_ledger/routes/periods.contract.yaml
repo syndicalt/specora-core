@@ -1,0 +1,40 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: periods
+  domain: financial_ledger
+  description: "CRUD API for accounting periods"
+  tags: [finance, ledger]
+requires:
+  - entity/financial_ledger/period
+  - workflow/financial_ledger/period_lifecycle
+spec:
+  entity: entity/financial_ledger/period
+  base_path: /periods
+  endpoints:
+    - method: GET
+      path: /
+      summary: List periods
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create period
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get period
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update period
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete period
+      response: {status: 204}
+    - method: PUT
+      path: /{id}/state
+      summary: Transition period state
+      request_body: {required_fields: [state]}
+      response: {status: 200, shape: entity}

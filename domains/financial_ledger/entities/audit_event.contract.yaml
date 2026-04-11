@@ -1,0 +1,52 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: audit_event
+  domain: financial_ledger
+  description: "An immutable audit trail event recording all changes to financial entities"
+  tags: [finance, ledger, audit]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+spec:
+  icon: shield
+  number_prefix: AUD
+  fields:
+    entity_type:
+      type: string
+      required: true
+      immutable: true
+      description: "Type of entity affected"
+    entity_id:
+      type: uuid
+      required: true
+      immutable: true
+    action:
+      type: string
+      required: true
+      immutable: true
+      enum: [created, updated, deleted, posted, reversed, reconciled, approved, rejected]
+    actor:
+      type: string
+      required: true
+      immutable: true
+    previous_state:
+      type: text
+      immutable: true
+    new_state:
+      type: text
+      immutable: true
+    ip_address:
+      type: string
+      immutable: true
+    timestamp:
+      type: datetime
+      required: true
+      immutable: true
+    metadata_json:
+      type: text
+      immutable: true
+      description: "Additional context as JSON"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

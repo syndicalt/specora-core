@@ -1,0 +1,34 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: reviews
+  domain: marketplace
+  description: "CRUD API for reviews"
+  tags: [marketplace]
+requires:
+  - entity/marketplace/review
+spec:
+  entity: entity/marketplace/review
+  base_path: /reviews
+  endpoints:
+    - method: GET
+      path: /
+      summary: List reviews
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create review
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get review
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update review
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete review
+      response: {status: 204}

@@ -1,0 +1,42 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: webhook
+  domain: saas_platform
+  description: "A webhook endpoint for tenant event notifications"
+  tags: [saas, enterprise]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/saas_platform/tenant
+spec:
+  icon: webhook
+  number_prefix: WHK
+  fields:
+    tenant_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/saas_platform/tenant
+        display: name
+        graph_edge: NOTIFIES
+    url:
+      type: string
+      required: true
+    events:
+      type: text
+      required: true
+      description: "Comma-separated event types"
+    secret:
+      type: string
+    is_active:
+      type: boolean
+      default: true
+    last_triggered_at:
+      type: datetime
+    failure_count:
+      type: integer
+      default: 0
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

@@ -1,0 +1,49 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: orbit_maneuver
+  domain: satellite_constellation
+  description: "An orbital maneuver performed by a satellite"
+  tags: [satellite, orbit, maneuver]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/satellite_constellation/satellite
+  - workflow/satellite_constellation/maneuver_workflow
+spec:
+  icon: move
+  number_prefix: ORB
+  fields:
+    satellite_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/satellite_constellation/satellite
+        display: designation
+        graph_edge: MANEUVERED
+    maneuver_type:
+      type: string
+      required: true
+      enum: [station_keeping, orbit_raise, orbit_lower, inclination_change, collision_avoidance, deorbit]
+      description: "Type of orbital maneuver"
+    delta_v_ms:
+      type: number
+      required: true
+      description: "Delta-V in meters per second"
+    fuel_cost_kg:
+      type: number
+      description: "Fuel consumed in kilograms"
+    planned_date:
+      type: datetime
+      required: true
+      description: "Planned execution date"
+    executed_date:
+      type: datetime
+      description: "Actual execution date"
+    approved_by:
+      type: string
+      description: "Person who approved the maneuver"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/satellite_constellation/maneuver_workflow

@@ -323,6 +323,7 @@ class Compiler:
                     response_status=ep_spec.get("response", {}).get("status", 200),
                     response_shape=ep_spec.get("response", {}),
                     hateoas_links=ep_spec.get("hateoas", {}),
+                    roles=ep_spec.get("roles", []),
                 )
             )
 

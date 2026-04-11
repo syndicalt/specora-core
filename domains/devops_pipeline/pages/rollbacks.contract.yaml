@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: rollbacks
+  domain: devops_pipeline
+  description: "Rollback history"
+  tags: [devops, rollback]
+requires:
+  - entity/devops_pipeline/rollback
+spec:
+  route: /rollbacks
+  title: Rollback History
+  entity: entity/devops_pipeline/rollback
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /rollbacks
+      alias: rollbacks
+  views:
+    - type: table
+      default: true
+      columns: [deployment_id, triggered_by, reason, from_version, to_version, success, duration_seconds]

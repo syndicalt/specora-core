@@ -1,0 +1,34 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: pass_windows
+  domain: satellite_constellation
+  description: "CRUD API for pass windows"
+  tags: [satellite, pass, api]
+requires:
+  - entity/satellite_constellation/pass_window
+spec:
+  entity: entity/satellite_constellation/pass_window
+  base_path: /pass-windows
+  endpoints:
+    - method: GET
+      path: /
+      summary: List pass windows
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create pass window
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get pass window
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update pass window
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete pass window
+      response: {status: 204}

@@ -1,0 +1,45 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: ledger_entry
+  domain: financial_ledger
+  description: "A single debit or credit line within a journal entry"
+  tags: [finance, ledger]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/financial_ledger/journal
+  - entity/financial_ledger/account
+spec:
+  icon: file-text
+  number_prefix: LED
+  fields:
+    journal_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/financial_ledger/journal
+        display: reference_number
+        graph_edge: ENTRY_IN
+    account_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/financial_ledger/account
+        display: name
+        graph_edge: DEBITS_CREDITS
+    entry_type:
+      type: string
+      required: true
+      enum: [debit, credit]
+    amount_cents:
+      type: integer
+      required: true
+    memo:
+      type: text
+    line_number:
+      type: integer
+      required: true
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

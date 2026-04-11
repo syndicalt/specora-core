@@ -240,3 +240,66 @@ class TestGenTests:
         files = generate_tests(task_route_ir)
         test_file = next(f for f in files if "test_task.py" in f.path)
         assert "@pytest.mark.requires_pipeline" not in test_file.content
+
+    def test_generates_per_endpoint_role_auth(self, task_entity: EntityIR, auth_infra: InfraIR) -> None:
+        """Endpoints with roles use their own role for auth test headers."""
+        from forge.targets.fastapi_prod.gen_tests import generate_tests
+        route = RouteIR(
+            fqn="route/test/tasks", name="tasks", domain="test",
+            entity_fqn="entity/test/task", base_path="/tasks",
+            endpoints=[
+                EndpointIR(method="POST", path="/", response_status=201,
+                           auto_fields={"id": "uuid"}, roles=["admin"]),
+                EndpointIR(method="GET", path="/", response_status=200,
+                           roles=["admin", "agent"]),
+            ],
+        )
+        ir = DomainIR(domain="test", entities=[task_entity], routes=[route], infra=[auth_infra])
+        files = generate_tests(ir)
+        test_file = next(f for f in files if "test_task.py" in f.path)
+        # POST is admin-only, so 403 test should use a non-admin role
+        assert 'make_auth_headers("admin")' in test_file.content
+        assert "wrong_role" in test_file.content
+
+
+class TestGenRoutes:
+
+    def test_endpoint_with_roles_generates_require_role(self, task_entity: EntityIR, auth_infra: InfraIR) -> None:
+        """Endpoints with roles should generate require_role dependency."""
+        from forge.targets.fastapi_prod.gen_routes import generate_routes
+        route = RouteIR(
+            fqn="route/test/tasks", name="tasks", domain="test",
+            entity_fqn="entity/test/task", base_path="/tasks",
+            endpoints=[
+                EndpointIR(method="DELETE", path="/{id}", response_status=204,
+                           roles=["admin", "owner"]),
+            ],
+        )
+        ir = DomainIR(domain="test", entities=[task_entity], routes=[route], infra=[auth_infra])
+        files = generate_routes(ir)
+        content = files[0].content
+        assert 'require_role("admin", "owner")' in content
+
+    def test_endpoint_without_roles_generates_require_auth(self, task_entity: EntityIR, auth_infra: InfraIR) -> None:
+        """Endpoints without roles should fall back to require_auth."""
+        from forge.targets.fastapi_prod.gen_routes import generate_routes
+        route = RouteIR(
+            fqn="route/test/tasks", name="tasks", domain="test",
+            entity_fqn="entity/test/task", base_path="/tasks",
+            endpoints=[
+                EndpointIR(method="GET", path="/", response_status=200),
+            ],
+        )
+        ir = DomainIR(domain="test", entities=[task_entity], routes=[route], infra=[auth_infra])
+        files = generate_routes(ir)
+        content = files[0].content
+        assert "Depends(require_auth)" in content
+        assert "Depends(require_role" not in content
+
+    def test_endpoint_without_auth_generates_no_dependency(self, task_route_ir: DomainIR) -> None:
+        """Without auth infra, no auth dependency is generated."""
+        from forge.targets.fastapi_prod.gen_routes import generate_routes
+        files = generate_routes(task_route_ir)
+        content = files[0].content
+        assert "require_auth" not in content
+        assert "require_role" not in content

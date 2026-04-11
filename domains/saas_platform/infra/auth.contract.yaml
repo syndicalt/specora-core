@@ -1,0 +1,28 @@
+apiVersion: specora.dev/v1
+kind: Infra
+metadata:
+  name: auth
+  domain: saas_platform
+  description: "JWT authentication with tenant-scoped RBAC"
+  tags: [saas, auth]
+requires: []
+spec:
+  category: auth
+  config:
+    provider: jwt
+    roles: [admin, owner, member, viewer]
+  env_vars:
+    AUTH_SECRET:
+      description: "Secret key for JWT signing"
+      required: true
+      secret: true
+    AUTH_TOKEN_EXPIRE_MINUTES:
+      description: "Token expiration in minutes"
+      default: "60"
+    AUTH_ENABLED:
+      description: "Enable authentication"
+      default: "true"
+  bootstrap:
+    users:
+      - email: admin@specora.dev
+        role: admin

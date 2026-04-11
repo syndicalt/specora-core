@@ -1,0 +1,23 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: tenants
+  domain: saas_platform
+  description: "Browse and manage tenants"
+  tags: [saas, enterprise]
+requires:
+  - entity/saas_platform/tenant
+spec:
+  route: /tenants
+  title: Tenants
+  entity: entity/saas_platform/tenant
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /tenants
+      alias: tenants
+  views:
+    - type: kanban
+      default: true
+      card_fields: [name, tier, industry, primary_contact_email]
+    - type: table
+      columns: [name, tier, industry, primary_contact_email, is_active]

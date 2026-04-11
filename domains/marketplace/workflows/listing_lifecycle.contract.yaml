@@ -1,0 +1,38 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: listing_lifecycle
+  domain: marketplace
+  description: "Lifecycle of a marketplace listing from draft to sold or archived"
+  tags: [marketplace]
+requires: []
+spec:
+  initial: draft
+  states:
+    draft:
+      label: Draft
+      category: open
+    listed:
+      label: Listed
+      category: open
+    under_offer:
+      label: Under Offer
+      category: hold
+    sold:
+      label: Sold
+      category: closed
+      terminal: true
+    archived:
+      label: Archived
+      category: closed
+      terminal: true
+  transitions:
+    draft: [listed]
+    listed: [under_offer, archived]
+    under_offer: [listed, sold, archived]
+  guards:
+    "draft -> listed":
+      require_fields: [price_cents, description]
+  side_effects:
+    "* -> sold":
+      - set_field: {quantity_available: 0}

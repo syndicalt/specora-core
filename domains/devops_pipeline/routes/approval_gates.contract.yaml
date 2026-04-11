@@ -1,0 +1,32 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: approval_gates
+  domain: devops_pipeline
+  description: "CRUD and state transition API for approval gates"
+  tags: [devops, api, approval]
+requires:
+  - entity/devops_pipeline/approval_gate
+  - workflow/devops_pipeline/approval_flow
+spec:
+  entity: entity/devops_pipeline/approval_gate
+  base_path: /approval-gates
+  endpoints:
+    - method: GET
+      path: /
+      summary: List all approval gates
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create an approval gate for a deployment
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get approval gate details
+      response: {status: 200, shape: entity}
+    - method: PUT
+      path: /{id}/state
+      summary: Approve or reject
+      request_body: {required_fields: [state]}
+      response: {status: 200, shape: entity}

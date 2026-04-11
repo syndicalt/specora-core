@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: sellers
+  domain: marketplace
+  description: "Browse and manage sellers"
+  tags: [marketplace]
+requires:
+  - entity/marketplace/seller
+spec:
+  route: /sellers
+  title: Sellers
+  entity: entity/marketplace/seller
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /sellers
+      alias: sellers
+  views:
+    - type: table
+      default: true
+      columns: [display_name, email, business_name, verification_status, rating_avg, total_sales]

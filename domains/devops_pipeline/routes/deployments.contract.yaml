@@ -1,0 +1,40 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: deployments
+  domain: devops_pipeline
+  description: "CRUD and state transition API for deployments"
+  tags: [devops, api, deployment]
+requires:
+  - entity/devops_pipeline/deployment
+  - workflow/devops_pipeline/deployment_pipeline
+spec:
+  entity: entity/devops_pipeline/deployment
+  base_path: /deployments
+  endpoints:
+    - method: GET
+      path: /
+      summary: List all deployments
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create a new deployment
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get deployment details
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update deployment fields
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Cancel a deployment
+      response: {status: 204}
+    - method: PUT
+      path: /{id}/state
+      summary: Transition deployment pipeline state
+      request_body: {required_fields: [state]}
+      response: {status: 200, shape: entity}

@@ -1,0 +1,34 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: ledger_entries
+  domain: financial_ledger
+  description: "CRUD API for ledger entries"
+  tags: [finance, ledger]
+requires:
+  - entity/financial_ledger/ledger_entry
+spec:
+  entity: entity/financial_ledger/ledger_entry
+  base_path: /ledger-entries
+  endpoints:
+    - method: GET
+      path: /
+      summary: List ledger entries
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create ledger entry
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get ledger entry
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update ledger entry
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete ledger entry
+      response: {status: 204}

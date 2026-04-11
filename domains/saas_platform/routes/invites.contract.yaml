@@ -1,0 +1,46 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: invites
+  domain: saas_platform
+  description: "CRUD API for invites"
+  tags: [saas, enterprise]
+requires:
+  - entity/saas_platform/invite
+  - workflow/saas_platform/invite_flow
+spec:
+  entity: entity/saas_platform/invite
+  base_path: /invites
+  endpoints:
+    - method: GET
+      path: /
+      summary: List invites
+      roles: [admin, owner]
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create invite
+      roles: [admin, owner]
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get invite
+      roles: [admin, owner, member]
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update invite
+      roles: [admin, owner]
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete invite
+      roles: [admin, owner]
+      response: {status: 204}
+    - method: PUT
+      path: /{id}/state
+      summary: Transition invite state
+      roles: [admin, owner]
+      request_body: {required_fields: [state]}
+      response: {status: 200, shape: entity}

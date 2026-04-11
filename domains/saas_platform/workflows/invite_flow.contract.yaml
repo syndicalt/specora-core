@@ -1,0 +1,31 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: invite_flow
+  domain: saas_platform
+  description: "Invite flow from pending to accepted, expired, or revoked"
+  tags: [saas, enterprise]
+requires: []
+spec:
+  initial: pending
+  states:
+    pending:
+      label: Pending
+      category: open
+    accepted:
+      label: Accepted
+      category: closed
+      terminal: true
+    expired:
+      label: Expired
+      category: closed
+      terminal: true
+    revoked:
+      label: Revoked
+      category: closed
+      terminal: true
+  transitions:
+    pending: [accepted, expired, revoked]
+  side_effects:
+    "pending -> accepted":
+      - set_field: {accepted_at: "now"}

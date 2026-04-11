@@ -1,0 +1,51 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: reconciliation
+  domain: financial_ledger
+  description: "A reconciliation record comparing expected vs actual account balances"
+  tags: [finance, ledger]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/financial_ledger/account
+  - entity/financial_ledger/period
+  - workflow/financial_ledger/reconciliation_flow
+spec:
+  icon: check-square
+  number_prefix: REC
+  fields:
+    account_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/financial_ledger/account
+        display: name
+        graph_edge: RECONCILES
+    period_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/financial_ledger/period
+        display: name
+        graph_edge: RECONCILED_IN
+    expected_balance_cents:
+      type: integer
+      required: true
+    actual_balance_cents:
+      type: integer
+      required: true
+    difference_cents:
+      type: integer
+      required: true
+    reconciled_by:
+      type: string
+      required: true
+    reconciled_at:
+      type: datetime
+    notes:
+      type: text
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/financial_ledger/reconciliation_flow

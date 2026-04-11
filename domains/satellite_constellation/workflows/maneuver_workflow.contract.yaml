@@ -1,0 +1,40 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: maneuver_workflow
+  domain: satellite_constellation
+  description: "Workflow for orbital maneuver planning through execution"
+  tags: [satellite, maneuver]
+requires: []
+spec:
+  initial: planned
+  states:
+    planned:
+      label: Planned
+      category: open
+    approved:
+      label: Approved
+      category: open
+    executing:
+      label: Executing
+      category: open
+    completed:
+      label: Completed
+      category: closed
+      terminal: true
+    aborted:
+      label: Aborted
+      category: closed
+      terminal: true
+  transitions:
+    planned: [approved, aborted]
+    approved: [executing, aborted]
+    executing: [completed, aborted]
+  guards:
+    "planned -> approved":
+      require_fields: [approved_by]
+    "approved -> executing":
+      require_fields: [delta_v_ms]
+  side_effects:
+    "* -> completed":
+      - set_field: {executed_date: "now"}

@@ -1,0 +1,34 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: balance_snapshots
+  domain: financial_ledger
+  description: "CRUD API for balance snapshots"
+  tags: [finance, ledger]
+requires:
+  - entity/financial_ledger/balance_snapshot
+spec:
+  entity: entity/financial_ledger/balance_snapshot
+  base_path: /balance-snapshots
+  endpoints:
+    - method: GET
+      path: /
+      summary: List balance snapshots
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create balance snapshot
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get balance snapshot
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update balance snapshot
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete balance snapshot
+      response: {status: 204}

@@ -1,0 +1,30 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: artifacts
+  domain: devops_pipeline
+  description: "CRUD API for build artifacts"
+  tags: [devops, api, build]
+requires:
+  - entity/devops_pipeline/artifact
+spec:
+  entity: entity/devops_pipeline/artifact
+  base_path: /artifacts
+  endpoints:
+    - method: GET
+      path: /
+      summary: List all artifacts
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Register a new artifact
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get artifact details
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete an artifact
+      response: {status: 204}

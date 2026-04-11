@@ -1,0 +1,29 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: period_lifecycle
+  domain: financial_ledger
+  description: "Accounting period lifecycle from open through closing to archived"
+  tags: [finance, ledger]
+requires: []
+spec:
+  initial: open
+  states:
+    open:
+      label: Open
+      category: open
+    closing:
+      label: Closing
+      category: hold
+    closed:
+      label: Closed
+      category: closed
+      terminal: true
+    archived:
+      label: Archived
+      category: closed
+      terminal: true
+  transitions:
+    open: [closing]
+    closing: [closed]
+    closed: [archived]

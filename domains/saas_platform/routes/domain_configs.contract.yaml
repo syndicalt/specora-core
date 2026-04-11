@@ -1,0 +1,39 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: domain_configs
+  domain: saas_platform
+  description: "CRUD API for domain configurations"
+  tags: [saas, enterprise]
+requires:
+  - entity/saas_platform/domain_config
+spec:
+  entity: entity/saas_platform/domain_config
+  base_path: /domain-configs
+  endpoints:
+    - method: GET
+      path: /
+      summary: List domain configs
+      roles: [admin, owner]
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create domain config
+      roles: [admin]
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get domain config
+      roles: [admin, owner]
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update domain config
+      roles: [admin]
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete domain config
+      roles: [admin]
+      response: {status: 204}

@@ -1,0 +1,23 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: reconciliations
+  domain: financial_ledger
+  description: "Browse and manage reconciliations"
+  tags: [finance, ledger]
+requires:
+  - entity/financial_ledger/reconciliation
+spec:
+  route: /reconciliations
+  title: Reconciliations
+  entity: entity/financial_ledger/reconciliation
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /reconciliations
+      alias: reconciliations
+  views:
+    - type: kanban
+      default: true
+      card_fields: [account_id, expected_balance_cents, actual_balance_cents, difference_cents]
+    - type: table
+      columns: [account_id, period_id, expected_balance_cents, actual_balance_cents, difference_cents, reconciled_by, reconciled_at]

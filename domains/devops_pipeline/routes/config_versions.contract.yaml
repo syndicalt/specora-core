@@ -1,0 +1,26 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: config_versions
+  domain: devops_pipeline
+  description: "CRUD API for configuration versions"
+  tags: [devops, api, config]
+requires:
+  - entity/devops_pipeline/config_version
+spec:
+  entity: entity/devops_pipeline/config_version
+  base_path: /config-versions
+  endpoints:
+    - method: GET
+      path: /
+      summary: List all config versions
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create a new config version
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get config version details
+      response: {status: 200, shape: entity}

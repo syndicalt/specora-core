@@ -1,0 +1,46 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: api_key
+  domain: saas_platform
+  description: "An API key for tenant programmatic access"
+  tags: [saas, enterprise]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/saas_platform/tenant
+spec:
+  icon: key
+  number_prefix: KEY
+  fields:
+    tenant_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/saas_platform/tenant
+        display: name
+        graph_edge: AUTHENTICATES
+    key_name:
+      type: string
+      required: true
+    key_prefix:
+      type: string
+      required: true
+      description: "First 8 chars for identification"
+    scopes:
+      type: text
+      required: true
+      description: "Comma-separated permission scopes"
+    rate_limit_rpm:
+      type: integer
+      default: 60
+    last_used_at:
+      type: datetime
+    expires_at:
+      type: datetime
+    is_active:
+      type: boolean
+      default: true
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

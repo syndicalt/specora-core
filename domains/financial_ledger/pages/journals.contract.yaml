@@ -1,0 +1,23 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: journals
+  domain: financial_ledger
+  description: "Browse and manage journal entries"
+  tags: [finance, ledger]
+requires:
+  - entity/financial_ledger/journal
+spec:
+  route: /journals
+  title: Journal Entries
+  entity: entity/financial_ledger/journal
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /journals
+      alias: journals
+  views:
+    - type: kanban
+      default: true
+      card_fields: [reference_number, description, total_debit_cents, posted_by]
+    - type: table
+      columns: [reference_number, description, total_debit_cents, total_credit_cents, posted_by, posted_at]

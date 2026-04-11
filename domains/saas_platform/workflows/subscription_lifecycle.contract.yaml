@@ -1,0 +1,38 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: subscription_lifecycle
+  domain: saas_platform
+  description: "Subscription lifecycle from pending through active to cancellation or expiry"
+  tags: [saas, enterprise]
+requires: []
+spec:
+  initial: pending
+  states:
+    pending:
+      label: Pending
+      category: open
+    active:
+      label: Active
+      category: open
+    past_due:
+      label: Past Due
+      category: hold
+    cancelled:
+      label: Cancelled
+      category: closed
+      terminal: true
+    expired:
+      label: Expired
+      category: closed
+      terminal: true
+  transitions:
+    pending: [active, cancelled]
+    active: [past_due, cancelled, expired]
+    past_due: [active, cancelled]
+  guards:
+    "pending -> active":
+      require_fields: [payment_method]
+  side_effects:
+    "* -> cancelled":
+      - set_field: {auto_renew: false}

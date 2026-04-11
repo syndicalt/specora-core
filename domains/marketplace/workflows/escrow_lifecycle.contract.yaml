@@ -1,0 +1,32 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: escrow_lifecycle
+  domain: marketplace
+  description: "Escrow fund holding and release lifecycle"
+  tags: [marketplace]
+requires: []
+spec:
+  initial: holding
+  states:
+    holding:
+      label: Holding
+      category: open
+    released:
+      label: Released
+      category: closed
+      terminal: true
+    refunded:
+      label: Refunded
+      category: closed
+      terminal: true
+  transitions:
+    holding: [released, refunded]
+  guards:
+    "holding -> released":
+      require_fields: [release_reason]
+  side_effects:
+    "* -> released":
+      - set_field: {released_at: "now"}
+    "* -> refunded":
+      - set_field: {released_at: "now"}

@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: balance_snapshots
+  domain: financial_ledger
+  description: "Browse point-in-time balance snapshots"
+  tags: [finance, ledger]
+requires:
+  - entity/financial_ledger/balance_snapshot
+spec:
+  route: /balance-snapshots
+  title: Balance Snapshots
+  entity: entity/financial_ledger/balance_snapshot
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /balance-snapshots
+      alias: balance_snapshots
+  views:
+    - type: table
+      default: true
+      columns: [account_id, period_id, balance_cents, debit_total_cents, credit_total_cents, snapshot_at]

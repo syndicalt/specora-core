@@ -1,0 +1,23 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: subscriptions
+  domain: saas_platform
+  description: "Browse and manage subscriptions"
+  tags: [saas, enterprise]
+requires:
+  - entity/saas_platform/subscription
+spec:
+  route: /subscriptions
+  title: Subscriptions
+  entity: entity/saas_platform/subscription
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /subscriptions
+      alias: subscriptions
+  views:
+    - type: kanban
+      default: true
+      card_fields: [tenant_id, plan, billing_cycle, price_cents]
+    - type: table
+      columns: [tenant_id, plan, billing_cycle, price_cents, currency, auto_renew]

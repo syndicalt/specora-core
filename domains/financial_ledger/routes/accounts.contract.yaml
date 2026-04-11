@@ -1,0 +1,34 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: accounts
+  domain: financial_ledger
+  description: "CRUD API for accounts"
+  tags: [finance, ledger]
+requires:
+  - entity/financial_ledger/account
+spec:
+  entity: entity/financial_ledger/account
+  base_path: /accounts
+  endpoints:
+    - method: GET
+      path: /
+      summary: List accounts
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create account
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get account
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update account
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete account
+      response: {status: 204}

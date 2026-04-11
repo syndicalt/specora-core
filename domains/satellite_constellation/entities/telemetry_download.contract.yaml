@@ -1,0 +1,54 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: telemetry_download
+  domain: satellite_constellation
+  description: "Telemetry data downloaded from a satellite"
+  tags: [satellite, telemetry, data]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/satellite_constellation/satellite
+  - entity/satellite_constellation/ground_station
+  - entity/satellite_constellation/pass_window
+spec:
+  icon: download
+  number_prefix: TLM
+  fields:
+    satellite_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/satellite_constellation/satellite
+        display: designation
+        graph_edge: TELEMETRY_FROM
+    ground_station_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/satellite_constellation/ground_station
+        display: name
+        graph_edge: RECEIVED_BY
+    pass_window_id:
+      type: uuid
+      references:
+        entity: entity/satellite_constellation/pass_window
+        display: aos_time
+        graph_edge: DOWNLOADED_DURING
+    data_size_mb:
+      type: number
+      description: "Size of downloaded data in megabytes"
+    signal_quality:
+      type: string
+      enum: [excellent, good, fair, poor, corrupted]
+      description: "Quality of the received signal"
+    packet_loss_pct:
+      type: number
+      description: "Percentage of packets lost during download"
+    downloaded_at:
+      type: datetime
+      required: true
+      description: "Timestamp of the download"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

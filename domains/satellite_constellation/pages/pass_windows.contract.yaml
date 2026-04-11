@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: pass_windows
+  domain: satellite_constellation
+  description: "Browse satellite pass windows"
+  tags: [satellite, pass, ui]
+requires:
+  - entity/satellite_constellation/pass_window
+spec:
+  route: /pass-windows
+  title: Pass Windows
+  entity: entity/satellite_constellation/pass_window
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /pass-windows
+      alias: pass_windows
+  views:
+    - type: table
+      default: true
+      columns: [satellite_id, ground_station_id, aos_time, los_time, max_elevation_deg, is_utilized]

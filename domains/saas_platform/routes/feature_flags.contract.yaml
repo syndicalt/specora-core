@@ -1,0 +1,39 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: feature_flags
+  domain: saas_platform
+  description: "CRUD API for feature flags"
+  tags: [saas, enterprise]
+requires:
+  - entity/saas_platform/feature_flag
+spec:
+  entity: entity/saas_platform/feature_flag
+  base_path: /feature-flags
+  endpoints:
+    - method: GET
+      path: /
+      summary: List feature flags
+      roles: [admin, owner]
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create feature flag
+      roles: [admin]
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get feature flag
+      roles: [admin, owner]
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update feature flag
+      roles: [admin]
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete feature flag
+      roles: [admin]
+      response: {status: 204}

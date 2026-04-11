@@ -1,0 +1,46 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: approval_gate
+  domain: devops_pipeline
+  description: "An approval decision for a deployment"
+  tags: [devops, approval, governance]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/devops_pipeline/deployment
+  - workflow/devops_pipeline/approval_flow
+spec:
+  icon: shield-check
+  number_prefix: APR
+  fields:
+    deployment_id:
+      type: uuid
+      required: true
+      description: "Deployment requiring approval"
+      references:
+        entity: entity/devops_pipeline/deployment
+        display: version
+        graph_edge: GATES
+    approver:
+      type: string
+      description: "Person who made the decision"
+    role:
+      type: string
+      required: true
+      description: "Required approver role"
+      enum: [tech_lead, sre, security, product_owner]
+    decision:
+      type: string
+      description: "Approval decision"
+      enum: [approved, rejected]
+    comment:
+      type: text
+      description: "Approval or rejection rationale"
+    decided_at:
+      type: datetime
+      description: "When the decision was made"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/devops_pipeline/approval_flow

@@ -1,0 +1,40 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: satellites
+  domain: satellite_constellation
+  description: "CRUD API for satellites"
+  tags: [satellite, api]
+requires:
+  - entity/satellite_constellation/satellite
+  - workflow/satellite_constellation/satellite_lifecycle
+spec:
+  entity: entity/satellite_constellation/satellite
+  base_path: /satellites
+  endpoints:
+    - method: GET
+      path: /
+      summary: List satellites
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create satellite
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get satellite
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update satellite
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete satellite
+      response: {status: 204}
+    - method: PUT
+      path: /{id}/state
+      summary: Transition satellite state
+      request_body: {required_fields: [state]}
+      response: {status: 200, shape: entity}

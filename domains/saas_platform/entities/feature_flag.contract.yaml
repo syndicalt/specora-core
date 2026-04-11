@@ -1,0 +1,42 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: feature_flag
+  domain: saas_platform
+  description: "A per-tenant feature flag for gradual rollouts"
+  tags: [saas, enterprise]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/saas_platform/tenant
+spec:
+  icon: toggle-left
+  number_prefix: FLG
+  fields:
+    tenant_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/saas_platform/tenant
+        display: name
+        graph_edge: FLAGGED_FOR
+    feature_name:
+      type: string
+      required: true
+    description:
+      type: text
+    is_enabled:
+      type: boolean
+      required: true
+      default: false
+    rollout_percentage:
+      type: integer
+      default: 0
+      constraints:
+        min: 0
+        max: 100
+    expires_at:
+      type: datetime
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

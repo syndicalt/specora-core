@@ -1,0 +1,42 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: domain_config
+  domain: saas_platform
+  description: "A per-tenant configuration entry"
+  tags: [saas, enterprise]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/saas_platform/tenant
+spec:
+  icon: globe
+  number_prefix: DOM
+  fields:
+    tenant_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/saas_platform/tenant
+        display: name
+        graph_edge: CONFIGURED_FOR
+    config_key:
+      type: string
+      required: true
+      description: "Configuration key"
+    config_value:
+      type: text
+      required: true
+    category:
+      type: string
+      required: true
+      enum: [branding, features, integrations, security, notifications]
+    is_secret:
+      type: boolean
+      default: false
+    applied_by:
+      type: string
+      required: true
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

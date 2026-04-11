@@ -32,6 +32,7 @@ def _generate_list_page(page: PageIR, entity: EntityIR, route_name: str) -> Gene
     cls = _to_pascal(entity.name)
     has_kanban = any(v.get("type") == "kanban" for v in page.views) and entity.state_machine is not None
     has_table = any(v.get("type") == "table" for v in page.views)
+    default_view = "kanban" if any(v.get("type") == "kanban" and v.get("default") for v in page.views) else "table"
 
     imports = [
         '"use client";',
@@ -48,10 +49,8 @@ def _generate_list_page(page: PageIR, entity: EntityIR, route_name: str) -> Gene
     view_toggle = ""
     if has_table and has_kanban:
         view_toggle = '''
-        <div className="flex gap-2">
           <Button variant={view === "table" ? "default" : "outline"} size="sm" onClick={() => setView("table")}>Table</Button>
-          <Button variant={view === "kanban" ? "default" : "outline"} size="sm" onClick={() => setView("kanban")}>Kanban</Button>
-        </div>'''
+          <Button variant={view === "kanban" ? "default" : "outline"} size="sm" onClick={() => setView("kanban")}>Kanban</Button>'''
 
     table_render = f'<{cls}Table items={{items}} basePath="/{route_name}" onRefresh={{loadData}} />' if has_table else ""
     kanban_render = f'<{cls}Kanban items={{items}} onTransition={{handleTransition}} />' if has_kanban else ""
@@ -79,7 +78,7 @@ export default function {cls}ListPage() {{
   const router = useRouter();
   const [items, setItems] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
-  {"const [view, setView] = useState<'table' | 'kanban'>('table');" if has_table and has_kanban else ""}
+  {f"const [view, setView] = useState<'table' | 'kanban'>('{default_view}');" if has_table and has_kanban else ""}
 
   async function loadData() {{
     const data = await {page.name}.list();
@@ -97,7 +96,7 @@ export default function {cls}ListPage() {{
           <h1 className="text-2xl font-bold">{page.title or cls}</h1>
           <p className="text-gray-500 text-sm">{{total}} total</p>
         </div>
-        <div className="flex gap-2">{view_toggle}
+        <div className="flex gap-2 items-center">{view_toggle}
           <Button onClick={{() => router.push("/{route_name}/new")}}>Create</Button>
         </div>
       </div>

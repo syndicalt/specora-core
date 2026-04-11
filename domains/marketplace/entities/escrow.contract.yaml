@@ -1,0 +1,42 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: escrow
+  domain: marketplace
+  description: "Escrow holding funds for a transaction"
+  tags: [marketplace]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/marketplace/transaction
+  - workflow/marketplace/escrow_lifecycle
+spec:
+  icon: lock
+  number_prefix: ESC
+  fields:
+    transaction_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/marketplace/transaction
+        display: final_amount_cents
+        graph_edge: HELD_FOR
+    amount_cents:
+      type: integer
+      required: true
+      description: "Amount held in escrow in cents"
+    held_at:
+      type: datetime
+      required: true
+      description: "When funds were placed in escrow"
+    released_at:
+      type: datetime
+      description: "When funds were released"
+    release_reason:
+      type: string
+      enum: [delivery_confirmed, dispute_resolved, auto_release, refunded]
+      description: "Reason for releasing escrow"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/marketplace/escrow_lifecycle

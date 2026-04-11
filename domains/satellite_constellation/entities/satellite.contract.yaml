@@ -1,0 +1,60 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: satellite
+  domain: satellite_constellation
+  description: "A satellite in the constellation"
+  tags: [satellite, ops]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - workflow/satellite_constellation/satellite_lifecycle
+spec:
+  icon: satellite
+  number_prefix: SAT
+  fields:
+    name:
+      type: string
+      required: true
+      description: "Satellite display name"
+    designation:
+      type: string
+      required: true
+      description: "Official satellite designation"
+    orbit_type:
+      type: string
+      enum: [leo, meo, geo, heo, sso]
+      description: "Orbital regime"
+    altitude_km:
+      type: number
+      description: "Orbital altitude in kilometers"
+    inclination_deg:
+      type: number
+      description: "Orbital inclination in degrees"
+    manufacturer:
+      type: string
+      description: "Satellite manufacturer"
+    launch_date:
+      type: date
+      description: "Date of launch"
+    expected_lifespan_years:
+      type: integer
+      description: "Expected operational lifespan in years"
+    battery_level:
+      type: integer
+      description: "Battery charge percentage"
+      constraints:
+        min: 0
+        max: 100
+    signal_strength:
+      type: string
+      enum: [strong, nominal, weak, lost]
+      description: "Current signal strength"
+    is_active:
+      type: boolean
+      default: true
+      description: "Whether the satellite is active"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/satellite_constellation/satellite_lifecycle

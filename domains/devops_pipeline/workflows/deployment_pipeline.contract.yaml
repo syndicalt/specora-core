@@ -1,0 +1,76 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: deployment_pipeline
+  domain: devops_pipeline
+  description: "Full deployment lifecycle from pending through canary to production promotion"
+  tags: [devops, cicd, deployment]
+requires: []
+spec:
+  initial: pending
+  states:
+    pending:
+      label: Pending
+      category: open
+    awaiting_approval:
+      label: Awaiting Approval
+      category: hold
+    approved:
+      label: Approved
+      category: open
+    building:
+      label: Building
+      category: open
+    deploying:
+      label: Deploying
+      category: open
+    canary:
+      label: Canary
+      category: open
+    promoted:
+      label: Promoted
+      category: open
+    completed:
+      label: Completed
+      category: closed
+      terminal: true
+    rolled_back:
+      label: Rolled Back
+      category: closed
+      terminal: true
+    failed:
+      label: Failed
+      category: closed
+  transitions:
+    pending: [awaiting_approval, failed]
+    awaiting_approval: [approved, failed]
+    approved: [building, failed]
+    building: [deploying, failed]
+    deploying: [canary, failed]
+    canary: [promoted, rolled_back, failed]
+    promoted: [completed, rolled_back]
+    failed: [pending, building]
+  guards:
+    "pending -> awaiting_approval":
+      require_fields: [commit_sha, artifact_id]
+    "awaiting_approval -> approved":
+      require_fields: [approved_by]
+    "canary -> promoted":
+      require_fields: [health_status]
+    "promoted -> rolled_back":
+      require_fields: [rollback_reason]
+    "failed -> building":
+      require_fields: [retry_reason]
+  side_effects:
+    "* -> completed":
+      - set_field: {completed_at: "now"}
+    "* -> rolled_back":
+      - set_field: {completed_at: "now"}
+    "* -> failed":
+      - set_field: {completed_at: "now"}
+    "pending -> awaiting_approval":
+      - set_field: {started_at: "now"}
+    "failed -> pending":
+      - set_field: {completed_at: null}
+    "failed -> building":
+      - set_field: {completed_at: null}

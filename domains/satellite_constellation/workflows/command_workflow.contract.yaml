@@ -1,0 +1,50 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: command_workflow
+  domain: satellite_constellation
+  description: "Workflow for satellite command uploads from draft to execution"
+  tags: [satellite, command]
+requires: []
+spec:
+  initial: drafted
+  states:
+    drafted:
+      label: Drafted
+      category: open
+    validated:
+      label: Validated
+      category: open
+    queued:
+      label: Queued
+      category: hold
+    uploaded:
+      label: Uploaded
+      category: open
+    acknowledged:
+      label: Acknowledged
+      category: open
+    executed:
+      label: Executed
+      category: closed
+      terminal: true
+    failed:
+      label: Failed
+      category: closed
+      terminal: true
+  transitions:
+    drafted: [validated, failed]
+    validated: [queued]
+    queued: [uploaded]
+    uploaded: [acknowledged, failed]
+    acknowledged: [executed, failed]
+  guards:
+    "drafted -> validated":
+      require_fields: [command_type, satellite_id]
+    "queued -> uploaded":
+      require_fields: [scheduled_pass_id]
+  side_effects:
+    "* -> executed":
+      - set_field: {executed_at: "now"}
+    "* -> failed":
+      - set_field: {response_code: "ERROR"}

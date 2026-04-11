@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: accounts
+  domain: financial_ledger
+  description: "Browse and manage chart of accounts"
+  tags: [finance, ledger]
+requires:
+  - entity/financial_ledger/account
+spec:
+  route: /accounts
+  title: Accounts
+  entity: entity/financial_ledger/account
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /accounts
+      alias: accounts
+  views:
+    - type: table
+      default: true
+      columns: [name, account_code, account_type, currency, balance_cents, is_active]

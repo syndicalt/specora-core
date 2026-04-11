@@ -1,0 +1,23 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: disputes
+  domain: marketplace
+  description: "Browse and manage disputes"
+  tags: [marketplace]
+requires:
+  - entity/marketplace/dispute
+spec:
+  route: /disputes
+  title: Disputes
+  entity: entity/marketplace/dispute
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /disputes
+      alias: disputes
+  views:
+    - type: kanban
+      default: true
+      card_fields: [transaction_id, filed_by, reason]
+    - type: table
+      columns: [transaction_id, filed_by, reason, resolution_type, mediator]

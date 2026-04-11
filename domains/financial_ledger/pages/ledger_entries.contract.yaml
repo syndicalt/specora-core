@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: ledger_entries
+  domain: financial_ledger
+  description: "Browse ledger entry lines"
+  tags: [finance, ledger]
+requires:
+  - entity/financial_ledger/ledger_entry
+spec:
+  route: /ledger-entries
+  title: Ledger Entries
+  entity: entity/financial_ledger/ledger_entry
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /ledger-entries
+      alias: ledger_entries
+  views:
+    - type: table
+      default: true
+      columns: [journal_id, account_id, entry_type, amount_cents, memo, line_number]

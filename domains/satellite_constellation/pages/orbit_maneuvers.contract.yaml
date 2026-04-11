@@ -1,0 +1,23 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: orbit_maneuvers
+  domain: satellite_constellation
+  description: "Browse and manage orbit maneuvers"
+  tags: [satellite, maneuver, ui]
+requires:
+  - entity/satellite_constellation/orbit_maneuver
+spec:
+  route: /orbit-maneuvers
+  title: Orbit Maneuvers
+  entity: entity/satellite_constellation/orbit_maneuver
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /orbit-maneuvers
+      alias: orbit_maneuvers
+  views:
+    - type: kanban
+      default: true
+      card_fields: [satellite_id, maneuver_type, delta_v_ms, planned_date]
+    - type: table
+      columns: [satellite_id, maneuver_type, delta_v_ms, fuel_cost_kg, planned_date, executed_date, approved_by]

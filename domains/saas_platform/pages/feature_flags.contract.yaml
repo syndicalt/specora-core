@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: feature_flags
+  domain: saas_platform
+  description: "Browse and manage feature flags"
+  tags: [saas, enterprise]
+requires:
+  - entity/saas_platform/feature_flag
+spec:
+  route: /feature-flags
+  title: Feature Flags
+  entity: entity/saas_platform/feature_flag
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /feature-flags
+      alias: feature_flags
+  views:
+    - type: table
+      default: true
+      columns: [tenant_id, feature_name, is_enabled, rollout_percentage, expires_at]

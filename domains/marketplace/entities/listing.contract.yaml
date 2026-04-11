@@ -1,0 +1,62 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: listing
+  domain: marketplace
+  description: "A product or service listing for sale"
+  tags: [marketplace]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/marketplace/seller
+  - workflow/marketplace/listing_lifecycle
+spec:
+  icon: tag
+  number_prefix: LST
+  fields:
+    seller_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/marketplace/seller
+        display: display_name
+        graph_edge: LISTED_BY
+    title:
+      type: string
+      required: true
+      constraints:
+        maxLength: 200
+      description: "Listing title"
+    description:
+      type: text
+      required: true
+      description: "Listing description"
+    category:
+      type: string
+      required: true
+      enum: [electronics, clothing, home, sports, books, services, other]
+    price_cents:
+      type: integer
+      required: true
+      description: "Price in cents"
+    currency:
+      type: string
+      required: true
+      enum: [usd, eur, gbp]
+    quantity_available:
+      type: integer
+      required: true
+      default: 1
+      description: "Available quantity"
+    condition:
+      type: string
+      enum: [new, like_new, good, fair, poor]
+      description: "Item condition"
+    images_count:
+      type: integer
+      default: 0
+      description: "Number of images attached"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/marketplace/listing_lifecycle

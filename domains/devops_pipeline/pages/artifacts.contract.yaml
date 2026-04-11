@@ -1,0 +1,21 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: artifacts
+  domain: devops_pipeline
+  description: "Build artifact registry"
+  tags: [devops, build]
+requires:
+  - entity/devops_pipeline/artifact
+spec:
+  route: /artifacts
+  title: Build Artifacts
+  entity: entity/devops_pipeline/artifact
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /artifacts
+      alias: artifacts
+  views:
+    - type: table
+      default: true
+      columns: [service_id, image_tag, commit_sha, branch, build_status, size_mb]

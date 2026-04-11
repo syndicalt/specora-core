@@ -1,0 +1,23 @@
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: listings
+  domain: marketplace
+  description: "Browse and manage listings"
+  tags: [marketplace]
+requires:
+  - entity/marketplace/listing
+spec:
+  route: /listings
+  title: Listings
+  entity: entity/marketplace/listing
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /listings
+      alias: listings
+  views:
+    - type: kanban
+      default: true
+      card_fields: [title, seller_id, price_cents, category, condition]
+    - type: table
+      columns: [title, seller_id, price_cents, category, condition, quantity_available]

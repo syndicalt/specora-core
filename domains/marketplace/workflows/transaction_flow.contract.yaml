@@ -1,0 +1,48 @@
+apiVersion: specora.dev/v1
+kind: Workflow
+metadata:
+  name: transaction_flow
+  domain: marketplace
+  description: "Transaction flow from initiation through payment, shipping, and delivery"
+  tags: [marketplace]
+requires: []
+spec:
+  initial: initiated
+  states:
+    initiated:
+      label: Initiated
+      category: open
+    payment_held:
+      label: Payment Held
+      category: open
+    shipped:
+      label: Shipped
+      category: open
+    delivered:
+      label: Delivered
+      category: open
+    completed:
+      label: Completed
+      category: closed
+      terminal: true
+    disputed:
+      label: Disputed
+      category: hold
+  transitions:
+    initiated: [payment_held]
+    payment_held: [shipped]
+    shipped: [delivered, disputed]
+    delivered: [completed, disputed]
+    disputed: [completed]
+  guards:
+    "payment_held -> shipped":
+      require_fields: [tracking_number]
+    "shipped -> delivered":
+      require_fields: [delivered_at]
+  side_effects:
+    "* -> shipped":
+      - set_field: {shipped_at: "now"}
+    "* -> delivered":
+      - set_field: {delivered_at: "now"}
+    "* -> completed":
+      - set_field: {delivered_at: "now"}

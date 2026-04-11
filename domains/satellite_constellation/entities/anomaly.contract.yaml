@@ -1,0 +1,52 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: anomaly
+  domain: satellite_constellation
+  description: "An anomaly detected on a satellite"
+  tags: [satellite, anomaly, ops]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/satellite_constellation/satellite
+spec:
+  icon: alert-triangle
+  number_prefix: ANM
+  fields:
+    satellite_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/satellite_constellation/satellite
+        display: designation
+        graph_edge: ANOMALY_ON
+    severity:
+      type: string
+      required: true
+      enum: [critical, major, minor, informational]
+      description: "Severity level of the anomaly"
+    subsystem:
+      type: string
+      required: true
+      enum: [power, thermal, attitude, propulsion, payload, communications, software]
+      description: "Affected subsystem"
+    description:
+      type: text
+      required: true
+      description: "Description of the anomaly"
+    detected_at:
+      type: datetime
+      required: true
+      description: "When the anomaly was detected"
+    resolved_at:
+      type: datetime
+      description: "When the anomaly was resolved"
+    root_cause:
+      type: text
+      description: "Root cause analysis"
+    corrective_action:
+      type: text
+      description: "Corrective action taken"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

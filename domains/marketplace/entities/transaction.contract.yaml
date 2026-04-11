@@ -1,0 +1,68 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: transaction
+  domain: marketplace
+  description: "A completed sale transaction between buyer and seller"
+  tags: [marketplace]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/marketplace/listing
+  - entity/marketplace/offer
+  - entity/marketplace/buyer
+  - entity/marketplace/seller
+  - workflow/marketplace/transaction_flow
+spec:
+  icon: receipt
+  number_prefix: TXN
+  fields:
+    listing_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/marketplace/listing
+        display: title
+        graph_edge: TRANSACTION_FOR
+    offer_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/marketplace/offer
+        display: amount_cents
+        graph_edge: RESULTED_FROM
+    buyer_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/marketplace/buyer
+        display: display_name
+        graph_edge: PURCHASED_BY
+    seller_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/marketplace/seller
+        display: display_name
+        graph_edge: SOLD_BY
+    final_amount_cents:
+      type: integer
+      required: true
+      description: "Final transaction amount in cents"
+    commission_cents:
+      type: integer
+      required: true
+      description: "Platform commission in cents"
+    tracking_number:
+      type: string
+      description: "Shipping tracking number"
+    shipped_at:
+      type: datetime
+      description: "When the item was shipped"
+    delivered_at:
+      type: datetime
+      description: "When the item was delivered"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/marketplace/transaction_flow

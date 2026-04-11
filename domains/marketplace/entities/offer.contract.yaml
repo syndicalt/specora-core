@@ -1,0 +1,59 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: offer
+  domain: marketplace
+  description: "A buyer offer on a listing with negotiation support"
+  tags: [marketplace]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/marketplace/listing
+  - entity/marketplace/buyer
+  - entity/marketplace/seller
+  - workflow/marketplace/offer_negotiation
+spec:
+  icon: message-circle
+  number_prefix: OFR
+  fields:
+    listing_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/marketplace/listing
+        display: title
+        graph_edge: OFFER_ON
+    buyer_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/marketplace/buyer
+        display: display_name
+        graph_edge: OFFERED_BY
+    seller_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/marketplace/seller
+        display: display_name
+        graph_edge: OFFERED_TO
+    amount_cents:
+      type: integer
+      required: true
+      description: "Offer amount in cents"
+    message:
+      type: text
+      description: "Message from buyer"
+    counter_amount_cents:
+      type: integer
+      description: "Counter offer amount in cents"
+    counter_message:
+      type: text
+      description: "Counter offer message from seller"
+    expires_at:
+      type: datetime
+      description: "Offer expiration time"
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+  state_machine: workflow/marketplace/offer_negotiation

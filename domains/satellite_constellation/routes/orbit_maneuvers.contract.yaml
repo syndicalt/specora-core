@@ -1,0 +1,40 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: orbit_maneuvers
+  domain: satellite_constellation
+  description: "CRUD API for orbit maneuvers"
+  tags: [satellite, maneuver, api]
+requires:
+  - entity/satellite_constellation/orbit_maneuver
+  - workflow/satellite_constellation/maneuver_workflow
+spec:
+  entity: entity/satellite_constellation/orbit_maneuver
+  base_path: /orbit-maneuvers
+  endpoints:
+    - method: GET
+      path: /
+      summary: List orbit maneuvers
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create orbit maneuver
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get orbit maneuver
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update orbit maneuver
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete orbit maneuver
+      response: {status: 204}
+    - method: PUT
+      path: /{id}/state
+      summary: Transition orbit maneuver state
+      request_body: {required_fields: [state]}
+      response: {status: 200, shape: entity}
