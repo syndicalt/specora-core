@@ -2,7 +2,7 @@
 
 **Software that fixes its own blueprints.**
 
-[![Tests](https://img.shields.io/badge/tests-158%20passing-brightgreen)]() [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-orange)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-171%20passing-brightgreen)]() [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-orange)](LICENSE)
 
 Specora Core is a Contract-Driven Development engine. You write YAML contracts describing your domain -- entities, workflows, routes, pages -- and the engine compiles them into a production application with a FastAPI backend, PostgreSQL database, Next.js frontend, and a self-healing sidecar that detects runtime failures and proposes contract fixes. If all your code is deleted but the contracts survive, you regenerate everything.
 
@@ -119,16 +119,22 @@ The generated backend uses a repository interface -- swap between `postgres` and
 
 ---
 
-## The Demo
+## Demo Domains
 
-The `domains/devops_pipeline/` directory contains a complete CI/CD deployment platform: services, environments, artifacts, deployments with a 10-state pipeline workflow, approval gates, rollback tracking, config versioning, and user management. It serves as both documentation and proof:
+Each domain proves a different capability of the engine. They're real contracts -- validate, compile, and generate any of them.
+
+| Domain | Highlights | Entities | Workflows |
+|--------|-----------|----------|-----------|
+| **devops_pipeline** | Complex workflows, self-healing. 10-state deployment pipeline with guards, side effects, approval gates, and rollback tracking. | 8 | 2 |
+| **saas_platform** | Per-endpoint RBAC. JWT auth with admin/owner/member/viewer roles. Every endpoint declares which roles can access it -- the generator emits `require_role(...)` automatically. | 8 | 3 |
+| **marketplace** | Interlocking state machines. Buyer and seller with offer negotiation, escrow, dispute resolution, and transaction flows that synchronize across entities. | 8 | 5 |
+| **financial_ledger** | Immutability and compliance. Event-sourced journal entries, period close workflows, reconciliation, and an audit trail that IS the product. | 8 | 4 |
+| **satellite_constellation** | Ops and monitoring. Satellites, ground stations, pass windows, command uploads, telemetry downloads. 10-state orbital lifecycle. Visual kanban wow factor. | 7 | 3 |
+| **helpdesk** | The original. Basic CDD proof: tickets, customers, agents, SLA tracking, and the full self-healing loop. | 6 | 1 |
 
 ```bash
-# Validate the demo domain
-spc forge validate domains/devops_pipeline
-
-# Compile and generate
-spc forge generate domains/devops_pipeline -o runtime
+# Pick any domain
+spc forge generate domains/saas_platform -o runtime
 
 # Run it
 cd runtime && docker compose up -d
@@ -246,9 +252,9 @@ specora-core/
   extractor/      # Reverse-engineer existing code to contracts
   engine/         # LLM infrastructure (multi-provider)
   spec/           # Meta-schemas and standard library
-  domains/        # Example domains (helpdesk)
+  domains/        # Demo domains (6 verticals)
   runtime/        # Generated output (disposable)
-  tests/          # 158 tests across the engine
+  tests/          # 171 tests across the engine
   cli/            # CLI entry points
 ```
 
