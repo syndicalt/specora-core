@@ -1,0 +1,7 @@
+theme: jekyll-theme-primer
+
+title: Specora Core
+description: Contract-Driven Development Engine
+
+exclude:
+  - superpowers/
