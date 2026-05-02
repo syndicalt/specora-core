@@ -35,6 +35,7 @@ from typing import Any
 
 from deepdiff import DeepDiff
 
+from forge.diff.change_contract import build_change_contract
 from forge.diff.models import ContractDiff, DiffOrigin, FieldChange, hash_contract
 
 
@@ -224,14 +225,16 @@ def create_diff(
     Returns:
         A ContractDiff record ready to be stored.
     """
+    changes = compute_diff(before, after)
     return ContractDiff(
         contract_fqn=contract_fqn,
         origin=origin,
         origin_detail=origin_detail,
         reason=reason,
-        changes=compute_diff(before, after),
+        changes=changes,
         before_hash=hash_contract(before),
         after_hash=hash_contract(after),
         before_snapshot=before,
         after_snapshot=after,
+        change_contract=build_change_contract(changes),
     )

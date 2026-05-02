@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-_GENERATED_PATTERN = re.compile(r"@generated\s+from\s+([\w/]+)")
+from forge.provenance import first_provenance_source
 
 
 def trace_to_contract(
@@ -35,7 +35,6 @@ def _read_generated_header(path: Path) -> Optional[str]:
         return None
     try:
         head = path.read_text(encoding="utf-8")[:500]
-        match = _GENERATED_PATTERN.search(head)
-        return match.group(1) if match else None
+        return first_provenance_source(head)
     except OSError:
         return None

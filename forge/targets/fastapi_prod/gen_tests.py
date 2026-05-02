@@ -478,10 +478,20 @@ def _generate_state_tests(
     targets = sm.transitions.get(initial, [])
     if targets:
         target = targets[0]
+        guard_payload = _guard_payload_code(entity, initial, target)
         lines.extend([
             f"{pipeline_marker}def test_transition_{entity_name}(client):",
             f'    """PUT {base_path}/{{id}}/state transitions from {initial} to {target}."""',
             f"    created = _create_{entity_name}(client)",
+        ])
+        if guard_payload != "{}":
+            lines.extend([
+                f'    client.patch(',
+                f'        f"{base_path}/{{created[\'id\']}}",',
+                f"        json={guard_payload}{headers_arg},",
+                "    )",
+            ])
+        lines.extend([
             f'    resp = client.put(',
             f'        f"{base_path}/{{created[\'id\']}}/state",',
             f'        json={{"state": "{target}"}}{headers_arg},',
@@ -523,12 +533,11 @@ def _generate_state_tests(
         "",
     ])
 
-    # Guard violation tests — marked xfail until gen_routes.py enforces guards
+    # Guard violation tests
     for guard in sm.guards:
         if guard.require_fields:
             fields_str = ", ".join(guard.require_fields)
             lines.extend([
-                f'@pytest.mark.xfail(reason="guard enforcement not yet generated in route handlers")',
                 f"{pipeline_marker}def test_transition_{entity_name}_{guard.from_state}_to_{guard.to_state}_guard(client):",
                 f'    """Transition {guard.from_state} -> {guard.to_state} requires {fields_str}."""',
                 f"    created = _create_{entity_name}(client)",
@@ -557,6 +566,30 @@ def _generate_state_tests(
             ])
 
     return lines
+
+
+def _guard_payload_code(entity: EntityIR, from_state: str, to_state: str) -> str:
+    """Return a PATCH payload satisfying guard fields for a transition."""
+    sm = entity.state_machine
+    if not sm:
+        return "{}"
+    guard = next(
+        (
+            g for g in sm.guards
+            if g.from_state == from_state and g.to_state == to_state and g.require_fields
+        ),
+        None,
+    )
+    if not guard:
+        return "{}"
+
+    fields = {field.name: field for field in entity.fields}
+    pairs = []
+    for field_name in guard.require_fields:
+        field = fields.get(field_name)
+        value = _default_value(field) if field else '"test"'
+        pairs.append(f'"{field_name}": {value}')
+    return "{" + ", ".join(pairs) + "}"
 
 
 def _find_transition_path(

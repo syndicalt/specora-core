@@ -2,7 +2,7 @@
 """Generate repository interfaces and adapters."""
 from __future__ import annotations
 
-from forge.ir.model import DomainIR, EntityIR
+from forge.ir.model import DomainIR, EntityIR, StateMachineIR
 from forge.targets.base import GeneratedFile, provenance_header
 
 PYTHON_TYPE_MAP = {
@@ -25,6 +25,16 @@ def generate_repositories(ir: DomainIR) -> list[GeneratedFile]:
 
 def _to_class(name: str) -> str:
     return "".join(p.capitalize() for p in name.split("_"))
+
+
+def _guard_map(sm: StateMachineIR | None) -> dict[tuple[str, str], list[str]]:
+    if not sm:
+        return {}
+    return {
+        (guard.from_state, guard.to_state): guard.require_fields
+        for guard in sm.guards
+        if guard.require_fields
+    }
 
 
 def _generate_base(ir: DomainIR) -> GeneratedFile:
@@ -116,6 +126,7 @@ def _generate_memory(ir: DomainIR) -> GeneratedFile:
         table = entity.table_name
         initial_state = entity.state_machine.initial if entity.state_machine else None
         transitions = entity.state_machine.transitions if entity.state_machine else {}
+        guards = _guard_map(entity.state_machine)
 
         lines.append(f"class Memory{cls}Repository({cls}Repository):")
         lines.append(f'    """In-memory adapter for {entity.name}."""')
@@ -165,6 +176,10 @@ def _generate_memory(ir: DomainIR) -> GeneratedFile:
             lines.append(f"        valid_transitions = {dict(transitions)}")
             lines.append("        if current not in valid_transitions or new_state not in valid_transitions[current]:")
             lines.append("            return None")
+            lines.append(f"        transition_guards = {guards!r}")
+            lines.append('        for field in transition_guards.get((current, new_state), []):')
+            lines.append("            if record.get(field) in (None, '', [], {}):")
+            lines.append("                return None")
             lines.append('        record["state"] = new_state')
             lines.append('        record["updated_at"] = datetime.now(timezone.utc).isoformat()')
             lines.append("        return record")
@@ -218,6 +233,7 @@ def _generate_postgres(ir: DomainIR) -> GeneratedFile:
         table = entity.table_name
         initial_state = entity.state_machine.initial if entity.state_machine else None
         transitions = entity.state_machine.transitions if entity.state_machine else {}
+        guards = _guard_map(entity.state_machine)
 
         # Get insertable fields (not computed except state)
         insert_fields = [f for f in entity.fields if not f.computed or f.name == "state"]
@@ -295,10 +311,15 @@ def _generate_postgres(ir: DomainIR) -> GeneratedFile:
             lines.append(f'            row = await conn.fetchrow("SELECT * FROM {table} WHERE id = $1", id)')
             lines.append("            if not row:")
             lines.append("                return None")
-            lines.append('            current = row["state"]')
+            lines.append("            record = dict(row)")
+            lines.append('            current = record["state"]')
             lines.append(f"            valid = {dict(transitions)}")
             lines.append("            if current not in valid or new_state not in valid[current]:")
             lines.append("                return None")
+            lines.append(f"            transition_guards = {guards!r}")
+            lines.append('            for field in transition_guards.get((current, new_state), []):')
+            lines.append("                if record.get(field) in (None, '', [], {}):")
+            lines.append("                    return None")
             lines.append(f'            updated = await conn.fetchrow("UPDATE {table} SET state = $1, updated_at = $2 WHERE id = $3 RETURNING *", new_state, datetime.now(timezone.utc), id)')
             lines.append("            return dict(updated) if updated else None")
             lines.append("")

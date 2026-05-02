@@ -44,6 +44,7 @@ from forge.ir.model import (
     StateMachineIR,
 )
 from forge.ir.passes import run_all_passes
+from forge.ir.semantic import validate_semantics
 from forge.parser.graph import DependencyGraph, build_dependency_graph
 from forge.parser.loader import ContractLoadError, load_all_contracts
 from forge.parser.validator import validate_all
@@ -132,6 +133,10 @@ class Compiler:
 
         # 5. Run IR passes
         ir = run_all_passes(ir)
+
+        semantic_errors = validate_semantics(ir)
+        if semantic_errors:
+            raise CompilationError(semantic_errors)
 
         logger.info("Compilation complete:\n%s", ir.summary())
         return ir

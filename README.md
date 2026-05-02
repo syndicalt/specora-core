@@ -2,7 +2,7 @@
 
 **Software that fixes its own blueprints.**
 
-[![Tests](https://img.shields.io/badge/tests-171%20passing-brightgreen)]() [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-orange)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-188%20passing-brightgreen)]() [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]() [![License](https://img.shields.io/badge/license-Apache%202.0-orange)](LICENSE)
 
 Specora Core is a Contract-Driven Development engine. You write YAML contracts describing your domain -- entities, workflows, routes, pages -- and the engine compiles them into a production application with a FastAPI backend, PostgreSQL database, Next.js frontend, and a self-healing sidecar that detects runtime failures and proposes contract fixes. If all your code is deleted but the contracts survive, you regenerate everything.
 
@@ -103,6 +103,18 @@ Every bug makes the system better. Contracts accumulate institutional knowledge.
 
 ---
 
+## Contract Memory
+
+Specora treats contracts as durable software memory, not just generation input:
+
+- Forge validates contract semantics before generation, including cross-contract references, workflow states, and guard field requirements.
+- The dependency graph is derived from semantic references as well as explicit `requires`, so hand-authored contracts still compile in dependency order.
+- Generated files include machine-readable `Specora-Source` provenance so runtime failures can trace back to source contracts.
+- Workflow guards are enforced in generated repository adapters.
+- Every applied contract diff includes a change contract: compatibility, migration impact, affected surfaces, and verification expectations.
+
+---
+
 ## What You Get (Generated Stack)
 
 From a set of YAML contracts, Forge produces:
@@ -130,7 +142,7 @@ Each domain proves a different capability of the engine. They're real contracts 
 | **marketplace** | Interlocking state machines. Buyer and seller with offer negotiation, escrow, dispute resolution, and transaction flows that synchronize across entities. | 8 | 5 |
 | **financial_ledger** | Immutability and compliance. Event-sourced journal entries, period close workflows, reconciliation, and an audit trail that IS the product. | 8 | 4 |
 | **satellite_constellation** | Ops and monitoring. Satellites, ground stations, pass windows, command uploads, telemetry downloads. 10-state orbital lifecycle. Visual kanban wow factor. | 7 | 3 |
-| **helpdesk** | The original. Basic CDD proof: tickets, customers, agents, SLA tracking, and the full self-healing loop. | 6 | 1 |
+| **helpdesk** | The original. Basic CDD proof: tickets, customers, agents, SLA tracking, and the full self-healing loop. | 5 | 1 |
 
 ```bash
 # Pick any domain
@@ -252,9 +264,9 @@ specora-core/
   extractor/      # Reverse-engineer existing code to contracts
   engine/         # LLM infrastructure (multi-provider)
   spec/           # Meta-schemas and standard library
-  domains/        # Demo domains (6 verticals)
+  domains/        # Demo domains (7 verticals)
   runtime/        # Generated output (disposable)
-  tests/          # 171 tests across the engine
+  tests/          # 188 tests across the engine
   cli/            # CLI entry points
 ```
 

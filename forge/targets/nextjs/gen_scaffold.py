@@ -22,7 +22,7 @@ def generate_scaffold(ir: DomainIR) -> list[GeneratedFile]:
 def _package_json(ir: DomainIR) -> GeneratedFile:
     data = {
         "name": f"{ir.domain}-frontend",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "private": True,
         "scripts": {
             "dev": "next dev",

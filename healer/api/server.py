@@ -12,7 +12,7 @@ from healer.monitor import compute_metrics
 from healer.pipeline import HealerPipeline
 from healer.queue import HealerQueue
 
-app = FastAPI(title="Specora Healer", version="0.1.0")
+app = FastAPI(title="Specora Healer", version="0.2.0")
 
 # Module-level globals — set by CLI or tests.
 _queue: Optional[HealerQueue] = None
@@ -59,17 +59,17 @@ class RejectRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 @app.get("/healer/health")
-def health() -> dict:
+async def health() -> dict:
     return {"status": "ok", "service": "healer"}
 
 
 @app.get("/healer/status")
-def status() -> dict:
+async def status() -> dict:
     return compute_metrics(_get_queue())
 
 
 @app.post("/healer/ingest", response_model=IngestResponse)
-def ingest(body: IngestRequest) -> IngestResponse:
+async def ingest(body: IngestRequest) -> IngestResponse:
     queue = _get_queue()
     pipeline = _get_pipeline()
 
@@ -94,7 +94,7 @@ def ingest(body: IngestRequest) -> IngestResponse:
 
 
 @app.get("/healer/tickets")
-def list_tickets(
+async def list_tickets(
     status: Optional[str] = None,
     priority: Optional[str] = None,
     contract_fqn: Optional[str] = None,
@@ -109,7 +109,7 @@ def list_tickets(
 
 
 @app.get("/healer/tickets/{ticket_id}")
-def get_ticket(ticket_id: str) -> dict:
+async def get_ticket(ticket_id: str) -> dict:
     ticket = _get_queue().get_ticket(ticket_id)
     if ticket is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
@@ -117,7 +117,7 @@ def get_ticket(ticket_id: str) -> dict:
 
 
 @app.get("/healer/tickets/{ticket_id}/view", response_class=HTMLResponse)
-def view_ticket(ticket_id: str) -> str:
+async def view_ticket(ticket_id: str) -> str:
     """HTML ticket detail page with approve/reject buttons."""
     ticket = _get_queue().get_ticket(ticket_id)
     if ticket is None:
@@ -238,7 +238,7 @@ def view_ticket(ticket_id: str) -> str:
 
 
 @app.post("/healer/approve/{ticket_id}/action", response_class=HTMLResponse)
-def approve_action(ticket_id: str) -> str:
+async def approve_action(ticket_id: str) -> str:
     """HTML form action — approve and redirect back to view."""
     pipeline = _get_pipeline()
     success = pipeline.approve_ticket(ticket_id)
@@ -250,7 +250,7 @@ def approve_action(ticket_id: str) -> str:
 
 
 @app.post("/healer/reject/{ticket_id}/action", response_class=HTMLResponse)
-def reject_action(ticket_id: str) -> str:
+async def reject_action(ticket_id: str) -> str:
     """HTML form action — reject and redirect back to view."""
     pipeline = _get_pipeline()
     pipeline.reject_ticket(ticket_id, reason="Rejected via web UI")
@@ -259,7 +259,7 @@ def reject_action(ticket_id: str) -> str:
 
 
 @app.post("/healer/approve/{ticket_id}")
-def approve(ticket_id: str) -> dict:
+async def approve(ticket_id: str) -> dict:
     pipeline = _get_pipeline()
     success = pipeline.approve_ticket(ticket_id)
     if not success:
@@ -274,7 +274,7 @@ def approve(ticket_id: str) -> dict:
 
 
 @app.post("/healer/reject/{ticket_id}")
-def reject(ticket_id: str, body: Optional[RejectRequest] = None) -> dict:
+async def reject(ticket_id: str, body: Optional[RejectRequest] = None) -> dict:
     pipeline = _get_pipeline()
     reason = body.reason if body and body.reason else ""
     success = pipeline.reject_ticket(ticket_id, reason=reason)

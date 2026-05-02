@@ -188,6 +188,7 @@ Applies the proposed fix to the contract YAML file on disk. Records a diff in `.
 - Origin: `healer`
 - Ticket ID in origin_detail
 - Before/after snapshots
+- A change contract describing compatibility, migration impact, affected surfaces, and verification expectations
 
 ### Stage 6: Notifier (`healer/notifier.py`)
 
@@ -612,7 +613,7 @@ Append-only JSONL file. Each line is a JSON object with timestamp, event, ticket
 
 Location: `.forge/diffs/`
 
-Every applied fix creates a diff record with full before/after contract snapshots. These diffs feed the LLM proposer with historical context.
+Every applied fix creates a diff record with full before/after contract snapshots. Each diff also includes a change contract so the Healer and Advisor can reason about compatibility, migration risk, affected surfaces, and what verification should run. These diffs feed the LLM proposer with historical context.
 
 ---
 

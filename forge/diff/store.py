@@ -238,6 +238,13 @@ class DiffStore:
             lines.append(f"## Change {i} — {ts}")
             lines.append(f"Origin: {diff.origin.value} ({diff.origin_detail})")
             lines.append(f"Reason: {diff.reason}")
+            if diff.change_contract:
+                cc = diff.change_contract
+                lines.append(f"Compatibility: {cc.compatibility.value}")
+                lines.append(f"Migration required: {cc.migration_required}")
+                lines.append(f"Destructive: {cc.destructive}")
+                lines.append(f"Affected surfaces: {', '.join(cc.affected_surfaces)}")
+                lines.append(f"Verification: {', '.join(cc.verification)}")
             lines.append(f"Changes ({len(diff.changes)} fields):")
 
             for change in diff.changes:

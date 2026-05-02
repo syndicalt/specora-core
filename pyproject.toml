@@ -4,11 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "specora-core"
-version = "0.1.0"
+version = "0.2.0"
 description = "Domain-agnostic Contract-Driven Development engine — builds applications from declarative specifications"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Nicholas Blanchard" }]
+license = "Apache-2.0"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
 
 dependencies = [
     "pyyaml>=6.0",
@@ -20,6 +32,11 @@ dependencies = [
     "python-dotenv>=1.0",
     "prompt_toolkit>=3.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/syndicalt/specora-core"
+Repository = "https://github.com/syndicalt/specora-core"
+Issues = "https://github.com/syndicalt/specora-core/issues"
 
 [project.optional-dependencies]
 dev = [

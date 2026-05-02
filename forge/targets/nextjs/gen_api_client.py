@@ -12,8 +12,10 @@ def _to_camel(name: str) -> str:
 
 def generate_api_client(ir: DomainIR) -> GeneratedFile:
     """Generate frontend/src/lib/api.ts with a typed fetch client."""
+    provenance = ", ".join(r.fqn for r in ir.routes)
+    header = provenance_header("typescript", provenance, "API client from route contracts")
     lines = [
-        '// @generated — API client from route contracts',
+        header.rstrip(),
         '',
         'const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";',
         '',
@@ -46,7 +48,7 @@ def generate_api_client(ir: DomainIR) -> GeneratedFile:
     return GeneratedFile(
         path="frontend/src/lib/api.ts",
         content="\n".join(lines),
-        provenance=", ".join(r.fqn for r in ir.routes),
+        provenance=provenance,
     )
 
 

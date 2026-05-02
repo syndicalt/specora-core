@@ -92,6 +92,30 @@ class FieldChange(BaseModel):
     )
 
 
+class Compatibility(str, Enum):
+    """Compatibility classification for a contract mutation."""
+
+    BACKWARD_COMPATIBLE = "backward_compatible"
+    MIGRATION_REQUIRED = "migration_required"
+    DESTRUCTIVE = "destructive"
+    BEHAVIORAL = "behavioral"
+
+
+class ChangeContract(BaseModel):
+    """Durable interpretation of a contract diff.
+
+    A diff records what changed. A change contract records what that change
+    means for generated code, data compatibility, and verification.
+    """
+
+    compatibility: Compatibility
+    migration_required: bool = False
+    destructive: bool = False
+    affected_surfaces: list[str] = Field(default_factory=list)
+    verification: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
 class ContractDiff(BaseModel):
     """A complete diff record for a single contract mutation.
 
@@ -133,6 +157,7 @@ class ContractDiff(BaseModel):
     after_hash: str
     before_snapshot: dict
     after_snapshot: dict
+    change_contract: Optional[ChangeContract] = None
 
 
 def hash_contract(contract: dict) -> str:

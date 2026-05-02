@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from forge.parser.dependencies import merge_dependencies
+
 logger = logging.getLogger(__name__)
 
 
@@ -112,8 +114,12 @@ class DependencyGraph:
             from_fqn: The FQN of the contract that has the dependency.
             to_fqn: The FQN of the required contract.
         """
-        self.edges.setdefault(from_fqn, []).append(to_fqn)
-        self.reverse_edges.setdefault(to_fqn, []).append(from_fqn)
+        self.edges.setdefault(from_fqn, [])
+        if to_fqn not in self.edges[from_fqn]:
+            self.edges[from_fqn].append(to_fqn)
+        self.reverse_edges.setdefault(to_fqn, [])
+        if from_fqn not in self.reverse_edges[to_fqn]:
+            self.reverse_edges[to_fqn].append(from_fqn)
 
     def find_unresolved(self) -> list[GraphError]:
         """Find all unresolved references (requires pointing to non-existent contracts).
@@ -314,7 +320,7 @@ def build_dependency_graph(contracts: dict[str, dict]) -> DependencyGraph:
     for fqn, contract in contracts.items():
         kind = contract.get("kind", "")
         metadata = contract.get("metadata", {})
-        requires = contract.get("requires", [])
+        requires = merge_dependencies(contract)
 
         node = ContractNode(
             fqn=fqn,
@@ -323,15 +329,13 @@ def build_dependency_graph(contracts: dict[str, dict]) -> DependencyGraph:
             name=metadata.get("name", ""),
             source_path=contract.get("_source_path", ""),
             raw=contract,
-            requires=requires if isinstance(requires, list) else [],
+            requires=requires,
         )
         graph.add_node(node)
 
     # Create edges
     for fqn, contract in contracts.items():
-        requires = contract.get("requires", [])
-        if not isinstance(requires, list):
-            continue
+        requires = merge_dependencies(contract)
         for dep in requires:
             if dep == fqn:
                 logger.warning("Contract '%s' requires itself — ignoring self-reference", fqn)

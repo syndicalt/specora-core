@@ -12,6 +12,7 @@
 |------|-----------|
 | Create a new project from scratch | [Getting Started](getting-started.md) |
 | Understand the 5-tier architecture | [Architecture](architecture.md) |
+| Understand contract memory and change tracking | [Architecture](architecture.md#contract-memory) |
 | Write contracts (entity, workflow, route, page) | [CLAUDE.md](../CLAUDE.md) -- Contract Language Reference |
 | See every contract field and option | [Contract Language Reference](contract-language-reference.md) |
 | Deploy to production with Docker | [Production Deployment](production-deployment.md) |
@@ -67,6 +68,7 @@ The LLM writes contracts, validates them, compiles to IR, generates production c
 ### Architecture
 
 - **[Architecture](architecture.md)** -- The 5-tier model, compiler pipeline, IR layer, generator system, repository pattern, self-healing loop.
+- **[Contract Memory Roadmap](contract-memory-roadmap.md)** -- Implemented contract-memory capabilities: semantic validation, provenance, guard execution, semantic dependencies, and change contracts.
 
 ### Production
 

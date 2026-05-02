@@ -36,6 +36,7 @@ def task_entity() -> EntityIR:
         fields=[
             FieldIR(name="title", type="string", required=True),
             FieldIR(name="priority", type="string", required=True, enum_values=["high", "medium", "low"]),
+            FieldIR(name="assigned_to", type="string"),
             FieldIR(name="id", type="uuid", computed="uuid"),
             FieldIR(name="created_at", type="datetime", computed="now"),
             FieldIR(name="updated_at", type="datetime", computed="now_on_update"),
@@ -223,7 +224,20 @@ class TestGenTests:
         assert "def test_transition_task_invalid" in test_file.content
         assert "def test_transition_task_missing_state" in test_file.content
         assert "def test_transition_task_new_to_in_progress_guard" in test_file.content
-        assert "xfail" in test_file.content
+        assert "xfail" not in test_file.content
+        assert '"assigned_to": "test"' in test_file.content
+
+    def test_state_machine_guards_generated_in_repositories(self, task_with_state_machine: EntityIR) -> None:
+        from forge.targets.fastapi_prod.gen_repositories import generate_repositories
+        ir = DomainIR(domain="test", entities=[task_with_state_machine])
+        files = generate_repositories(ir)
+        memory = next(f for f in files if "memory.py" in f.path)
+        postgres = next(f for f in files if "postgres.py" in f.path)
+
+        assert "transition_guards = {('new', 'in_progress'): ['assigned_to']}" in memory.content
+        assert "record.get(field) in (None, '', [], {})" in memory.content
+        assert "transition_guards = {('new', 'in_progress'): ['assigned_to']}" in postgres.content
+        assert "record = dict(row)" in postgres.content
 
     def test_generates_pipeline_marker(self, task_entity: EntityIR, task_route: RouteIR) -> None:
         from forge.targets.fastapi_prod.gen_tests import generate_tests

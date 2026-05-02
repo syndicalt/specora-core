@@ -34,13 +34,15 @@ Examples: `entity/itsm/incident`, `mixin/stdlib/timestamped`, `workflow/library/
 
 ### The `requires` Array
 
-Dependencies are declared explicitly. The compiler uses `requires` to:
+Dependencies can be declared explicitly. The compiler also derives dependency graph edges from semantic references inside `spec`, such as field references, `mixins`, `state_machine`, route/page `entity`, agent input entity, and route side-effect FQNs.
+
+The compiler uses the combined explicit and semantic dependencies to:
 1. Build a dependency graph
 2. Detect circular dependencies
 3. Determine compilation order (topological sort)
 4. Validate that all referenced contracts exist
 
-Every FQN in `requires` must resolve to an existing contract.
+Every FQN in `requires` and every semantic FQN reference must resolve to an existing contract. Keeping `requires` explicit is still useful for human readers and review, but Forge does not rely on authors duplicating every semantic reference manually.
 
 ---
 

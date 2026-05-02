@@ -5,6 +5,20 @@ All notable changes to Specora Core will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-05-02
+
+### Added
+
+- Semantic IR validation before generation, covering cross-contract references, workflow state consistency, and guard field requirements.
+- Machine-readable generated-file provenance via `Specora-Source`, with Healer tracing support.
+- Workflow guard enforcement in generated memory and PostgreSQL repository adapters.
+- Compiler-owned semantic dependency extraction for entities, routes, pages, agents, mixins, workflows, and route side effects.
+- Change contracts attached to diffs, classifying compatibility, migration impact, affected surfaces, and verification expectations.
+
+### Fixed
+
+- Healer FastAPI endpoints now use async handlers, avoiding a Starlette/AnyIO sync-handler hang in API tests.
+
 ## [0.1.0] - 2026-04-08
 
 ### Added
