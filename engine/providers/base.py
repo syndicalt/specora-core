@@ -1,7 +1,13 @@
 """Provider base classes — the abstract interface every LLM provider implements.
 
-Concrete providers (Anthropic, OpenAI, Ollama) subclass ``Provider`` and
+Concrete providers (Anthropic, OpenAI, Z.AI, Ollama) subclass ``Provider`` and
 translate these neutral data structures into SDK-specific calls.
+
+Providers own transport concerns only: authentication, message translation,
+and a per-request timeout. They must not retry internally -- the SDK retry
+counters are pinned to zero and ``engine.retry`` is the single place that
+decides whether a failure is worth resending. Two independent retry loops
+multiply into 9 requests where the operator asked for 3.
 """
 from __future__ import annotations
 
@@ -55,9 +61,25 @@ class Provider(ABC):
         tools: list[ToolDefinition] | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        response_schema: dict[str, Any] | None = None,
     ) -> LLMResponse:
-        """Send a chat completion request and return the response."""
+        """Send a chat completion request and return the response.
+
+        Args:
+            response_schema: JSON Schema for the expected reply. When given,
+                the provider must engage its native structured-output mode so
+                ``LLMResponse.content`` is a JSON document, not prose that
+                happens to contain one.
+        """
         ...
+
+    def supports_native_structured_output(self) -> bool:
+        """Whether ``response_schema`` engages a real provider-side guarantee.
+
+        Providers that only nudge the model with a prompt return ``False`` so
+        the engine knows the reply still needs defensive extraction.
+        """
+        return False
 
     @abstractmethod
     def provider_name(self) -> str:

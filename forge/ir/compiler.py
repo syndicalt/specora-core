@@ -45,8 +45,8 @@ from forge.ir.model import (
 )
 from forge.ir.passes import run_all_passes
 from forge.ir.semantic import validate_semantics
-from forge.parser.graph import DependencyGraph, build_dependency_graph
-from forge.parser.loader import ContractLoadError, load_all_contracts
+from forge.parser.graph import build_dependency_graph
+from forge.parser.loader import load_all_contracts
 from forge.parser.validator import validate_all
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,32 @@ class CompilationError(Exception):
         self.errors = errors
         messages = [str(e) if isinstance(e, str) else getattr(e, "message", str(e)) for e in errors]
         super().__init__(f"Compilation failed with {len(errors)} error(s):\n" + "\n".join(messages))
+
+
+def _as_dict(value) -> dict:
+    """Coerce a possibly-absent, possibly-null contract mapping to a dict.
+
+    `spec.get("fields", {})` returns the default only when the key is *missing*.
+    A key that is present but empty — the extremely ordinary YAML
+
+        spec:
+          fields:
+
+    — parses to None, and the default never applies, so the next `.get()` or
+    `.items()` raises AttributeError from deep inside the compiler with no
+    mention of the contract or the key at fault. Every mapping read from a
+    contract goes through here instead.
+    """
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value) -> list:
+    """Coerce a possibly-absent, possibly-null contract sequence to a list.
+
+    The list counterpart of `_as_dict`; see there for why the `{}`/`[]` default
+    on `.get()` is not enough.
+    """
+    return value if isinstance(value, list) else []
 
 
 class Compiler:
@@ -79,6 +105,10 @@ class Compiler:
         self.contract_root = Path(contract_root)
         self.diff_store = diff_store
         self.include_stdlib = include_stdlib
+        # Errors found while translating contracts into IR. Collected rather
+        # than raised one at a time so a build reports every bad construct in
+        # one pass instead of one per re-run.
+        self._errors: list[str] = []
 
     def compile(self) -> DomainIR:
         """Run the full compilation pipeline.
@@ -90,6 +120,8 @@ class Compiler:
             CompilationError: If validation or resolution fails.
             ContractLoadError: If contracts can't be loaded.
         """
+        self._errors = []
+
         # 1. Load
         logger.info("Loading contracts from %s", self.contract_root)
         contracts = load_all_contracts(self.contract_root, include_stdlib=self.include_stdlib)
@@ -106,19 +138,9 @@ class Compiler:
         # 3. Build dependency graph
         graph = build_dependency_graph(contracts)
 
-        # Check for unresolved references
-        unresolved = graph.find_unresolved()
-        if unresolved:
-            raise CompilationError(
-                [f"{e.message}" for e in unresolved]
-            )
-
-        # Check for cycles
-        cycles = graph.detect_cycles()
-        if cycles:
-            raise CompilationError(
-                [f"{e.message}" for e in cycles]
-            )
+        graph_errors = graph.build_errors + graph.find_unresolved() + graph.detect_cycles()
+        if graph_errors:
+            raise CompilationError([e.message for e in graph_errors])
 
         # 4. Compile in topological order
         order = graph.topological_order()
@@ -130,6 +152,9 @@ class Compiler:
         for fqn in order:
             node = graph.nodes[fqn]
             self._compile_node(node, ir)
+
+        if self._errors:
+            raise CompilationError(self._errors)
 
         # 5. Run IR passes
         ir = run_all_passes(ir)
@@ -159,7 +184,7 @@ class Compiler:
             {
                 d
                 for contract in contracts.values()
-                if (d := contract.get("metadata", {}).get("domain", ""))
+                if (d := _as_dict(contract.get("metadata")).get("domain", ""))
                 and d != "stdlib"
             }
         )
@@ -187,46 +212,58 @@ class Compiler:
         elif kind == "Infra":
             ir.infra.append(self._compile_infra(node.fqn, contract))
         else:
-            logger.warning("Unknown contract kind '%s' for %s, skipping", kind, node.fqn)
+            # A kind with no compile path contributes nothing to the IR, so the
+            # whole contract would vanish from the generated app.
+            self._errors.append(
+                f"{node.fqn}: unknown contract kind '{kind}' — nothing would be "
+                f"generated from this contract."
+            )
 
     def _compile_entity(self, fqn: str, contract: dict) -> EntityIR:
         """Compile an Entity contract into EntityIR."""
-        metadata = contract.get("metadata", {})
-        spec = contract.get("spec", {})
+        metadata = _as_dict(contract.get("metadata"))
+        spec = _as_dict(contract.get("spec"))
 
-        fields = self._compile_fields(spec.get("fields", {}))
-
-        entity = EntityIR(
+        return EntityIR(
             fqn=fqn,
             name=metadata.get("name", ""),
             domain=metadata.get("domain", ""),
             description=metadata.get("description", ""),
             table_name=spec.get("table", ""),
-            fields=fields,
+            fields=self._compile_fields(_as_dict(spec.get("fields")), fqn),
+            mixin_refs=_as_list(spec.get("mixins")),
             mixins_applied=[],  # Filled by mixin_expansion pass
+            workflow_ref=spec.get("state_machine"),
             state_machine=None,  # Filled by state_machine_binding pass
-            ai_hooks=spec.get("ai_integration", {}),
+            ai_hooks=_as_dict(spec.get("ai_integration")),
             number_prefix=spec.get("number_prefix"),
             icon=spec.get("icon"),
         )
 
-        # Store raw mixin refs for the expansion pass
-        entity._mixin_refs = spec.get("mixins", [])
-        # Store raw workflow ref for the binding pass
-        entity._workflow_ref = spec.get("state_machine")
+    def _compile_fields(self, fields_spec: dict, fqn: str) -> list[FieldIR]:
+        """Compile a fields map into a list of FieldIR.
 
-        return entity
-
-    def _compile_fields(self, fields_spec: dict) -> list[FieldIR]:
-        """Compile a fields map into a list of FieldIR."""
+        A field definition must be a mapping. `name: string` — the shorthand
+        every author reaches for first — used to be skipped silently, so the
+        field disappeared from the models, the DDL and the API with no
+        diagnostic anywhere; the first sign of it was a 500 at runtime or a
+        column that was never created. It is now a compilation error.
+        """
         fields = []
         for name, definition in fields_spec.items():
             if not isinstance(definition, dict):
+                message = (
+                    f"{fqn}: spec.fields.{name} must be a mapping of field properties, "
+                    f"got {type(definition).__name__} ({definition!r})."
+                )
+                if isinstance(definition, str):
+                    message += f" Write `{name}: {{type: {definition}}}`."
+                self._errors.append(message)
                 continue
 
             ref_spec = definition.get("references")
             reference = None
-            if ref_spec and isinstance(ref_spec, dict):
+            if isinstance(ref_spec, dict) and ref_spec:
                 reference = ReferenceIR(
                     target_entity=ref_spec.get("entity", ""),
                     display_field=ref_spec.get("display", "name"),
@@ -241,12 +278,19 @@ class Compiler:
                     description=definition.get("description", ""),
                     required=definition.get("required", False),
                     immutable=definition.get("immutable", False),
+                    # Write-only. Omitting this hop is silent and total: the
+                    # contract and meta-schema accept `sensitive: true`, every
+                    # generator honours FieldIR.sensitive, and the flag still
+                    # arrives False for every field — so a password hash is
+                    # published by the API while the contract says it must not
+                    # be. There is no error anywhere along that path.
+                    sensitive=definition.get("sensitive", False),
                     default=definition.get("default"),
                     format=definition.get("format"),
                     enum_values=definition.get("enum"),
                     items_type=definition.get("items_type"),
                     computed=definition.get("computed"),
-                    constraints=definition.get("constraints", {}),
+                    constraints=_as_dict(definition.get("constraints")),
                     reference=reference,
                 )
             )
@@ -254,51 +298,59 @@ class Compiler:
 
     def _compile_workflow(self, fqn: str, contract: dict) -> StateMachineIR:
         """Compile a Workflow contract into StateMachineIR."""
-        spec = contract.get("spec", {})
-        states_spec = spec.get("states", {})
+        spec = _as_dict(contract.get("spec"))
 
         states = []
-        for name, definition in states_spec.items():
-            if isinstance(definition, dict):
-                states.append(
-                    StateIR(
-                        name=name,
-                        label=definition.get("label", name.replace("_", " ").title()),
-                        category=definition.get("category", "open"),
-                        terminal=definition.get("terminal", False),
-                        color=definition.get("color"),
-                    )
+        for name, definition in _as_dict(spec.get("states")).items():
+            definition = _as_dict(definition)
+            states.append(
+                StateIR(
+                    name=name,
+                    label=definition.get("label", name.replace("_", " ").title()),
+                    category=definition.get("category", "open"),
+                    terminal=definition.get("terminal", False),
+                    color=definition.get("color"),
                 )
-            else:
-                states.append(StateIR(name=name))
+            )
 
         guards = []
-        for key, guard_spec in spec.get("guards", {}).items():
-            parts = key.split("->")
-            if len(parts) == 2:
-                guards.append(
-                    GuardIR(
-                        from_state=parts[0].strip(),
-                        to_state=parts[1].strip(),
-                        require_fields=guard_spec.get("require_fields", []),
-                        condition=guard_spec.get("condition"),
-                    )
+        for key, guard_spec in _as_dict(spec.get("guards")).items():
+            parts = [part.strip() for part in str(key).split("->")]
+            if len(parts) != 2 or not all(parts):
+                # A guard is the only pre-condition on a state transition —
+                # "you may not resolve without a resolution". Dropping one
+                # because its key was mistyped removes an authorization check
+                # from the generated API and leaves nothing behind to notice.
+                self._errors.append(
+                    f"{fqn}: guard key {key!r} is not a transition. Guard keys must "
+                    f"read 'source_state -> target_state'."
                 )
+                continue
+
+            guard_spec = _as_dict(guard_spec)
+            guards.append(
+                GuardIR(
+                    from_state=parts[0],
+                    to_state=parts[1],
+                    require_fields=_as_list(guard_spec.get("require_fields")),
+                    condition=guard_spec.get("condition"),
+                )
+            )
 
         return StateMachineIR(
             fqn=fqn,
             initial=spec.get("initial", ""),
             states=states,
-            transitions=spec.get("transitions", {}),
+            transitions=_as_dict(spec.get("transitions")),
             guards=guards,
-            side_effects=spec.get("side_effects", {}),
-            type_overrides=spec.get("type_overrides", {}),
+            side_effects=_as_dict(spec.get("side_effects")),
+            type_overrides=_as_dict(spec.get("type_overrides")),
         )
 
     def _compile_page(self, fqn: str, contract: dict) -> PageIR:
         """Compile a Page contract into PageIR."""
-        metadata = contract.get("metadata", {})
-        spec = contract.get("spec", {})
+        metadata = _as_dict(contract.get("metadata"))
+        spec = _as_dict(contract.get("spec"))
 
         return PageIR(
             fqn=fqn,
@@ -308,34 +360,44 @@ class Compiler:
             title=spec.get("title", ""),
             entity_fqn=spec.get("entity", ""),
             generation_tier=spec.get("generation_tier", "mechanical"),
-            data_sources=spec.get("data_sources", []),
-            display_rules=spec.get("display_rules", {}),
-            views=spec.get("views", []),
-            sections=spec.get("sections", []),
-            actions=spec.get("actions", {}),
-            filters=spec.get("filters", {}),
+            data_sources=_as_list(spec.get("data_sources")),
+            display_rules=_as_dict(spec.get("display_rules")),
+            views=_as_list(spec.get("views")),
+            sections=_as_list(spec.get("sections")),
+            actions=_as_dict(spec.get("actions")),
+            filters=_as_dict(spec.get("filters")),
         )
 
     def _compile_route(self, fqn: str, contract: dict) -> RouteIR:
         """Compile a Route contract into RouteIR."""
-        metadata = contract.get("metadata", {})
-        spec = contract.get("spec", {})
+        metadata = _as_dict(contract.get("metadata"))
+        spec = _as_dict(contract.get("spec"))
 
         endpoints = []
-        for ep_spec in spec.get("endpoints", []):
+        for index, ep_spec in enumerate(_as_list(spec.get("endpoints"))):
+            if not isinstance(ep_spec, dict):
+                self._errors.append(
+                    f"{fqn}: spec.endpoints[{index}] must be a mapping, "
+                    f"got {type(ep_spec).__name__} ({ep_spec!r})."
+                )
+                continue
+
+            response = _as_dict(ep_spec.get("response"))
             endpoints.append(
                 EndpointIR(
                     method=ep_spec.get("method", "GET"),
                     path=ep_spec.get("path", "/"),
                     summary=ep_spec.get("summary", ""),
-                    required_fields=ep_spec.get("request_body", {}).get("required_fields", []),
-                    validation_rules=ep_spec.get("validation", []),
-                    auto_fields=ep_spec.get("auto_fields", {}),
-                    side_effects=ep_spec.get("side_effects", []),
-                    response_status=ep_spec.get("response", {}).get("status", 200),
-                    response_shape=ep_spec.get("response", {}),
-                    hateoas_links=ep_spec.get("hateoas", {}),
-                    roles=ep_spec.get("roles", []),
+                    required_fields=_as_list(
+                        _as_dict(ep_spec.get("request_body")).get("required_fields")
+                    ),
+                    validation_rules=_as_list(ep_spec.get("validation")),
+                    auto_fields=_as_dict(ep_spec.get("auto_fields")),
+                    side_effects=_as_list(ep_spec.get("side_effects")),
+                    response_status=response.get("status", 200),
+                    response_shape=response,
+                    hateoas_links=_as_dict(ep_spec.get("hateoas")),
+                    roles=_as_list(ep_spec.get("roles")),
                 )
             )
 
@@ -346,15 +408,15 @@ class Compiler:
             entity_fqn=spec.get("entity", ""),
             base_path=spec.get("base_path", ""),
             endpoints=endpoints,
-            global_behaviors=spec.get("global_behaviors", {}),
+            global_behaviors=_as_dict(spec.get("global_behaviors")),
         )
 
     def _compile_agent(self, fqn: str, contract: dict) -> AgentIR:
         """Compile an Agent contract into AgentIR."""
-        metadata = contract.get("metadata", {})
-        spec = contract.get("spec", {})
-        input_spec = spec.get("input", {})
-        output_spec = spec.get("output", {})
+        metadata = _as_dict(contract.get("metadata"))
+        spec = _as_dict(contract.get("spec"))
+        input_spec = _as_dict(spec.get("input"))
+        output_spec = _as_dict(spec.get("output"))
 
         return AgentIR(
             fqn=fqn,
@@ -363,37 +425,37 @@ class Compiler:
             trigger=spec.get("trigger", ""),
             threshold=spec.get("threshold", 0.7),
             input_entity=input_spec.get("entity", ""),
-            input_fields=input_spec.get("fields", []),
-            output_updates=output_spec.get("updates", {}),
+            input_fields=_as_list(input_spec.get("fields")),
+            output_updates=_as_dict(output_spec.get("updates")),
             approach=spec.get("approach", ""),
-            constraints=spec.get("constraints", []),
-            fallback=spec.get("fallback", {}),
+            constraints=_as_list(spec.get("constraints")),
+            fallback=_as_dict(spec.get("fallback")),
         )
 
     def _compile_mixin(self, fqn: str, contract: dict) -> MixinIR:
         """Compile a Mixin contract into MixinIR."""
-        metadata = contract.get("metadata", {})
-        spec = contract.get("spec", {})
+        metadata = _as_dict(contract.get("metadata"))
+        spec = _as_dict(contract.get("spec"))
 
         return MixinIR(
             fqn=fqn,
             name=metadata.get("name", ""),
             domain=metadata.get("domain", ""),
             description=metadata.get("description", ""),
-            fields=self._compile_fields(spec.get("fields", {})),
+            fields=self._compile_fields(_as_dict(spec.get("fields")), fqn),
         )
 
     def _compile_infra(self, fqn: str, contract: dict) -> InfraIR:
         """Compile an Infra contract into InfraIR."""
-        metadata = contract.get("metadata", {})
-        spec = contract.get("spec", {})
+        metadata = _as_dict(contract.get("metadata"))
+        spec = _as_dict(contract.get("spec"))
 
         return InfraIR(
             fqn=fqn,
             name=metadata.get("name", ""),
             domain=metadata.get("domain", ""),
             category=spec.get("category", ""),
-            config=spec.get("config", {}),
-            env_vars=spec.get("env_vars", {}),
-            bootstrap=spec.get("bootstrap", {}),
+            config=_as_dict(spec.get("config")),
+            env_vars=_as_dict(spec.get("env_vars")),
+            bootstrap=_as_dict(spec.get("bootstrap")),
         )

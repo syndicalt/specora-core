@@ -102,6 +102,25 @@ def pascal_case(name: str) -> str:
     return "".join(p[:1].upper() + p[1:] for p in parts)
 
 
+def camel_case(name: str) -> str:
+    """Convert a snake_case name to camelCase.
+
+    Generated TypeScript needs this for local bindings and object keys, where
+    `PascalCase` would read as a component or type. It is defined here rather
+    than in the TypeScript-emitting generators so that a camelCase identifier
+    and its PascalCase counterpart cannot drift apart — `camel_case(x)` is
+    always `pascal_case(x)` with the first character lowered.
+
+    Examples:
+        >>> camel_case("api_key")
+        'apiKey'
+        >>> camel_case("BillingAccount")
+        'billingAccount'
+    """
+    stem = pascal_case(name)
+    return stem[:1].lower() + stem[1:]
+
+
 def pluralize(name: str) -> str:
     """Derive a plural form for table naming.
 

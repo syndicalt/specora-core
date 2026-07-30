@@ -167,6 +167,19 @@ def provenance_header(
     """
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
+    # A file derived from every entity in a large domain carries a provenance
+    # string hundreds of characters long. Emitted on one line it is the only
+    # thing standing between generated output and a clean lint run, and
+    # generated code is held to the same standard as the rest of the repo — so
+    # wrap it across continuation lines instead of shipping a lint exception.
+    sources = [s.strip() for s in provenance.split(",") if s.strip()]
+    if len(sources) > 1:
+        source_lines = [f"Source: {sources[0]},"] + [
+            f"        {s}," for s in sources[1:-1]
+        ] + [f"        {sources[-1]}"]
+    else:
+        source_lines = [f"Source: {provenance}"]
+
     comment_styles = {
         "python": ("#", "#", "#"),
         "typescript": ("//", "//", "//"),
@@ -183,7 +196,7 @@ def provenance_header(
         f"{mid} Any manual changes will be overwritten on the next generation.",
         f"{mid}",
         f"{mid} {provenance_source_line(provenance)}",
-        f"{mid} Source: {provenance}",
+        *(f"{mid} {line}" for line in source_lines),
         f"{mid} Generated: {timestamp}",
     ]
     if description:

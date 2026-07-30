@@ -2,20 +2,32 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
 import yaml
 
 from forge.parser.validator import ContractValidationError
-from healer.analyzer.classifier import classify_validation_error, classify_raw_error, Classification
+from healer.analyzer.classifier import Classification, classify_raw_error, classify_validation_error
 from healer.applier import apply_fix
-from healer.models import HealerTicket, HealerProposal, TicketSource, TicketStatus
+from healer.cost import SpendGovernor
+from healer.models import HealerProposal, HealerTicket, TicketSource, TicketStatus
 from healer.notifier import Notifier
 from healer.proposer.deterministic import propose_deterministic_fix
 from healer.queue import HealerQueue
 
 logger = logging.getLogger(__name__)
+
+AUTO_APPLY_CONFIDENCE_ENV = "SPECORA_HEALER_AUTO_APPLY_MIN_CONFIDENCE"
+
+# Only a proposal the healer is certain about may reach a contract without a
+# human. Deterministic normalization scores 1.0; every model-authored proposal
+# scores below this and is routed to the approval queue instead.
+DEFAULT_AUTO_APPLY_MIN_CONFIDENCE = 1.0
+
+# Recorded as the approving actor when no human was involved.
+AUTO_ACTOR = "healer:auto"
 
 
 class HealerPipeline:
@@ -33,30 +45,44 @@ class HealerPipeline:
         self.output_root = output_root if output_root is not None else domains_root.parent
         self.diff_root = diff_root
         self.notifier = Notifier(log_path=log_path)
+        self.governor = SpendGovernor(store=queue)
+
+    @property
+    def auto_apply_min_confidence(self) -> float:
+        raw = os.environ.get(AUTO_APPLY_CONFIDENCE_ENV, "").strip()
+        if not raw:
+            return DEFAULT_AUTO_APPLY_MIN_CONFIDENCE
+        try:
+            return float(raw)
+        except ValueError:
+            logger.warning(
+                "%s is not a number (%r); using default", AUTO_APPLY_CONFIDENCE_ENV, raw
+            )
+            return DEFAULT_AUTO_APPLY_MIN_CONFIDENCE
 
     def process_next(self) -> bool:
         """Process the next queued ticket. Returns True if a ticket was processed."""
-        ticket = self.queue.next_queued()
+        ticket = self.queue.claim_next()
         if ticket is None:
             return False
-        self.queue.update_status(ticket.id, TicketStatus.ANALYZING)
         self._process_ticket(ticket)
         return True
 
-    def approve_ticket(self, ticket_id: str) -> bool:
+    def approve_ticket(self, ticket_id: str, actor: str = "") -> bool:
         ticket = self.queue.get_ticket(ticket_id)
         if ticket is None or ticket.status != TicketStatus.PROPOSED:
             return False
         self.queue.update_status(ticket_id, TicketStatus.APPROVED)
-        self._apply_and_notify(ticket)
+        self._apply_and_notify(ticket, actor=actor or "unattributed")
         return True
 
-    def reject_ticket(self, ticket_id: str, reason: str = "") -> bool:
+    def reject_ticket(self, ticket_id: str, reason: str = "", actor: str = "") -> bool:
         ticket = self.queue.get_ticket(ticket_id)
         if ticket is None or ticket.status != TicketStatus.PROPOSED:
             return False
-        self.queue.update_status(ticket_id, TicketStatus.REJECTED, resolution_note=reason)
-        self.notifier.notify(ticket, event="rejected", message=reason)
+        note = f"{reason} (rejected by {actor})" if actor else reason
+        self.queue.update_status(ticket_id, TicketStatus.REJECTED, resolution_note=note)
+        self.notifier.notify(ticket, event="rejected", message=note)
         return True
 
     def _process_ticket(self, ticket: HealerTicket) -> None:
@@ -71,7 +97,10 @@ class HealerPipeline:
         if fixable_by == "generator":
             self.queue.update_status(
                 ticket.id, TicketStatus.FAILED,
-                resolution_note=f"Generator bug — not fixable by contract. Fix the generator and regenerate.",
+                resolution_note=(
+                    "Generator bug — not fixable by contract. "
+                    "Fix the generator and regenerate."
+                ),
             )
             self.notifier.notify(ticket, event="failed",
                 message=f"⚙️ Generator bug (not a contract issue): {ticket.raw_error[:100]}")
@@ -80,7 +109,10 @@ class HealerPipeline:
         if fixable_by == "data":
             self.queue.update_status(
                 ticket.id, TicketStatus.FAILED,
-                resolution_note=f"Data issue — not fixable by contract. Check the data or database constraints.",
+                resolution_note=(
+                    "Data issue — not fixable by contract. "
+                    "Check the data or database constraints."
+                ),
             )
             self.notifier.notify(ticket, event="failed",
                 message=f"💾 Data issue (not a contract issue): {ticket.raw_error[:100]}")
@@ -99,11 +131,19 @@ class HealerPipeline:
         self.queue.set_proposal(ticket.id, proposal)
         ticket.proposal = proposal
 
-        # Stage 4: Apply (Tier 1 auto-applies, Tier 2-3 queue for approval)
-        if ticket.tier == 1:
-            self._apply_and_notify(ticket)
+        # Stage 4: Apply. Auto-apply requires both a tier that is safe to
+        # automate and a confidence that clears the configured threshold —
+        # the threshold was previously recorded on the proposal and ignored.
+        threshold = self.auto_apply_min_confidence
+        if ticket.tier == 1 and proposal.confidence >= threshold:
+            self._apply_and_notify(ticket, actor=AUTO_ACTOR)
         else:
             self.queue.update_status(ticket.id, TicketStatus.PROPOSED)
+            if ticket.tier == 1:
+                logger.info(
+                    "Ticket %s held for approval: confidence %.2f < %.2f",
+                    ticket.id[:8], proposal.confidence, threshold,
+                )
             self.notifier.notify(ticket, event="proposed", message=proposal.explanation)
 
     def _classify(self, ticket: HealerTicket) -> Classification:
@@ -128,10 +168,12 @@ class HealerPipeline:
                     return propose_deterministic_fix(ticket.contract_fqn, contract)
                 else:
                     from healer.proposer.llm_proposer import propose_llm_fix
-                    return propose_llm_fix(ticket, contract, diff_root=self.diff_root)
+                    return propose_llm_fix(
+                        ticket, contract, diff_root=self.diff_root, governor=self.governor,
+                    )
         return None
 
-    def _apply_and_notify(self, ticket: HealerTicket) -> None:
+    def _apply_and_notify(self, ticket: HealerTicket, actor: str = "") -> None:
         if ticket.proposal is None:
             self.queue.update_status(ticket.id, TicketStatus.FAILED, resolution_note="No proposal")
             return
@@ -147,10 +189,13 @@ class HealerPipeline:
 
         result = apply_fix(
             ticket.proposal, contract_path,
-            diff_root=self.diff_root, ticket_id=ticket.id,
+            diff_root=self.diff_root, ticket_id=ticket.id, actor=actor,
         )
         if result.success:
-            self.queue.update_status(ticket.id, TicketStatus.APPLIED, resolution_note="Fix applied")
+            note = f"Fix applied (approved by {actor or 'unattributed'})"
+            if result.notes:
+                note += " — " + "; ".join(result.notes)
+            self.queue.update_status(ticket.id, TicketStatus.APPLIED, resolution_note=note)
             self.notifier.notify(ticket, event="applied", message=ticket.proposal.explanation)
 
             # Auto-regenerate code from updated contracts
@@ -170,12 +215,15 @@ class HealerPipeline:
         try:
             from forge.ir.compiler import Compiler
             from forge.targets.fastapi_prod.generator import FastAPIProductionGenerator
-            from forge.targets.postgres.gen_ddl import PostgresGenerator
             from forge.targets.migrations.generator import MigrationGenerator
             from forge.targets.nextjs.generator import NextJSGenerator
+            from forge.targets.postgres.gen_ddl import PostgresGenerator
 
             # Find the domain directory (parent of entities/workflows/etc.)
-            domain_dirs = [d for d in self.domains_root.iterdir() if d.is_dir() and not d.name.startswith(".")]
+            domain_dirs = [
+                d for d in self.domains_root.iterdir()
+                if d.is_dir() and not d.name.startswith(".")
+            ]
             if not domain_dirs:
                 logger.warning("No domain directories found for regeneration")
                 return ""

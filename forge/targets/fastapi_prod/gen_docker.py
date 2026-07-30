@@ -1,8 +1,22 @@
-"""Generate Dockerfile, docker-compose.yml, .env.example, requirements.txt."""
+"""Generate Dockerfile, docker-compose.yml, .env.example, requirements files.
+
+Dependency policy for the generated app image:
+
+  - **Only what `backend/` imports at runtime.** The runtime image previously
+    installed pytest, and the healer image's CLI/LLM stack was audited as part
+    of the same set. A deployed application should not carry a test framework.
+    Test-only dependencies go to `requirements-dev.txt`, which the Dockerfile
+    does not copy.
+  - **Every requirement is bounded on both sides.** An unbounded `fastapi>=…`
+    is how a future major release turns a deprecation (`@app.on_event`) into a
+    boot failure in an image nobody rebuilt deliberately. Lower bounds are set
+    at the first release without a known advisory for that package, so
+    `pip-audit` resolves clean.
+"""
 from __future__ import annotations
 
 from forge.ir.model import DomainIR
-from forge.targets.base import GeneratedFile, provenance_header
+from forge.targets.base import GeneratedFile
 
 
 def generate_docker(ir: DomainIR) -> list[GeneratedFile]:
@@ -14,12 +28,15 @@ def generate_docker(ir: DomainIR) -> list[GeneratedFile]:
         _generate_compose(ir),
         _generate_env_example(ir, has_auth),
         _generate_requirements(ir, has_auth),
+        _generate_dev_requirements(ir),
         _generate_healer_requirements(ir),
     ]
 
 
 def _generate_dockerfile(ir: DomainIR) -> GeneratedFile:
-    content = f"""FROM python:3.12-slim
+    # requirements-dev.txt is deliberately not copied: the runtime image must
+    # not contain the test framework.
+    content = """FROM python:3.12-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -34,102 +51,37 @@ ENTRYPOINT ["./entrypoint.sh"]
 
 
 def _generate_entrypoint(ir: DomainIR) -> GeneratedFile:
+    # Schema and migrations are applied by the application's lifespan handler,
+    # not here. There used to be two implementations: this one recorded applied
+    # migrations in `_specora_migrations` while backend/app.py kept its own
+    # `_migrations` ledger, so every migration was applied twice on a fresh
+    # database. The app-side runner is the one that can take an advisory lock
+    # and wrap each migration in a transaction, so it is the one that survives.
     content = '''#!/bin/bash
-set -e
+set -euo pipefail
 
-# Wait for database to be ready
-echo "[specora] Waiting for database..."
-until python -c "
+if [ "${DATABASE_BACKEND:-postgres}" = "postgres" ]; then
+    echo "[specora] Waiting for database..."
+    until python -c "
 import asyncio, asyncpg, os
 async def check():
     conn = await asyncpg.connect(os.environ['DATABASE_URL'])
     await conn.close()
 asyncio.run(check())
 " 2>/dev/null; do
-    sleep 1
-done
-echo "[specora] Database is ready."
-
-# Apply baseline schema if tables don't exist
-TABLE_COUNT=$(python -c "
-import asyncio, asyncpg, os
-async def count():
-    conn = await asyncpg.connect(os.environ['DATABASE_URL'])
-    result = await conn.fetchval(
-        \\"SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'\\"
-    )
-    await conn.close()
-    print(result)
-asyncio.run(count())
-")
-
-if [ "$TABLE_COUNT" = "0" ]; then
-    echo "[specora] Fresh database — applying baseline schema..."
-    python -c "
-import asyncio, asyncpg, os
-from pathlib import Path
-async def apply():
-    conn = await asyncpg.connect(os.environ['DATABASE_URL'])
-    schema = Path('database/schema.sql').read_text()
-    await conn.execute(schema)
-    # Create migrations tracking table
-    await conn.execute(\\"CREATE TABLE IF NOT EXISTS _specora_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ DEFAULT NOW())\\")
-    # Mark all existing migrations as applied (they're included in the baseline)
-    migrations_dir = Path('database/migrations')
-    if migrations_dir.exists():
-        for f in sorted(migrations_dir.glob('*.sql')):
-            await conn.execute(\\"INSERT INTO _specora_migrations (filename) VALUES (\\\\$1) ON CONFLICT DO NOTHING\\", f.name)
-    await conn.close()
-asyncio.run(apply())
-"
-    echo "[specora] Baseline schema applied."
-else
-    echo "[specora] Existing database — checking for pending migrations..."
-    # Create tracking table if it doesn't exist (upgrade from pre-migration installs)
-    python -c "
-import asyncio, asyncpg, os
-async def ensure():
-    conn = await asyncpg.connect(os.environ['DATABASE_URL'])
-    await conn.execute(\\"CREATE TABLE IF NOT EXISTS _specora_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ DEFAULT NOW())\\")
-    await conn.close()
-asyncio.run(ensure())
-"
+        sleep 1
+    done
+    echo "[specora] Database is ready."
 fi
 
-# Apply pending migrations
-python -c "
-import asyncio, asyncpg, os
-from pathlib import Path
-async def migrate():
-    conn = await asyncpg.connect(os.environ['DATABASE_URL'])
-    migrations_dir = Path('database/migrations')
-    if not migrations_dir.exists():
-        await conn.close()
-        return
-    applied = set(row['filename'] for row in await conn.fetch('SELECT filename FROM _specora_migrations'))
-    pending = sorted(f for f in migrations_dir.glob('*.sql') if f.name not in applied)
-    for migration in pending:
-        print(f'[specora] Applying migration: {migration.name}')
-        sql = migration.read_text()
-        await conn.execute(sql)
-        await conn.execute('INSERT INTO _specora_migrations (filename) VALUES (\\$1)', migration.name)
-    if not pending:
-        print('[specora] No pending migrations.')
-    else:
-        print(f'[specora] Applied {len(pending)} migration(s).')
-    await conn.close()
-asyncio.run(migrate())
-"
-
-# Start the app
-echo "[specora] Starting app..."
-exec uvicorn backend.app:app --host 0.0.0.0 --port 8000
+echo "[specora] Starting app (schema and migrations run at startup)..."
+exec uvicorn backend.app:app --host 0.0.0.0 --port "${PORT:-8000}"
 '''
     return GeneratedFile(path="entrypoint.sh", content=content, provenance=f"domain/{ir.domain}")
 
 
 def _generate_healer_dockerfile(ir: DomainIR) -> GeneratedFile:
-    content = f"""FROM python:3.12-slim
+    content = """FROM python:3.12-slim
 WORKDIR /app
 COPY requirements.healer.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
@@ -138,7 +90,9 @@ ENV PYTHONPATH=/specora-core
 EXPOSE 8083
 CMD ["python", "-m", "forge.cli.main", "healer", "serve", "--port", "8083", "--host", "0.0.0.0"]
 """
-    return GeneratedFile(path="Dockerfile.healer", content=content, provenance=f"domain/{ir.domain}")
+    return GeneratedFile(
+        path="Dockerfile.healer", content=content, provenance=f"domain/{ir.domain}"
+    )
 
 
 def _generate_compose(ir: DomainIR) -> GeneratedFile:
@@ -153,7 +107,10 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      # Loopback only. The app reaches the database over the compose network;
+      # binding 0.0.0.0 published a database with a default password to every
+      # interface on the host.
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U specora"]
       interval: 5s
@@ -210,15 +167,17 @@ services:
 volumes:
   pgdata:
 """
-    return GeneratedFile(path="docker-compose.yml", content=content, provenance=f"domain/{ir.domain}")
+    return GeneratedFile(
+        path="docker-compose.yml", content=content, provenance=f"domain/{ir.domain}"
+    )
 
 
 def _generate_env_example(ir: DomainIR, has_auth: bool) -> GeneratedFile:
     lines = [
-        f"# =============================================================================",
+        "# =============================================================================",
         f"# {ir.domain} — Environment Configuration",
-        f"# =============================================================================",
-        f"# Generated by Specora Forge. Copy to .env and customize.",
+        "# =============================================================================",
+        "# Generated by Specora Forge. Copy to .env and customize.",
         "",
         "",
         "# =============================================================================",
@@ -234,7 +193,12 @@ def _generate_env_example(ir: DomainIR, has_auth: bool) -> GeneratedFile:
         "# =============================================================================",
         "",
         "PORT=8000",
-        "CORS_ORIGINS=*",
+        "",
+        "# Comma-separated browser origins, e.g. https://app.example.com",
+        "# The app refuses to boot on '*' unless CORS_ALLOW_CREDENTIALS=false.",
+        "# Leave empty to allow no cross-origin browser access at all.",
+        "CORS_ORIGINS=",
+        "CORS_ALLOW_CREDENTIALS=true",
     ]
 
     if has_auth:
@@ -245,10 +209,30 @@ def _generate_env_example(ir: DomainIR, has_auth: bool) -> GeneratedFile:
             "# Authentication",
             "# =============================================================================",
             "",
-            "AUTH_ENABLED=true",
+            "# Required. The app refuses to boot while this is empty or still the",
+            "# placeholder, because every token it issued would be forgeable.",
+            "#   openssl rand -hex 32",
+            "AUTH_SECRET=",
+            "",
             "AUTH_PROVIDER=jwt  # jwt | external",
-            "AUTH_SECRET=change-me-in-production",
-            "AUTH_TOKEN_EXPIRE_MINUTES=60",
+            "",
+            "# Bound into every token and required on every token verified.",
+            f"AUTH_ISSUER=specora:{ir.domain}",
+            f"AUTH_AUDIENCE=specora:{ir.domain}",
+            "",
+            "# Access tokens cannot be revoked, so they are short-lived; the refresh",
+            "# token is the revocable half and is single-use.",
+            "AUTH_TOKEN_EXPIRE_MINUTES=15",
+            "AUTH_REFRESH_TOKEN_EXPIRE_DAYS=14",
+            "",
+            "# The refresh token is also set as an httpOnly cookie. Browsers exempt",
+            "# http://localhost from the Secure attribute, so only a deployment",
+            "# deliberately served over plain HTTP needs this set to false.",
+            "AUTH_COOKIE_SECURE=true",
+            "",
+            "# Authentication is declared by this domain's contracts. Setting this to",
+            "# false does not disable it — the app refuses to boot instead.",
+            "AUTH_ENABLED=true",
         ])
 
     lines.extend([
@@ -260,7 +244,8 @@ def _generate_env_example(ir: DomainIR, has_auth: bool) -> GeneratedFile:
         "# At least one provider needed for LLM-powered self-healing.",
         "# Priority: SPECORA_AI_MODEL > ANTHROPIC > OPENAI > XAI > ZAI > OLLAMA",
         "",
-        "SPECORA_AI_MODEL=               # Override model: claude-sonnet-4-6, glm-5.1, gpt-4o, etc.",
+        "# Override model: claude-sonnet-4-6, glm-5.1, gpt-4o, etc.",
+        "SPECORA_AI_MODEL=",
         "",
         "# Anthropic (recommended) — https://console.anthropic.com/",
         "ANTHROPIC_API_KEY=",
@@ -290,42 +275,80 @@ def _generate_env_example(ir: DomainIR, has_auth: bool) -> GeneratedFile:
         "SPECORA_CORE_PATH=./../specora-core",
         "",
     ])
-    return GeneratedFile(path=".env.example", content="\n".join(lines), provenance=f"domain/{ir.domain}")
+    return GeneratedFile(
+        path=".env.example", content="\n".join(lines), provenance=f"domain/{ir.domain}"
+    )
 
 
 def _generate_requirements(ir: DomainIR, has_auth: bool) -> GeneratedFile:
+    # pydantic[email] pulls email-validator, which EmailStr imports at class
+    # definition time — a model with an email field fails to import without it.
+    needs_email = any(f.type == "email" for e in ir.entities for f in e.fields)
+    pydantic = "pydantic[email]>=2.7,<3.0" if needs_email else "pydantic>=2.7,<3.0"
+
     deps = [
-        "fastapi>=0.110",
-        "uvicorn>=0.29",
-        "pydantic>=2.0",
-        "asyncpg>=0.29",
-        "httpx>=0.27",
-        "pytest>=8.0",
+        "# Runtime dependencies of backend/. Nothing else belongs in the app image.",
+        "fastapi>=0.115.3,<1.0",
+        "uvicorn>=0.30,<1.0",
+        pydantic,
+        "asyncpg>=0.29,<0.31",
+        "httpx>=0.27,<1.0",
     ]
     if has_auth:
         deps.extend([
-            "python-jose[cryptography]>=3.3",
-            "passlib[bcrypt]>=1.7",
-            "python-multipart>=0.0.9",
+            "",
+            "# JWT: pyjwt rather than python-jose, which is unmaintained and carries",
+            "# algorithm-confusion advisories. >=2.10 for the strict issuer check.",
+            "pyjwt[crypto]>=2.10,<3.0",
+            "# Password hashing: argon2-cffi directly rather than passlib, which is",
+            "# unmaintained and whose 1.7.4 breaks against bcrypt 5.x.",
+            "argon2-cffi>=23.1,<26.0",
         ])
-    return GeneratedFile(path="requirements.txt", content="\n".join(deps) + "\n", provenance=f"domain/{ir.domain}")
+    return GeneratedFile(
+        path="requirements.txt",
+        content="\n".join(deps) + "\n",
+        provenance=f"domain/{ir.domain}",
+    )
+
+
+def _generate_dev_requirements(ir: DomainIR) -> GeneratedFile:
+    # Deliberately a flat list rather than `-r requirements.txt`: every
+    # generated requirements file is fed to pip-audit as a plain requirement
+    # set, and an include directive there resolves against the wrong directory.
+    deps = [
+        "# Test-only. The runtime Dockerfile does not copy or install this file.",
+        "# Install alongside the runtime set:",
+        "#   pip install -r requirements.txt -r requirements-dev.txt",
+        "pytest>=8.2,<9.0",
+    ]
+    return GeneratedFile(
+        path="requirements-dev.txt",
+        content="\n".join(deps) + "\n",
+        provenance=f"domain/{ir.domain}",
+    )
 
 
 def _generate_healer_requirements(ir: DomainIR) -> GeneratedFile:
+    # Installed into Dockerfile.healer only. The healer runs specora-core's own
+    # CLI, so it needs the CLI and LLM stack that the app image must not have.
     deps = [
-        "fastapi>=0.110",
-        "uvicorn>=0.29",
-        "pydantic>=2.0",
-        "httpx>=0.27",
-        "pyyaml>=6.0",
-        "jsonschema>=4.20",
-        "click>=8.1",
-        "rich>=13.0",
-        "deepdiff>=7.0",
-        "python-dotenv>=1.0",
-        "prompt_toolkit>=3.0",
+        "fastapi>=0.115.3,<1.0",
+        "uvicorn>=0.30,<1.0",
+        "pydantic>=2.7,<3.0",
+        "httpx>=0.27,<1.0",
+        "pyyaml>=6.0.1,<7.0",
+        "jsonschema>=4.23,<5.0",
+        "click>=8.1.7,<9.0",
+        "rich>=13.7,<15.0",
+        "deepdiff>=7.0,<9.0",
+        "python-dotenv>=1.0,<2.0",
+        "prompt_toolkit>=3.0.47,<4.0",
         "# LLM providers for Tier 2-3 healing",
-        "openai>=1.0",
-        "anthropic>=0.25",
+        "openai>=1.55,<3.0",
+        "anthropic>=0.40,<1.0",
     ]
-    return GeneratedFile(path="requirements.healer.txt", content="\n".join(deps) + "\n", provenance=f"domain/{ir.domain}")
+    return GeneratedFile(
+        path="requirements.healer.txt",
+        content="\n".join(deps) + "\n",
+        provenance=f"domain/{ir.domain}",
+    )

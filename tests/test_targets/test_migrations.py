@@ -175,7 +175,7 @@ class TestSQLWriter:
             field_ir=FieldIR(name="priority", type="string"),
         )
         sql = schema_change_to_sql(change)
-        assert "ALTER TABLE tasks ADD COLUMN priority TEXT" in sql
+        assert 'ALTER TABLE "tasks" ADD COLUMN IF NOT EXISTS "priority" TEXT' in sql
 
     def test_add_required_column(self) -> None:
         from forge.targets.migrations.differ import SchemaChange
@@ -217,7 +217,7 @@ class TestSQLWriter:
             field_ir=FieldIR(name="count", type="integer"),
         )
         sql = schema_change_to_sql(change)
-        assert "ALTER COLUMN count TYPE INTEGER" in sql
+        assert 'ALTER COLUMN "count" TYPE INTEGER' in sql
 
     def test_set_not_null(self) -> None:
         from forge.targets.migrations.differ import SchemaChange
@@ -288,7 +288,7 @@ class TestMigrationGenerator:
         files2 = gen.generate(ir2)
         assert len(files2) == 1
         assert "002_" in files2[0].path
-        assert "ADD COLUMN priority" in files2[0].content
+        assert 'ADD COLUMN IF NOT EXISTS "priority"' in files2[0].content
 
     def test_no_changes_produces_no_migration(self, tmp_path: Path) -> None:
         from forge.targets.migrations.generator import MigrationGenerator

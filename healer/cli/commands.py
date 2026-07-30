@@ -1,6 +1,8 @@
 """Healer CLI commands — fix, status, tickets, show, approve, reject, history."""
 from __future__ import annotations
 
+import getpass
+import os
 import sys
 from pathlib import Path
 
@@ -9,10 +11,24 @@ from rich.console import Console
 from rich.table import Table
 
 from healer.models import Priority, TicketSource, TicketStatus
-from healer.queue import HealerQueue
 from healer.pipeline import HealerPipeline
+from healer.queue import HealerQueue
 
 console = Console()
+
+
+def _cli_actor() -> str:
+    """Identify the local operator for the diff audit trail.
+
+    The OS account is not an authentication result — anyone with shell access
+    to this machine already has write access to the contracts — but it does
+    distinguish a local `spc healer approve` from a remote approval link.
+    """
+    try:
+        user = getpass.getuser()
+    except Exception:
+        user = "unknown"
+    return f"cli:{user}"
 
 
 def _default_queue() -> HealerQueue:
@@ -42,7 +58,10 @@ def _resolve_ticket_id(queue: HealerQueue, short_id: str) -> str | None:
     if len(matches) == 1:
         return matches[0].id
     if len(matches) > 1:
-        console.print(f"[red]Ambiguous ID prefix '{short_id}' — matches {len(matches)} tickets:[/red]")
+        console.print(
+            f"[red]Ambiguous ID prefix '{short_id}' — "
+            f"matches {len(matches)} tickets:[/red]"
+        )
         for t in matches:
             console.print(f"  {t.id[:8]}  {t.status.value}  {t.raw_error[:40]}")
         return None
@@ -125,13 +144,19 @@ def fix(path: str) -> None:
     if applied:
         console.print(f"  [green]{applied} fixes applied automatically[/green]")
     if proposed:
-        console.print(f"  [yellow]{proposed} fixes awaiting approval[/yellow] (run: specora healer tickets)")
+        console.print(
+            f"  [yellow]{proposed} fixes awaiting approval[/yellow] "
+            "(run: specora healer tickets)"
+        )
     if failed:
         console.print(f"  [red]{failed} tickets failed[/red]")
 
 
 @healer.command()
-@click.option("--output", "output_format", type=click.Choice(["text", "json"]), default="text", help="Output format")
+@click.option(
+    "--output", "output_format", type=click.Choice(["text", "json"]),
+    default="text", help="Output format",
+)
 def status(output_format: str) -> None:
     """Show queue statistics."""
     queue = _default_queue()
@@ -176,7 +201,10 @@ def status(output_format: str) -> None:
 @click.option("--priority", "priority_filter", type=click.Choice(
     ["critical", "high", "medium", "low"], case_sensitive=False,
 ), default=None, help="Filter by priority")
-@click.option("--output", "output_format", type=click.Choice(["text", "json"]), default="text", help="Output format")
+@click.option(
+    "--output", "output_format", type=click.Choice(["text", "json"]),
+    default="text", help="Output format",
+)
 def tickets(status_filter: str | None, priority_filter: str | None, output_format: str) -> None:
     """List healer tickets with optional filters."""
     queue = _default_queue()
@@ -304,7 +332,7 @@ def approve(ticket_id: str) -> None:
         console.print(f"[red]Ticket not found:[/red] {ticket_id}")
         sys.exit(1)
 
-    success = pipeline.approve_ticket(full_id)
+    success = pipeline.approve_ticket(full_id, actor=_cli_actor())
     if success:
         console.print(f"[green]Approved and applied:[/green] {full_id[:8]}")
     else:
@@ -315,7 +343,7 @@ def approve(ticket_id: str) -> None:
                 f"(must be 'proposed')"
             )
         else:
-            console.print(f"[red]Failed to approve ticket[/red]")
+            console.print("[red]Failed to approve ticket[/red]")
         sys.exit(1)
 
 
@@ -332,7 +360,7 @@ def reject(ticket_id: str, reason: str) -> None:
         console.print(f"[red]Ticket not found:[/red] {ticket_id}")
         sys.exit(1)
 
-    success = pipeline.reject_ticket(full_id, reason=reason)
+    success = pipeline.reject_ticket(full_id, reason=reason, actor=_cli_actor())
     if success:
         console.print(f"[yellow]Rejected:[/yellow] {full_id[:8]}")
         if reason:
@@ -345,26 +373,97 @@ def reject(ticket_id: str, reason: str) -> None:
                 f"(must be 'proposed')"
             )
         else:
-            console.print(f"[red]Failed to reject ticket[/red]")
+            console.print("[red]Failed to reject ticket[/red]")
         sys.exit(1)
 
 
 @healer.command()
 @click.option("--port", default=8083, help="Port to serve on")
-@click.option("--host", default="0.0.0.0", help="Host to bind to")
-def serve(port: int, host: str) -> None:
-    """Start the Healer HTTP service."""
+@click.option(
+    "--host",
+    default=None,
+    help="Host to bind to (default: 127.0.0.1, or $SPECORA_HEALER_HOST)",
+)
+def serve(port: int, host: str | None) -> None:
+    """Start the Healer HTTP service.
+
+    Binds to loopback by default. The data plane must not be reachable from
+    outside the deployment; inside a container the entrypoint passes an
+    explicit --host 0.0.0.0 and isolation comes from not publishing the port.
+    """
     import uvicorn
+
     from healer.api.server import app
-    console.print(f"[bold]Starting Healer service on {host}:{port}[/bold]")
-    uvicorn.run(app, host=host, port=port)
+    from healer.security import (
+        APPROVAL_SECRET_ENV,
+        INGEST_TOKEN_ENV,
+        OPERATOR_TOKEN_ENV,
+        PROXY_IDENTITY_HEADER_ENV,
+    )
+
+    bind_host = host or os.environ.get("SPECORA_HEALER_HOST", "127.0.0.1")
+
+    if not os.environ.get(INGEST_TOKEN_ENV):
+        console.print(
+            f"[yellow]{INGEST_TOKEN_ENV} is not set — the data plane "
+            "(/healer/ingest, /healer/status) will refuse every request.[/yellow]"
+        )
+    if not any(
+        os.environ.get(v)
+        for v in (APPROVAL_SECRET_ENV, OPERATOR_TOKEN_ENV, PROXY_IDENTITY_HEADER_ENV)
+    ):
+        console.print(
+            f"[yellow]No control-plane credential configured — set one of "
+            f"{APPROVAL_SECRET_ENV}, {OPERATOR_TOKEN_ENV}, "
+            f"{PROXY_IDENTITY_HEADER_ENV} or approvals will be refused.[/yellow]"
+        )
+
+    console.print(f"[bold]Starting Healer service on {bind_host}:{port}[/bold]")
+    uvicorn.run(app, host=bind_host, port=port)
+
+
+@healer.command("link")
+@click.argument("ticket_id")
+@click.option(
+    "--action",
+    type=click.Choice(["view", "approve", "reject"]),
+    default="view",
+    help="What the link authorizes",
+)
+@click.option("--ttl", default=None, type=int, help="Lifetime in seconds")
+def link(ticket_id: str, action: str, ttl: int | None) -> None:
+    """Mint a signed, expiring approval link for a ticket.
+
+    For operators without a webhook configured. Treat the output as a
+    credential: approve and reject links work exactly once, from anywhere.
+    """
+    from healer.security import AuthError, issue_action_token, public_base_url
+
+    queue = _default_queue()
+    full_id = _resolve_ticket_id(queue, ticket_id)
+    if not full_id:
+        console.print(f"[red]Ticket not found:[/red] {ticket_id}")
+        sys.exit(1)
+
+    try:
+        token = issue_action_token(full_id, action, ttl_seconds=ttl)
+    except AuthError as exc:
+        console.print(f"[red]{exc.detail}[/red]")
+        sys.exit(1)
+
+    base = public_base_url()
+    if action == "view":
+        console.print(f"{base}/healer/tickets/{full_id}/view?t={token}")
+    else:
+        # Mutations are POST-only, so this one is not clickable by design.
+        console.print(f'curl -X POST "{base}/healer/{action}/{full_id}?t={token}"')
 
 
 @healer.command()
 def history() -> None:
     """Show applied healer fixes from the diff store."""
-    from forge.diff.store import DiffStore
     from forge.diff.models import DiffOrigin
+    from forge.diff.store import DiffStore
 
     store = DiffStore(root=Path(".forge/diffs"))
     diffs = store.list_diffs(origin=DiffOrigin.HEALER)

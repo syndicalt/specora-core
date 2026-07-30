@@ -292,8 +292,21 @@ specora-core/
 | `OPENAI_API_KEY` | OpenAI |
 | `XAI_API_KEY` | xAI (Grok) |
 | `ZAI_API_KEY` | Z.AI (free tier available) |
-| `OLLAMA_BASE_URL` | Ollama (local models) |
+| `GOOGLE_API_KEY` | Google Gemini |
+| `OLLAMA_BASE_URL` | Ollama (local models); `OLLAMA_MODEL` picks the tag |
 | `SPECORA_AI_MODEL` | Force a specific model |
+
+Priority: `SPECORA_AI_MODEL` > `ANTHROPIC` > `OPENAI` > `XAI` > `ZAI` > `GOOGLE` > `OLLAMA`
+
+### LLM Reliability and Cost
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SPECORA_LLM_TIMEOUT` | `60` (`300` for Ollama) | Per-request timeout, seconds |
+| `SPECORA_LLM_MAX_ATTEMPTS` | `3` | Attempts before giving up |
+| `SPECORA_LLM_BACKOFF` | `0.5` | First retry delay, seconds |
+| `SPECORA_LLM_MAX_BACKOFF` | `8` | Retry delay ceiling, seconds |
+| `SPECORA_MODEL_PRICING` | -- | JSON map of model -> `{"input": usd_per_mtok, "output": usd_per_mtok}` for cost reporting |
 
 ### Generated App
 

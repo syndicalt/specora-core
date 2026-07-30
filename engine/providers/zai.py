@@ -9,11 +9,13 @@ each request.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any
 
 from engine.providers.base import LLMResponse, Message, Provider, ToolDefinition
+from engine.structured import schema_instruction
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +73,11 @@ class ZAIProvider(Provider):
     def provider_name(self) -> str:
         return "zai"
 
-    def __init__(self, api_key: str, model: str) -> None:
+    def supports_native_structured_output(self) -> bool:
+        """JSON mode guarantees valid JSON, not the requested schema."""
+        return False
+
+    def __init__(self, api_key: str, model: str, timeout: float | None = None) -> None:
         try:
             import openai
         except ImportError as exc:
@@ -82,12 +88,20 @@ class ZAIProvider(Provider):
 
         self._api_key = api_key
         self._model = model
+        self._timeout = timeout
         self._openai = openai
 
     def _get_client(self):
         """Create a fresh client with a newly signed JWT token."""
         token = sign_zai_token(self._api_key)
-        return self._openai.OpenAI(api_key=token, base_url=ZAI_BASE_URL)
+        kwargs: dict[str, Any] = {
+            "api_key": token,
+            "base_url": ZAI_BASE_URL,
+            "max_retries": 0,
+        }
+        if self._timeout is not None:
+            kwargs["timeout"] = self._timeout
+        return self._openai.OpenAI(**kwargs)
 
     def chat(
         self,
@@ -97,8 +111,12 @@ class ZAIProvider(Provider):
         tools: list[ToolDefinition] | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        response_schema: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """Send a chat request to Z.AI with JWT-signed auth."""
+        if response_schema is not None:
+            system = schema_instruction(system, response_schema)
+
         # Build messages
         oai_messages: list[dict[str, Any]] = []
         if system:
@@ -125,7 +143,7 @@ class ZAIProvider(Provider):
                                 "arguments": (
                                     tc.get("input", "{}")
                                     if isinstance(tc.get("input"), str)
-                                    else __import__("json").dumps(tc.get("input", {}))
+                                    else json.dumps(tc.get("input", {}))
                                 ),
                             },
                         }
@@ -143,7 +161,9 @@ class ZAIProvider(Provider):
             "max_tokens": max_tokens,
         }
 
-        if tools:
+        if response_schema is not None:
+            kwargs["response_format"] = {"type": "json_object"}
+        elif tools:
             kwargs["tools"] = [
                 {
                     "type": "function",
@@ -168,8 +188,13 @@ class ZAIProvider(Provider):
         if choice.message.tool_calls:
             for tc in choice.message.tool_calls:
                 try:
-                    args = __import__("json").loads(tc.function.arguments)
-                except Exception:
+                    args = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "Z.AI returned unparsable tool arguments for %s; "
+                        "treating input as empty",
+                        tc.function.name,
+                    )
                     args = {}
                 tool_calls.append({
                     "id": tc.id,

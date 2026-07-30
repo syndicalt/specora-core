@@ -82,12 +82,20 @@ def classify_raw_error(source: str, error: str, context: dict) -> Classification
         status = context.get("status_code", 0)
         fixable_by = _infer_fixable_by(error)
         if status >= 500:
-            return Classification(error_type="runtime_500", tier=3, priority=Priority.CRITICAL, fixable_by=fixable_by)
-        return Classification(error_type="runtime_exception", tier=3, priority=Priority.HIGH, fixable_by=fixable_by)
+            return Classification(
+                error_type="runtime_500", tier=3,
+                priority=Priority.CRITICAL, fixable_by=fixable_by,
+            )
+        return Classification(
+            error_type="runtime_exception", tier=3,
+            priority=Priority.HIGH, fixable_by=fixable_by,
+        )
     if source == "compilation":
         if "unresolved reference" in error.lower():
             return Classification(error_type="missing_reference", tier=2, priority=Priority.HIGH)
         if "cycle" in error.lower():
             return Classification(error_type="dependency_cycle", tier=2, priority=Priority.CRITICAL)
         return Classification(error_type="compilation_error", tier=2, priority=Priority.HIGH)
-    return Classification(error_type="unknown", tier=2, priority=Priority.MEDIUM, fixable_by="unknown")
+    return Classification(
+        error_type="unknown", tier=2, priority=Priority.MEDIUM, fixable_by="unknown",
+    )

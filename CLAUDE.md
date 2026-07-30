@@ -491,9 +491,35 @@ The Healer runs as a Docker sidecar. The app auto-reports unhandled exceptions t
 | `OPENAI_API_KEY` | OpenAI | Auto-selects `gpt-4o` |
 | `XAI_API_KEY` | xAI | Auto-selects `grok-3-mini` at `api.x.ai/v1` |
 | `ZAI_API_KEY` | Z.AI | Auto-selects `glm-4.7-flash` at `api.z.ai/api/paas/v4/`. Free tier available |
-| `OLLAMA_BASE_URL` | Ollama | Local models. Auto-selects `llama3.3:70b` |
+| `GOOGLE_API_KEY` | Google | Auto-selects `gemini-2.5-pro` at the OpenAI-compatible endpoint `generativelanguage.googleapis.com/v1beta/openai/` |
+| `OLLAMA_BASE_URL` | Ollama | Local models, no key. Defaults to `http://localhost:11434` |
+| `OLLAMA_MODEL` | Ollama | Tag to use; defaults to `llama3.3:70b`. Unregistered tags run with minimal assumed capabilities |
 
-Priority: `SPECORA_AI_MODEL` > `ANTHROPIC` > `OPENAI` > `XAI` > `ZAI` > `OLLAMA`
+Priority: `SPECORA_AI_MODEL` > `ANTHROPIC` > `OPENAI` > `XAI` > `ZAI` > `GOOGLE` > `OLLAMA`
+
+### LLM Reliability and Cost
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SPECORA_LLM_TIMEOUT` | `60` (`300` for Ollama) | Per-request timeout in seconds |
+| `SPECORA_LLM_MAX_ATTEMPTS` | `3` | Attempts before `RetryExhaustedError`. Only transient transport failures are retried; a 4xx other than 408/409/425/429 propagates immediately |
+| `SPECORA_LLM_BACKOFF` | `0.5` | First retry delay in seconds (exponential, jittered) |
+| `SPECORA_LLM_MAX_BACKOFF` | `8` | Retry delay ceiling in seconds |
+| `SPECORA_MODEL_PRICING` | — | JSON map of model ID to `{"input": usd_per_mtok, "output": usd_per_mtok}`. Token counts are always recorded; dollar estimates only appear for priced models |
+
+Per-call usage is recorded to `engine.telemetry`:
+
+```python
+from engine import telemetry
+
+telemetry.get_default_aggregator().totals()
+# {"calls": 3, "input_tokens": 4120, "output_tokens": 388,
+#  "estimated_cost_usd": None, "unpriced_calls": 3, "by_model": {...}}
+
+telemetry.register_sink(my_sink)   # my_sink.record(CallRecord) after each call
+telemetry.register_gate(my_gate)   # my_gate.check(...) before each call;
+                                   # raise CallBlockedError to refuse it
+```
 
 ### Generated App
 

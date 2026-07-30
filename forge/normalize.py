@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import re
 
-
 # ── Name normalization ──────────────────────────────────────────────────
 
 _PASCAL_SPLIT = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
@@ -93,17 +92,6 @@ def normalize_graph_edge(edge: str) -> str:
 
 # ── Contract-level normalization ────────────────────────────────────────
 
-# Map contract kind to the default kind for reference resolution
-_KIND_TO_REF_KIND = {
-    "Entity": "entity",
-    "Workflow": "workflow",
-    "Page": "page",
-    "Route": "route",
-    "Agent": "agent",
-    "Mixin": "mixin",
-    "Infra": "infra",
-}
-
 
 def normalize_contract(contract: dict) -> dict:
     """Normalize an entire contract dict in-place and return it.
@@ -117,10 +105,9 @@ def normalize_contract(contract: dict) -> dict:
     6. spec.entity → FQN format (Route/Page)
     7. spec.mixins[] → FQN format
     """
-    kind = contract.get("kind", "Entity")
-    metadata = contract.get("metadata", {})
+    metadata = contract.get("metadata") or {}
     domain = metadata.get("domain", "")
-    spec = contract.get("spec", {})
+    spec = contract.get("spec") or {}
 
     # 1. Normalize metadata.name
     if "name" in metadata:
@@ -138,10 +125,14 @@ def normalize_contract(contract: dict) -> dict:
         ]
 
     # 3-4. Normalize field references
-    fields = spec.get("fields", {})
+    fields = spec.get("fields") or {}
     for field_def in fields.values():
+        # A malformed field definition (`name: string`) is the compiler's to
+        # report; normalization must not crash before it gets the chance.
+        if not isinstance(field_def, dict):
+            continue
         refs = field_def.get("references")
-        if refs:
+        if isinstance(refs, dict):
             if "entity" in refs:
                 refs["entity"] = normalize_fqn(refs["entity"], "entity", domain)
             if "graph_edge" in refs:
@@ -177,7 +168,10 @@ def _normalize_requires_entry(ref: str, domain: str) -> str:
     lower = ref.lower()
     if "lifecycle" in lower or "workflow" in lower or "approval" in lower:
         return normalize_fqn(ref, "workflow", domain)
-    if "mixin" in lower or "stdlib" in parts[0] if parts else False:
+    # str.split never returns an empty list, so the original `... if parts else
+    # False` suffix could only ever bind the whole disjunction as a no-op
+    # conditional expression. Spelled out here as what it actually evaluated to.
+    if "mixin" in lower or "stdlib" in parts[0]:
         return normalize_fqn(ref, "mixin", domain)
 
     # Default: assume entity reference

@@ -21,8 +21,9 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import logging
+import os
+import shlex
 import subprocess
 import tempfile
 from pathlib import Path
@@ -81,10 +82,16 @@ def _preview_in_editor(
         console.print()
         console.print(f"[dim]Opening in {editor}... Review and close the editor to continue.[/dim]")
 
-        # Open editor on the directory
+        # $EDITOR routinely carries flags ("code --wait", "subl -n -w").
+        # Splitting keeps those working; passing an argv list rather than a
+        # string keeps the shell out of it, so an $EDITOR containing shell
+        # syntax is a broken editor name, not an execution vector.
         try:
-            subprocess.run([editor, str(tmp)], check=True)
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            argv = shlex.split(editor, posix=os.name != "nt")
+            if not argv:
+                raise ValueError(f"$EDITOR is not a usable command: {editor!r}")
+            subprocess.run([*argv, str(tmp)], check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
             logger.warning("Editor failed: %s. Falling back to terminal preview.", e)
             return _preview_in_terminal(contracts)
 

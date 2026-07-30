@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from engine.providers.base import LLMResponse, Message, Provider, ToolDefinition
+from engine.structured import schema_instruction
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class OpenAIProvider(Provider):
         api_key: str,
         model: str,
         base_url: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialise with an API key, model, and optional base URL.
 
@@ -33,6 +35,7 @@ class OpenAIProvider(Provider):
             model: Model ID, e.g. ``gpt-4o``.
             base_url: Optional base URL for OpenAI-compatible endpoints
                       (e.g. ``https://api.x.ai/v1``).
+            timeout: Per-request timeout in seconds.
         """
         try:
             import openai  # noqa: F811
@@ -42,9 +45,11 @@ class OpenAIProvider(Provider):
                 "Install it with: pip install openai"
             ) from exc
 
-        kwargs: dict[str, Any] = {"api_key": api_key}
+        kwargs: dict[str, Any] = {"api_key": api_key, "max_retries": 0}
         if base_url:
             kwargs["base_url"] = base_url
+        if timeout is not None:
+            kwargs["timeout"] = timeout
 
         self._client = openai.OpenAI(**kwargs)
         self._model = model
@@ -52,6 +57,16 @@ class OpenAIProvider(Provider):
     def provider_name(self) -> str:
         """Return ``'openai'``."""
         return "openai"
+
+    def supports_native_structured_output(self) -> bool:
+        """JSON mode constrains the decoder, but not to the schema.
+
+        ``response_format={"type": "json_object"}`` is portable across every
+        OpenAI-compatible endpoint Specora targets, unlike strict ``json_schema``
+        which xAI, Z.AI, and Ollama do not all implement. It guarantees valid
+        JSON, not the requested shape, so the engine still validates.
+        """
+        return False
 
     # ------------------------------------------------------------------
     # Message conversion helpers
@@ -142,6 +157,7 @@ class OpenAIProvider(Provider):
         tools: list[ToolDefinition] | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        response_schema: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """Send a chat completion request to the OpenAI API.
 
@@ -151,10 +167,15 @@ class OpenAIProvider(Provider):
             tools: Optional tool definitions the model may invoke.
             temperature: Sampling temperature (0.0 = deterministic).
             max_tokens: Maximum tokens in the response.
+            response_schema: JSON Schema for the reply; engages JSON mode and
+                is inlined into the system message so the model sees the shape.
 
         Returns:
             Normalised ``LLMResponse`` with content, tool calls, and usage.
         """
+        if response_schema is not None:
+            system = schema_instruction(system, response_schema)
+
         kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": self._convert_messages(messages, system=system),
@@ -162,7 +183,9 @@ class OpenAIProvider(Provider):
             "max_tokens": max_tokens,
         }
 
-        if tools:
+        if response_schema is not None:
+            kwargs["response_format"] = {"type": "json_object"}
+        elif tools:
             kwargs["tools"] = self._convert_tools(tools)
 
         logger.debug("OpenAI request: model=%s, messages=%d", self._model, len(messages))

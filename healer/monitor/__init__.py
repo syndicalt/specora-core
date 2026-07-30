@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime, timezone
+
+from healer.cost import SpendGovernor
 from healer.models import TicketStatus
 from healer.queue import HealerQueue
 
@@ -43,10 +46,28 @@ def compute_metrics(queue: HealerQueue) -> dict:
         for t in resolved[:10]
     ]
 
+    governor = SpendGovernor(store=queue)
+    window = governor.window
+    usage = queue.llm_usage_totals_since(datetime.now(timezone.utc) - window)
+    breaker = governor.check()
+
     stats = queue.stats()
     return {
         "queue": stats["by_status"],
         "success_rate": success_rates,
         "recurring": recurring,
         "recent": recent,
+        "llm": {
+            "window_hours": round(window.total_seconds() / 3600, 2),
+            "calls": usage["calls"],
+            "input_tokens": usage["input_tokens"],
+            "output_tokens": usage["output_tokens"],
+            "total_tokens": usage["total_tokens"],
+            "total_cost_usd": usage["total_cost_usd"],
+            "avg_latency_ms": usage["avg_latency_ms"],
+            "token_budget": governor.token_budget,
+            "spend_limit_usd": governor.spend_limit_usd,
+            "accepting_calls": breaker.allowed,
+            "blocked_reason": breaker.reason,
+        },
     }

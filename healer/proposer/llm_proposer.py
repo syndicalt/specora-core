@@ -1,33 +1,46 @@
 """Tier 2-3 proposer — LLM-powered structural and runtime fixes."""
 from __future__ import annotations
 
-import copy
 import logging
 import re
+import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import yaml
 
 from forge.diff.store import DiffStore
 from forge.diff.tracker import compute_diff
 from forge.parser.validator import validate_contract
-from healer.models import HealerProposal, HealerTicket
+from healer.applier import strip_internal_keys
+from healer.cost import LLMUsage, SpendGovernor
+from healer.models import HealerProposal, HealerTicket, ProposalProvenance
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = """You are a contract healing expert. Fix the contract YAML to resolve the error.
+# Bump on every edit to _SYSTEM_PROMPT or _build_prompt. Stored on the
+# proposal so a fix can be replayed against the exact prompt that produced it.
+PROMPT_VERSION = "2026-05-02.1"
 
-STRICT RULES:
-1. Return the COMPLETE contract as a ```yaml code block
-2. Only change what's needed to fix the error
-3. Field properties allowed: type, required, description, enum, default, immutable, computed, constraints, references, format, items_type
-4. Constraint sub-keys allowed: min, max, maxLength, minLength, pattern — NOTHING ELSE
-5. Do NOT add "required_when", "conditional_required", or any property not listed above
-6. If a field should be conditionally required, just set required: true — workflow guards handle conditions
-
-Brief explanation first, then the complete YAML.
-"""
+# Wrapped as implicit concatenation only to keep source lines short; the
+# assembled string must stay byte-identical for PROMPT_VERSION to mean anything.
+_SYSTEM_PROMPT = (
+    "You are a contract healing expert. Fix the contract YAML to resolve the error.\n"
+    "\n"
+    "STRICT RULES:\n"
+    "1. Return the COMPLETE contract as a ```yaml code block\n"
+    "2. Only change what's needed to fix the error\n"
+    "3. Field properties allowed: type, required, description, enum, default, "
+    "immutable, computed, constraints, references, format, items_type\n"
+    "4. Constraint sub-keys allowed: min, max, maxLength, minLength, pattern "
+    "— NOTHING ELSE\n"
+    "5. Do NOT add \"required_when\", \"conditional_required\", or any property "
+    "not listed above\n"
+    "6. If a field should be conditionally required, just set required: true "
+    "— workflow guards handle conditions\n"
+    "\n"
+    "Brief explanation first, then the complete YAML.\n"
+)
 
 # Properties that are valid on a field definition
 _VALID_FIELD_PROPS = {
@@ -43,6 +56,7 @@ def propose_llm_fix(
     ticket: HealerTicket,
     contract: dict,
     diff_root: Path = Path(".forge/diffs"),
+    governor: Optional[SpendGovernor] = None,
 ) -> Optional[HealerProposal]:
     """Propose a fix using the LLM. Includes sanitization and retry."""
     try:
@@ -52,6 +66,14 @@ def propose_llm_fix(
         logger.warning("LLM engine not available: %s", e)
         return None
 
+    model_id = getattr(engine, "model_id", "")
+    if governor is not None:
+        decision = governor.check(model_id)
+        if not decision.allowed:
+            logger.warning("Refusing LLM proposal for %s: %s", ticket.id[:8], decision.reason)
+            return None
+
+    contract = strip_internal_keys(contract)
     contract_yaml = yaml.dump(contract, default_flow_style=False, sort_keys=False)
     store = DiffStore(root=diff_root)
     diff_history = store.format_for_llm(ticket.contract_fqn or "", n=5)
@@ -59,9 +81,12 @@ def propose_llm_fix(
     prompt = _build_prompt(ticket, contract_yaml, diff_history)
 
     # Attempt 1
-    proposal = _attempt_fix(engine, prompt, contract, ticket)
+    proposal = _attempt_fix(engine, prompt, contract, ticket, governor, attempt=1)
     if proposal:
         return proposal
+
+    if governor is not None and not governor.check(model_id).allowed:
+        return None
 
     # Attempt 2 — retry with simpler prompt
     logger.info("First attempt failed, retrying with simpler prompt")
@@ -70,16 +95,80 @@ def propose_llm_fix(
         f"Just change the minimum fields needed. Do NOT add new properties.\n\n"
         f"```yaml\n{contract_yaml}```"
     )
-    return _attempt_fix(engine, simple_prompt, contract, ticket)
+    return _attempt_fix(engine, simple_prompt, contract, ticket, governor, attempt=2)
 
 
-def _attempt_fix(engine, prompt: str, contract: dict, ticket: HealerTicket) -> Optional[HealerProposal]:
+def _call_model(engine, prompt: str) -> tuple[str, LLMUsage]:
+    """Run one model call and measure what it cost.
+
+    Uses ``chat`` rather than ``ask`` because only the former surfaces the
+    provider's token counts, and unmeasured spend is the thing being fixed.
+    """
+    from engine.providers.base import Message
+
+    model_id = getattr(engine, "model_id", "")
+    provider = getattr(getattr(engine, "config", None), "capabilities", None)
+    provider_name = getattr(provider, "provider", "")
+
+    started = time.monotonic()
+    response = engine.chat([Message(role="user", content=prompt)], system=_SYSTEM_PROMPT)
+    latency_ms = int((time.monotonic() - started) * 1000)
+
+    raw_usage = response.usage or {}
+    usage = LLMUsage(
+        model_id=model_id,
+        provider=provider_name,
+        prompt_version=PROMPT_VERSION,
+        input_tokens=int(raw_usage.get("input_tokens", raw_usage.get("prompt_tokens", 0))),
+        output_tokens=int(raw_usage.get("output_tokens", raw_usage.get("completion_tokens", 0))),
+        latency_ms=latency_ms,
+        ok=True,
+    )
+    return response.content, usage
+
+
+def _attempt_fix(
+    engine,
+    prompt: str,
+    contract: dict,
+    ticket: HealerTicket,
+    governor: Optional[SpendGovernor],
+    attempt: int,
+) -> Optional[HealerProposal]:
     """Single attempt: call LLM, sanitize, validate, return proposal or None."""
+    started = time.monotonic()
     try:
-        response = engine.ask(question=prompt, system=_SYSTEM_PROMPT)
+        response, usage = _call_model(engine, prompt)
     except Exception as e:
         logger.error("LLM request failed: %s", e)
+        if governor is not None:
+            governor.record(
+                ticket.id,
+                LLMUsage(
+                    model_id=getattr(engine, "model_id", ""),
+                    prompt_version=PROMPT_VERSION,
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                    ok=False,
+                    error=str(e)[:500],
+                ),
+            )
         return None
+
+    if governor is not None:
+        usage.cost_usd = governor.price_call(
+            usage.model_id, usage.input_tokens, usage.output_tokens
+        )
+        governor.record(ticket.id, usage)
+
+    provenance = ProposalProvenance(
+        proposer="llm_proposer",
+        proposer_version=PROMPT_VERSION,
+        model_id=usage.model_id,
+        provider=usage.provider,
+        prompt_version=PROMPT_VERSION,
+        usage=usage,
+        attempts=attempt,
+    )
 
     proposed = _extract_yaml(response)
     if proposed is None:
@@ -88,6 +177,7 @@ def _attempt_fix(engine, prompt: str, contract: dict, ticket: HealerTicket) -> O
 
     # Sanitize — strip invalid properties the LLM may have invented
     _sanitize_contract(proposed)
+    proposed = strip_internal_keys(proposed)
 
     # Validate
     errors = validate_contract(proposed)
@@ -111,6 +201,7 @@ def _attempt_fix(engine, prompt: str, contract: dict, ticket: HealerTicket) -> O
         explanation=_extract_explanation(response),
         confidence=0.7 if ticket.tier == 2 else 0.5,
         method=method,
+        provenance=provenance,
     )
 
 

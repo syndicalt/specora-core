@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
+
+from healer.cost import LLMUsage
 
 
 class TicketSource(str, Enum):
@@ -39,6 +42,48 @@ PRIORITY_ORDER = {
 }
 
 
+@dataclass
+class ProposalProvenance:
+    """Where a proposal came from, in enough detail to replay or blame it.
+
+    A bad fix that reached a contract must be attributable: which model, which
+    prompt revision, and what the call cost. Without this a regression in a
+    provider's model is indistinguishable from a regression in our prompt.
+    """
+
+    proposer: str = ""
+    proposer_version: str = ""
+    model_id: str = ""
+    provider: str = ""
+    prompt_version: str = ""
+    usage: Optional[LLMUsage] = None
+    attempts: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "proposer": self.proposer,
+            "proposer_version": self.proposer_version,
+            "model_id": self.model_id,
+            "provider": self.provider,
+            "prompt_version": self.prompt_version,
+            "usage": self.usage.to_dict() if self.usage else None,
+            "attempts": self.attempts,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ProposalProvenance:
+        usage = d.get("usage")
+        return cls(
+            proposer=d.get("proposer", ""),
+            proposer_version=d.get("proposer_version", ""),
+            model_id=d.get("model_id", ""),
+            provider=d.get("provider", ""),
+            prompt_version=d.get("prompt_version", ""),
+            usage=LLMUsage.from_dict(usage) if usage else None,
+            attempts=int(d.get("attempts", 0)),
+        )
+
+
 class HealerProposal:
     """A proposed fix attached to a ticket."""
 
@@ -51,6 +96,7 @@ class HealerProposal:
         explanation: str,
         confidence: float,
         method: str,
+        provenance: Optional[ProposalProvenance] = None,
     ) -> None:
         self.contract_fqn = contract_fqn
         self.before = before
@@ -59,6 +105,7 @@ class HealerProposal:
         self.explanation = explanation
         self.confidence = confidence
         self.method = method
+        self.provenance = provenance or ProposalProvenance()
 
     def to_dict(self) -> dict:
         return {
@@ -72,10 +119,12 @@ class HealerProposal:
             "explanation": self.explanation,
             "confidence": self.confidence,
             "method": self.method,
+            "provenance": self.provenance.to_dict(),
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> HealerProposal:
+        provenance = d.get("provenance")
         return cls(
             contract_fqn=d["contract_fqn"],
             before=d["before"],
@@ -84,6 +133,7 @@ class HealerProposal:
             explanation=d["explanation"],
             confidence=d["confidence"],
             method=d["method"],
+            provenance=ProposalProvenance.from_dict(provenance) if provenance else None,
         )
 
 

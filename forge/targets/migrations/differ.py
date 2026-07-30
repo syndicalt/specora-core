@@ -10,7 +10,9 @@ from forge.ir.model import EntityIR, FieldIR
 @dataclass
 class SchemaChange:
     """A single schema change detected between IR versions."""
-    change_type: str          # create_table, drop_table, add_column, drop_column, alter_type, set_not_null, drop_not_null, set_default, drop_default, add_index
+    # create_table, drop_table, add_column, drop_column, alter_type,
+    # set_not_null, drop_not_null, set_default, drop_default, add_index
+    change_type: str
     table_name: str
     field_name: str = ""
     old_value: Any = None

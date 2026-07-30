@@ -9,33 +9,26 @@ Launch: `spc` or `specora-core` or `python -m forge.cli.repl`
 from __future__ import annotations
 
 import io
-import json
 import os
 import subprocess
 import sys
-import time
 import threading
-from datetime import datetime, timezone
+import time
 from pathlib import Path
-from typing import Optional
 
 from dotenv import load_dotenv
-from rich.console import Console
-from rich.table import Table
-from rich.syntax import Syntax
-from rich.panel import Panel
-from rich.text import Text as RichText
-from rich.columns import Columns
-from rich.rule import Rule
-from rich.tree import Tree
-from rich.markdown import Markdown
-
 from prompt_toolkit import PromptSession
-from prompt_toolkit.history import FileHistory
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
+from rich.console import Console
+from rich.panel import Panel
+from rich.rule import Rule
+from rich.table import Table
+from rich.text import Text as RichText
+from rich.tree import Tree
 
 load_dotenv(override=True)
 
@@ -102,7 +95,9 @@ def _ok(text: str) -> None:
     console.print()
 
 def _err(text: str) -> None:
-    console.print(Panel(text, border_style="red", title="[red bold]Error[/red bold]", padding=(0, 1)))
+    console.print(
+        Panel(text, border_style="red", title="[red bold]Error[/red bold]", padding=(0, 1))
+    )
     console.print()
 
 def _info(text: str) -> None:
@@ -144,7 +139,11 @@ def _show_welcome() -> None:
     # Domain summary
     domains_dir = Path("domains")
     if domains_dir.exists():
-        domains = [d.name for d in domains_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
+        domains = [
+            d.name
+            for d in domains_dir.iterdir()
+            if d.is_dir() and not d.name.startswith(".")
+        ]
         if domains:
             from forge.parser.loader import load_all_contracts
             total_contracts = 0
@@ -155,14 +154,22 @@ def _show_welcome() -> None:
                     count = len(contracts)
                     total_contracts += count
                     entities = sum(1 for c in contracts.values() if c.get("kind") == "Entity")
-                    domain_info.append(f"[cyan]{d}[/cyan] [dim]({entities} entities, {count} contracts)[/dim]")
+                    domain_info.append(
+                        f"[cyan]{d}[/cyan] "
+                        f"[dim]({entities} entities, {count} contracts)[/dim]"
+                    )
                 except Exception:
                     domain_info.append(f"[cyan]{d}[/cyan] [dim](error loading)[/dim]")
 
             console.print(f"  [bold]Domains[/bold]  {' │ '.join(domain_info)}")
-            console.print(f"  [bold]Total[/bold]    [dim]{total_contracts} contracts across {len(domains)} domain(s)[/dim]")
+            console.print(
+                f"  [bold]Total[/bold]    [dim]{total_contracts} contracts "
+                f"across {len(domains)} domain(s)[/dim]"
+            )
         else:
-            console.print("  [dim]No domains yet. Run /new to create one or /help for commands.[/dim]")
+            console.print(
+                "  [dim]No domains yet. Run /new to create one or /help for commands.[/dim]"
+            )
     else:
         console.print("  [dim]No domains directory. Run /new to get started.[/dim]")
 
@@ -177,9 +184,9 @@ def cmd_validate(args: str) -> None:
     path = args.strip() or "domains/"
     _tool(f"forge validate {path}")
 
+    from forge.error_display import format_errors_rich
     from forge.parser.loader import load_all_contracts
     from forge.parser.validator import validate_all
-    from forge.error_display import format_errors_rich
 
     def run():
         contracts = load_all_contracts(Path(path))
@@ -194,7 +201,10 @@ def cmd_validate(args: str) -> None:
         real = [e for e in errors if e.severity == "error"]
         warns = [e for e in errors if e.severity == "warning"]
         console.print(format_errors_rich(errors))
-        console.print(f"\n  [dim]{len(contracts)} contracts, {len(real)} error(s), {len(warns)} warning(s) ({elapsed:.1f}s)[/dim]")
+        console.print(
+            f"\n  [dim]{len(contracts)} contracts, {len(real)} error(s), "
+            f"{len(warns)} warning(s) ({elapsed:.1f}s)[/dim]"
+        )
         console.print()
 
 
@@ -202,7 +212,7 @@ def cmd_compile(args: str) -> None:
     path = args.strip() or "domains/"
     _tool(f"forge compile {path}")
 
-    from forge.ir.compiler import Compiler, CompilationError
+    from forge.ir.compiler import CompilationError, Compiler
 
     try:
         ir, elapsed = _timed(lambda: Compiler(contract_root=Path(path)).compile(), "Compiling")
@@ -216,9 +226,9 @@ def cmd_generate(args: str) -> None:
     _tool(f"forge generate {path}")
 
     from forge.ir.compiler import Compiler
-    from forge.targets.typescript.gen_types import TypeScriptGenerator
     from forge.targets.fastapi.gen_routes import FastAPIGenerator
     from forge.targets.postgres.gen_ddl import PostgresGenerator
+    from forge.targets.typescript.gen_types import TypeScriptGenerator
 
     try:
         def run():
@@ -251,8 +261,8 @@ def cmd_graph(args: str) -> None:
     path = args.strip() or "domains/"
     _tool(f"forge graph {path}")
 
-    from forge.parser.loader import load_all_contracts
     from forge.parser.graph import build_dependency_graph
+    from forge.parser.loader import load_all_contracts
 
     contracts = load_all_contracts(Path(path))
     dep_graph = build_dependency_graph(contracts)
@@ -262,7 +272,10 @@ def cmd_graph(args: str) -> None:
     for node in dep_graph.nodes.values():
         by_kind.setdefault(node.kind, []).append(node)
 
-    kind_icons = {"Entity": "◆", "Workflow": "◎", "Route": "→", "Page": "▦", "Mixin": "◇", "Agent": "⚙", "Infra": "▣"}
+    kind_icons = {
+        "Entity": "◆", "Workflow": "◎", "Route": "→", "Page": "▦",
+        "Mixin": "◇", "Agent": "⚙", "Infra": "▣",
+    }
     for kind, nodes in sorted(by_kind.items()):
         icon = kind_icons.get(kind, "•")
         branch = tree.add(f"[bold cyan]{icon} {kind}[/bold cyan] [dim]({len(nodes)})[/dim]")
@@ -402,18 +415,49 @@ def cmd_help(args: str) -> None:
         table.add_row("", "")
 
     console.print()
-    console.print(Panel(table, title="[bold]Commands[/bold]", border_style="magenta", padding=(1, 2)))
+    console.print(
+        Panel(table, title="[bold]Commands[/bold]", border_style="magenta", padding=(1, 2))
+    )
     console.print()
 
 
-def cmd_shell(cmd: str) -> None:
+def cmd_shell(cmd: str, *, typed_by_user: bool = False) -> None:
+    """Run a shell command the user typed at the prompt.
+
+    ``shell=True`` is acceptable here and nowhere else: the text came straight
+    from the user's keystrokes, so it carries exactly the authority of the
+    terminal the REPL was launched from. The keyword-only flag exists so that
+    a future refactor cannot quietly route model-derived text here — the
+    guard fails loudly instead of executing it.
+    """
+    if not typed_by_user:
+        raise RuntimeError(
+            "cmd_shell may only run text the user typed directly. "
+            "Model-derived commands must go through ROUTE_MAP."
+        )
     _tool(f"$ {cmd}")
     console.print()
     subprocess.run(cmd, shell=True, cwd=os.getcwd())
     console.print()
 
 
+def _confirm(question: str) -> bool:
+    """Ask a yes/no question at the prompt, defaulting to no."""
+    try:
+        answer = console.input(f"  [bold]{question}[/bold] [dim][y/N][/dim] ")
+    except (EOFError, KeyboardInterrupt):
+        console.print()
+        return False
+    return answer.strip().lower() in ("y", "yes")
+
+
 def cmd_natural(text: str) -> None:
+    """Route a natural-language request to an allowlisted in-process handler.
+
+    The model chooses a route key from a fixed list; it never produces a
+    command line that gets executed. Anything the router could not place on
+    that list is printed for the user to read and act on themselves.
+    """
     _tool("Routing via agent…")
 
     try:
@@ -421,31 +465,41 @@ def cmd_natural(text: str) -> None:
             from healer.api.agent import route_natural_language
             return route_natural_language(text)
 
-        result, elapsed = _timed(run, "Thinking")
-
-        command = result.get("command")
-        explanation = result.get("explanation", "")
-
-        if not command:
-            _info(explanation or "I'm not sure how to help. Try /help.")
-            return
-
-        if explanation:
-            console.print(f"  [dim italic]{explanation}[/dim italic]")
-            console.print()
-
-        parts = command.split(None, 2)
-        if len(parts) >= 2:
-            handler = ROUTE_MAP.get(f"{parts[0]} {parts[1]}")
-            if handler:
-                rest = parts[2] if len(parts) > 2 else ""
-                handler(rest)
-                return
-
-        cmd_shell(f"specora-core {command}")
-
+        decision, _elapsed = _timed(run, "Thinking")
     except Exception as e:
         _err(str(e))
+        return
+
+    if decision.status != "routed":
+        _info(decision.explanation or "I'm not sure how to help. Try /help.")
+        if decision.suggestion:
+            # Displayed as inert text. Rich markup is escaped so a crafted
+            # reply cannot forge console output either.
+            console.print("  [dim]The router suggested a command that is not "
+                          "available from natural language:[/dim]")
+            console.print(RichText(f"    {decision.suggestion}", style="yellow"))
+            console.print("  [dim]Run it yourself with ! if you trust it.[/dim]")
+            console.print()
+        return
+
+    handler = ROUTE_MAP.get(decision.route)
+    if handler is None:
+        # Unreachable while the startup check below passes; kept because
+        # failing closed is the only acceptable outcome if it ever does not.
+        _err(f"No handler registered for route '{decision.route}'.")
+        return
+
+    if decision.explanation:
+        console.print(f"  [dim italic]{decision.explanation}[/dim italic]")
+        console.print()
+
+    if decision.mutating:
+        console.print(RichText(f"  {decision.display_command}", style="bold"))
+        if not _confirm("Run this? It writes files or starts an interview."):
+            _info("Cancelled.")
+            return
+
+    handler(decision.args)
 
 
 # ─── Command Router ──────────────────────────────────────────────────
@@ -462,6 +516,9 @@ SLASH_MAP = {
     "/help": cmd_help,
 }
 
+# The only dispatch table natural-language routing can reach. Keys are route
+# keys validated by healer.api.agent, not command lines: nothing here is ever
+# built by string concatenation from model output.
 ROUTE_MAP = {
     "forge validate": cmd_validate, "forge compile": cmd_compile,
     "forge generate": cmd_generate, "forge graph": cmd_graph,
@@ -473,6 +530,29 @@ ROUTE_MAP = {
     "factory visualize": cmd_visualize, "factory migrate": cmd_migrate,
     "extract": cmd_extract,
 }
+
+
+def _assert_routes_match_allowlist() -> None:
+    """Fail at import if the handler table and the allowlist have drifted.
+
+    A route the agent permits but the REPL cannot dispatch would previously
+    have fallen through to a shell. There is no fallthrough any more, so the
+    consequence is a dead route — but the two lists still have to agree, and
+    catching it here beats discovering it mid-session.
+    """
+    from healer.api.agent import ALLOWED_COMMANDS
+
+    allowed = {spec.route for spec in ALLOWED_COMMANDS}
+    handled = set(ROUTE_MAP)
+    if allowed != handled:
+        raise RuntimeError(
+            "ROUTE_MAP and healer.api.agent.ALLOWED_COMMANDS disagree: "
+            f"allowlist-only={sorted(allowed - handled)}, "
+            f"handler-only={sorted(handled - allowed)}"
+        )
+
+
+_assert_routes_match_allowlist()
 
 
 def handle_input(text: str) -> bool:
@@ -493,7 +573,9 @@ def handle_input(text: str) -> bool:
         return True
 
     if trimmed.startswith("!"):
-        cmd_shell(trimmed[1:].strip())
+        # The only shell path in the REPL, and the only caller allowed to set
+        # typed_by_user: `text` is the raw prompt buffer.
+        cmd_shell(trimmed[1:].strip(), typed_by_user=True)
         return True
 
     if trimmed.startswith("/"):
