@@ -2,6 +2,7 @@
 
 None of these touch a provider SDK, so they run without the ``[llm]`` extra.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -184,12 +185,8 @@ class TestCallWithRetry:
 class TestTelemetry:
     def test_aggregates_tokens_and_errors(self) -> None:
         agg = UsageAggregator()
-        agg.record(
-            CallRecord("m1", "p", "heal", "ok", 10.0, 1, input_tokens=100, output_tokens=20)
-        )
-        agg.record(
-            CallRecord("m1", "p", "heal", "error", 30.0, 3, error_type="APITimeoutError")
-        )
+        agg.record(CallRecord("m1", "p", "heal", "ok", 10.0, 1, input_tokens=100, output_tokens=20))
+        agg.record(CallRecord("m1", "p", "heal", "error", 30.0, 3, error_type="APITimeoutError"))
 
         totals = agg.totals()
         assert totals["calls"] == 2

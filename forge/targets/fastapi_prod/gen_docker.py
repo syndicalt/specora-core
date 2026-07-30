@@ -134,8 +134,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.healer
-    ports:
-      - "8083:8083"
+    # Deliberately unpublished. Two different surfaces share this port:
+    #   - the data plane (/healer/ingest), which only `app` calls, over the
+    #     compose network at http://healer:8083;
+    #   - the control plane (approvals), which applies contract fixes and so is
+    #     the most privileged surface in the stack.
+    # Publishing 8083 puts both on the host interface. Expose the control plane
+    # deliberately, behind a reverse proxy that terminates TLS and authenticates
+    # — not by publishing the whole port here.
     env_file: .env
     volumes:
       - ./domains:/app/domains
@@ -275,8 +281,21 @@ def _generate_env_example(ir: DomainIR, has_auth: bool) -> GeneratedFile:
         "# =============================================================================",
         "",
         "SPECORA_HEALER_PORT=8083",
-        "SPECORA_HEALER_URL=http://localhost:8083  # App reports errors here",
-        "SPECORA_HEALER_WEBHOOK_URL=     # Optional: POST notifications on state changes",
+        "",
+        "# Where the app posts unhandled errors. docker-compose sets this to",
+        "# http://healer:8083 over the compose network; port 8083 is deliberately",
+        "# not published to the host, because the same port also serves the",
+        "# control plane that applies contract fixes.",
+        "SPECORA_HEALER_URL=",
+        "",
+        "# Required whenever SPECORA_HEALER_URL is set: /healer/ingest is",
+        "# authenticated, and the app logs a warning at startup if a URL is",
+        "# configured without a token, because every report would be rejected.",
+        "#   openssl rand -hex 32",
+        "SPECORA_HEALER_INGEST_TOKEN=",
+        "",
+        "# Optional: POST notifications on state changes",
+        "SPECORA_HEALER_WEBHOOK_URL=",
         "",
         "# Path to specora-core installation (for Healer Docker container)",
         "SPECORA_CORE_PATH=./../specora-core",

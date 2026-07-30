@@ -4,9 +4,9 @@ The chat command is more than a conversation — it's a domain modeling
 agent. The LLM can propose contract changes and, with user approval,
 execute them directly. Every action is confirmed before execution.
 """
+
 from __future__ import annotations
 
-import copy
 import sys
 from pathlib import Path
 from typing import Optional
@@ -15,9 +15,8 @@ import click
 import yaml
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.syntax import Syntax
 from rich.rule import Rule
+from rich.syntax import Syntax
 
 from engine.config import EngineConfigError
 from engine.engine import LLMEngine
@@ -31,6 +30,7 @@ _contracts_base = Path("domains")
 
 # ─── Domain Context ──────────────────────────────────────────────────
 
+
 def _discover_domains() -> list[str]:
     if not _contracts_base.exists():
         return []
@@ -39,6 +39,7 @@ def _discover_domains() -> list[str]:
 
 def _build_domain_context(domain: str) -> str:
     from forge.parser.loader import load_all_contracts
+
     domain_path = _contracts_base / domain
     if not domain_path.exists():
         return f"Domain '{domain}' has no contracts yet."
@@ -77,35 +78,64 @@ def _load_contract_yaml(domain: str, kind: str, name: str) -> Optional[str]:
 TOOLS = [
     ToolDefinition(
         name="propose_entity",
-        description="Propose creating a new Entity contract. The user will be asked to confirm before it's written to disk.",
+        description=(
+            "Propose creating a new Entity contract. The user will be asked to "
+            "confirm before it's written to disk."
+        ),
         parameters={
             "type": "object",
             "required": ["name", "description", "fields"],
             "properties": {
-                "name": {"type": "string", "description": "Entity name in snake_case (e.g., 'review', 'appointment')"},
-                "description": {"type": "string", "description": "One-sentence description of the entity"},
+                "name": {
+                    "type": "string",
+                    "description": "Entity name in snake_case (e.g., 'review', 'appointment')",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "One-sentence description of the entity",
+                },
                 "fields": {
                     "type": "object",
-                    "description": "Map of field_name to field definition. Each field has 'type' (string/integer/text/boolean/date/datetime/uuid/email/number/array) and optionally 'required', 'description', 'enum', 'references'.",
+                    "description": (
+                        "Map of field_name to field definition. Each field has 'type' "
+                        "(string/integer/text/boolean/date/datetime/uuid/email/number/array) "
+                        "and optionally 'required', 'description', 'enum', 'references'."
+                    ),
                     "additionalProperties": {"type": "object"},
                 },
                 "mixins": {
-                    "type": "array", "items": {"type": "string"},
-                    "description": "List of mixin FQNs (e.g., ['mixin/stdlib/timestamped', 'mixin/stdlib/identifiable'])",
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "List of mixin FQNs "
+                        "(e.g., ['mixin/stdlib/timestamped', 'mixin/stdlib/identifiable'])"
+                    ),
                 },
-                "state_machine": {"type": "string", "description": "Workflow FQN if entity needs a state machine"},
+                "state_machine": {
+                    "type": "string",
+                    "description": "Workflow FQN if entity needs a state machine",
+                },
             },
         },
     ),
     ToolDefinition(
         name="propose_modification",
-        description="Propose modifying an existing contract. The user will be asked to confirm before changes are applied.",
+        description=(
+            "Propose modifying an existing contract. The user will be asked to "
+            "confirm before changes are applied."
+        ),
         parameters={
             "type": "object",
             "required": ["contract_fqn", "instruction"],
             "properties": {
-                "contract_fqn": {"type": "string", "description": "FQN of contract to modify (e.g., 'entity/library/book')"},
-                "instruction": {"type": "string", "description": "Natural language description of the change"},
+                "contract_fqn": {
+                    "type": "string",
+                    "description": "FQN of contract to modify (e.g., 'entity/library/book')",
+                },
+                "instruction": {
+                    "type": "string",
+                    "description": "Natural language description of the change",
+                },
             },
         },
     ),
@@ -116,7 +146,8 @@ TOOLS = [
     ),
 ]
 
-SYSTEM_TEMPLATE = """You are a domain modeling expert for the Specora Contract-Driven Development engine.
+SYSTEM_TEMPLATE = """\
+You are a domain modeling expert for the Specora Contract-Driven Development engine.
 You are an agent that can both discuss and build. When the developer describes something they
 want to add or change, use your tools to propose it. ALWAYS use tools to propose changes —
 never just describe what they should do manually.
@@ -134,7 +165,9 @@ You don't need to ask "shall I create this?" — just use the tool. The system h
 Rules for contract content:
 - Entity names: snake_case (e.g., review, todo_item)
 - Field types: string, integer, number, boolean, text, array, object, datetime, date, uuid, email
-- References to other entities use: {{"references": {{"entity": "entity/DOMAIN/NAME", "display": "name", "graph_edge": "RELATIONSHIP_NAME"}}}}
+- References to other entities use:
+  {{"references": {{"entity": "entity/DOMAIN/NAME", "display": "name",
+  "graph_edge": "RELATIONSHIP_NAME"}}}}
 - graph_edge must be SCREAMING_SNAKE_CASE (e.g., REVIEWED_BY, ASSIGNED_TO)
 - Always include mixin/stdlib/timestamped and mixin/stdlib/identifiable
 
@@ -143,6 +176,7 @@ Be concise. Propose concrete changes. Let the tools do the work.
 
 
 # ─── Tool Execution ──────────────────────────────────────────────────
+
 
 def _execute_tool(tool_name: str, tool_input: dict, domain: str) -> str:
     """Execute a tool call, always asking the user first. Returns result message."""
@@ -182,7 +216,9 @@ def _propose_entity(params: dict, domain: str) -> str:
     errors = validate_contract(contract)
     real_errors = [e for e in errors if e.severity == "error"]
     if real_errors:
-        console.print(f"  [yellow]⚠ {len(real_errors)} validation warning(s) — will be auto-healed[/yellow]")
+        console.print(
+            f"  [yellow]⚠ {len(real_errors)} validation warning(s) — will be auto-healed[/yellow]"
+        )
 
     # Ask
     console.print()
@@ -196,6 +232,7 @@ def _propose_entity(params: dict, domain: str) -> str:
 
     # Write
     from forge.normalize import normalize_name
+
     safe_name = normalize_name(name)
     path = _contracts_base / domain / "entities" / f"{safe_name}.contract.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -203,8 +240,8 @@ def _propose_entity(params: dict, domain: str) -> str:
     console.print(f"  [green]✓ Wrote {path}[/green]")
 
     # Also generate route + page
-    from factory.emitters.route_emitter import emit_route
     from factory.emitters.page_emitter import emit_page
+    from factory.emitters.route_emitter import emit_route
 
     entity_fqn = f"entity/{domain}/{safe_name}"
     plural = safe_name + "s"
@@ -256,12 +293,13 @@ def _propose_modification(params: dict, domain: str) -> str:
 
     # Execute the refine via LLM
     from factory.cli.refine import factory_refine
+
     try:
         ctx = factory_refine.make_context("refine", [str(path), instruction])
         factory_refine.invoke(ctx)
         return f"Modified {fqn}."
     except SystemExit:
-        return f"Modification completed."
+        return "Modification completed."
     except Exception as e:
         return f"Error: {e}"
 
@@ -287,10 +325,17 @@ def _validate_domain(domain: str) -> str:
 
 # ─── Main Chat Loop ─────────────────────────────────────────────────
 
+
 @click.command("chat")
 @click.option("--domain", "-d", default="", help="Domain to chat about")
-@click.option("--input", "-i", "input_dir", default="domains/", type=click.Path(),
-              help="Base directory for contracts (default: domains/)")
+@click.option(
+    "--input",
+    "-i",
+    "input_dir",
+    default="domains/",
+    type=click.Path(),
+    help="Base directory for contracts (default: domains/)",
+)
 def factory_chat(domain: str, input_dir: str) -> None:
     """Agentic domain conversation — discuss, propose, and build contracts."""
     global _contracts_base
@@ -360,7 +405,13 @@ def factory_chat(domain: str, input_dir: str) -> None:
                     tool_results.append({"tool_use_id": tool_id, "content": result_text})
 
                 # Add assistant message with tool calls + tool results
-                messages.append(Message(role="assistant", content=response.content or "", tool_calls=response.tool_calls))
+                messages.append(
+                    Message(
+                        role="assistant",
+                        content=response.content or "",
+                        tool_calls=response.tool_calls,
+                    )
+                )
                 messages.append(Message(role="tool", content="", tool_results=tool_results))
 
                 # Refresh domain context after tool execution

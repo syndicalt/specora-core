@@ -333,10 +333,34 @@ export function endSession(): void {{
   window.location.assign(`${{LOGIN_ROUTE}}?next=${{encodeURIComponent(here)}}`);
 }}
 
-/** End the session because the user asked to. */
-export function signOut(): void {{
+/**
+ * End the session because the user asked to.
+ *
+ * The local credentials are dropped first, so nothing can be rendered with
+ * them while the request is in flight. `POST /auth/logout` then revokes the
+ * refresh family server-side and clears the httpOnly cookie — the only party
+ * that can, since script cannot delete one.
+ *
+ * The signed-out marker is set regardless. If the endpoint is missing or the
+ * request fails, it is the only thing stopping the next page load from
+ * probing a cookie that is still valid and signing the user straight back in.
+ */
+export async function signOut(): Promise<void> {{
+  const token = readRefreshToken();
   clearSession();
   markSignedOut(true);
+
+  try {{
+    await fetch(`${{API_BASE}}/auth/logout`, {{
+      method: "POST",
+      credentials: "include",
+      headers: {{ "Content-Type": "application/json" }},
+      body: JSON.stringify(token === null ? {{}} : {{ refresh_token: token }}),
+    }});
+  }} catch (cause) {{
+    console.error("Sign-out could not be sent", cause);
+  }}
+
   if (typeof window === "undefined") return;
   window.location.assign(LOGIN_ROUTE);
 }}

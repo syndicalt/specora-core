@@ -1,14 +1,15 @@
 # extractor/synthesizer.py
 """Pass 4: Merge all extractions into a unified AnalysisReport."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
 from extractor.analyzers.python_models import analyze_python_models
-from extractor.analyzers.typescript_types import analyze_typescript_types
 from extractor.analyzers.routes import analyze_routes
+from extractor.analyzers.typescript_types import analyze_typescript_types
 from extractor.cross_ref import cross_reference
-from extractor.models import AnalysisReport, FileClassification, FileRole
+from extractor.models import AnalysisReport, FileRole
 from extractor.scanner import scan_directory
 
 

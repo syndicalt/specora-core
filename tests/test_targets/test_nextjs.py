@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from forge.ir.model import DomainIR, EntityIR, FieldIR, PageIR, RouteIR, EndpointIR
+from forge.ir.model import DomainIR, EndpointIR, EntityIR, FieldIR, PageIR, RouteIR
 
 
 @pytest.fixture
@@ -20,7 +20,11 @@ def helpdesk_ir() -> DomainIR:
                 icon="ticket",
                 fields=[
                     FieldIR(name="subject", type="string", required=True),
-                    FieldIR(name="priority", type="string", enum_values=["critical", "high", "medium", "low"]),
+                    FieldIR(
+                        name="priority",
+                        type="string",
+                        enum_values=["critical", "high", "medium", "low"],
+                    ),
                     FieldIR(name="id", type="uuid", computed="uuid"),
                     FieldIR(name="created_at", type="datetime", computed="now"),
                 ],
@@ -50,10 +54,17 @@ def helpdesk_ir() -> DomainIR:
                 base_path="/tickets",
                 endpoints=[
                     EndpointIR(method="GET", path="/", summary="List tickets"),
-                    EndpointIR(method="POST", path="/", summary="Create ticket", response_status=201),
+                    EndpointIR(
+                        method="POST", path="/", summary="Create ticket", response_status=201
+                    ),
                     EndpointIR(method="GET", path="/{id}", summary="Get ticket"),
                     EndpointIR(method="PATCH", path="/{id}", summary="Update ticket"),
-                    EndpointIR(method="DELETE", path="/{id}", summary="Delete ticket", response_status=204),
+                    EndpointIR(
+                        method="DELETE",
+                        path="/{id}",
+                        summary="Delete ticket",
+                        response_status=204,
+                    ),
                 ],
             ),
         ],
@@ -86,13 +97,28 @@ class TestGenScaffold:
         assert "cn(" in utils.content
 
 
+def _api_client_files(ir: DomainIR):
+    """The api-client bundle: the client itself plus the config it reads."""
+    from forge.targets.nextjs.context import FrontendContext
+    from forge.targets.nextjs.gen_api_client import generate_api_client
+
+    return generate_api_client(FrontendContext(ir))
+
+
+def _file(files, path: str):
+    return next(f for f in files if f.path == path)
+
+
 class TestGenAPIClient:
 
     def test_generates_api_client(self, helpdesk_ir: DomainIR) -> None:
-        from forge.targets.nextjs.gen_api_client import generate_api_client
-        file = generate_api_client(helpdesk_ir)
+        files = _api_client_files(helpdesk_ir)
+        # The base URL lives in config.ts so that session.ts can read it
+        # without closing an import cycle with api.ts.
+        assert "NEXT_PUBLIC_API_URL" in _file(files, "frontend/src/lib/config.ts").content
+
+        file = _file(files, "frontend/src/lib/api.ts")
         assert file.path == "frontend/src/lib/api.ts"
-        assert "NEXT_PUBLIC_API_URL" in file.content
         assert "export const tickets" in file.content
         assert "list:" in file.content
         assert "create:" in file.content
@@ -101,9 +127,23 @@ class TestGenAPIClient:
         assert 'method: "DELETE"' in file.content
 
     def test_api_client_uses_base_path(self, helpdesk_ir: DomainIR) -> None:
-        from forge.targets.nextjs.gen_api_client import generate_api_client
-        file = generate_api_client(helpdesk_ir)
+        file = _file(_api_client_files(helpdesk_ir), "frontend/src/lib/api.ts")
         assert "/tickets/" in file.content
+
+    def test_list_is_cursor_paginated_not_offset(self, helpdesk_ir: DomainIR) -> None:
+        file = _file(_api_client_files(helpdesk_ir), "frontend/src/lib/api.ts")
+        assert "offset=" not in file.content
+        assert "next_cursor: string | null" in file.content
+        assert 'query.set("cursor", params.cursor)' in file.content
+        assert "list: (params?: ListParams)" in file.content
+
+    def test_path_parameters_are_encoded(self, helpdesk_ir: DomainIR) -> None:
+        file = _file(_api_client_files(helpdesk_ir), "frontend/src/lib/api.ts")
+        assert "encodeURIComponent(id)" in file.content
+
+    def test_no_auth_contract_means_no_session_import(self, helpdesk_ir: DomainIR) -> None:
+        file = _file(_api_client_files(helpdesk_ir), "frontend/src/lib/api.ts")
+        assert "./session" not in file.content
 
 
 class TestNextJSGenerator:
@@ -147,3 +187,179 @@ class TestNextJSGenerator:
         gen = NextJSGenerator()
         files = gen.generate(DomainIR(domain="empty"))
         assert files == []
+
+
+def _account_domain(domain: str) -> dict:
+    """One `account` entity, page and route, in the named domain."""
+    return {
+        "entities": [
+            EntityIR(
+                fqn=f"entity/{domain}/account",
+                name="account",
+                domain=domain,
+                fields=[
+                    FieldIR(name="id", type="uuid", computed="uuid"),
+                    FieldIR(name="name", type="string", required=True),
+                ],
+            )
+        ],
+        "pages": [
+            PageIR(
+                fqn=f"page/{domain}/accounts",
+                name="accounts",
+                domain=domain,
+                route="/accounts",
+                entity_fqn=f"entity/{domain}/account",
+                views=[{"type": "table", "columns": ["name"]}],
+            )
+        ],
+        "routes": [
+            RouteIR(
+                fqn=f"route/{domain}/accounts",
+                name="accounts",
+                domain=domain,
+                entity_fqn=f"entity/{domain}/account",
+                base_path="/accounts",
+                endpoints=[
+                    EndpointIR(method="GET", path="/", summary="List"),
+                    EndpointIR(method="GET", path="/{id}", summary="Get"),
+                ],
+            )
+        ],
+    }
+
+
+class TestMultiDomain:
+    """Two entities sharing a name across domains must not overwrite each other."""
+
+    @pytest.fixture
+    def collided_ir(self) -> DomainIR:
+        billing = _account_domain("billing")
+        support = _account_domain("support")
+        return DomainIR(
+            domain="billing",
+            domains=["billing", "support"],
+            entities=billing["entities"] + support["entities"],
+            pages=billing["pages"] + support["pages"],
+            routes=billing["routes"] + support["routes"],
+        )
+
+    def test_components_and_routes_are_namespaced(self, collided_ir: DomainIR) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        paths = {f.path for f in NextJSGenerator().generate(collided_ir)}
+        assert "frontend/src/components/BillingAccountTable.tsx" in paths
+        assert "frontend/src/components/SupportAccountTable.tsx" in paths
+        assert "frontend/src/app/billing/accounts/page.tsx" in paths
+        assert "frontend/src/app/support/accounts/page.tsx" in paths
+
+    def test_no_duplicate_output_paths(self, collided_ir: DomainIR) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        files = NextJSGenerator().generate(collided_ir)
+        assert len({f.path for f in files}) == len(files)
+
+    def test_api_exports_are_namespaced(self, collided_ir: DomainIR) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        files = NextJSGenerator().generate(collided_ir)
+        api = _file(files, "frontend/src/lib/api.ts")
+        assert "export const billing_accounts" in api.content
+        assert "export const support_accounts" in api.content
+
+    def test_single_domain_names_are_unprefixed(self, helpdesk_ir: DomainIR) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        paths = {f.path for f in NextJSGenerator().generate(helpdesk_ir)}
+        assert "frontend/src/components/TicketTable.tsx" in paths
+        assert "frontend/src/app/tickets/page.tsx" in paths
+
+
+class TestAuth:
+
+    @pytest.fixture
+    def authed_ir(self, helpdesk_ir: DomainIR) -> DomainIR:
+        from forge.ir.model import InfraIR
+
+        helpdesk_ir.infra = [
+            InfraIR(
+                fqn="infra/helpdesk/auth",
+                name="auth",
+                domain="helpdesk",
+                category="auth",
+                config={"provider": "jwt", "roles": ["admin", "agent"]},
+            )
+        ]
+        return helpdesk_ir
+
+    def test_client_sends_a_bearer_token(self, authed_ir: DomainIR) -> None:
+        api = _file(_api_client_files(authed_ir), "frontend/src/lib/api.ts")
+        assert "authorizationHeader()" in api.content
+        assert "refreshSession()" in api.content
+
+    def test_401_clears_credentials_and_redirects(self, authed_ir: DomainIR) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        files = NextJSGenerator().generate(authed_ir)
+        api = _file(files, "frontend/src/lib/api.ts")
+        assert "res.status === 401" in api.content
+        assert "endSession()" in api.content
+
+        session = _file(files, "frontend/src/lib/session.ts")
+        assert "LOGIN_ROUTE" in session.content
+        assert "window.location.assign" in session.content
+
+    def test_access_token_is_never_persisted(self, authed_ir: DomainIR) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        session = _file(
+            NextJSGenerator().generate(authed_ir), "frontend/src/lib/session.ts"
+        )
+        # localStorage is never acceptable here (the prose says so; assert no
+        # code touches it), and the access token lives only in the closure.
+        assert "window.localStorage" not in session.content
+        assert "let accessToken: string | null = null;" in session.content
+        # Only the refresh token is ever written, and only to sessionStorage.
+        assert "setItem(REFRESH_KEY, token)" in session.content
+        assert "accessToken)" not in session.content.split("function writeRefreshToken")[1]
+
+    def test_login_page_is_generated(self, authed_ir: DomainIR) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        paths = {f.path for f in NextJSGenerator().generate(authed_ir)}
+        assert "frontend/src/app/login/page.tsx" in paths
+        assert "frontend/src/components/AppShell.tsx" in paths
+
+    def test_open_redirect_is_rejected(self, authed_ir: DomainIR) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        session = _file(
+            NextJSGenerator().generate(authed_ir), "frontend/src/lib/session.ts"
+        )
+        assert 'raw.startsWith("//")' in session.content
+
+
+class TestContractDefectsFailLoudly:
+
+    def test_column_naming_a_missing_field_is_rejected(self, helpdesk_ir: DomainIR) -> None:
+        from forge.targets.base import GenerationError
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        helpdesk_ir.pages[0].views = [{"type": "table", "columns": ["subject", "phone"]}]
+        with pytest.raises(GenerationError, match="phone"):
+            NextJSGenerator().generate(helpdesk_ir)
+
+    def test_write_only_field_is_kept_out_of_read_views(self, helpdesk_ir: DomainIR) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        helpdesk_ir.entities[0].fields.append(
+            FieldIR(name="api_secret", type="string", required=True, sensitive=True)
+        )
+
+        files = NextJSGenerator().generate(helpdesk_ir)
+        detail = _file(files, "frontend/src/components/TicketDetail.tsx")
+        form = _file(files, "frontend/src/components/TicketForm.tsx")
+        assert "api_secret" not in detail.content
+        # Still writable: it belongs on the create/edit form.
+        assert 'name="api_secret"' in form.content
+        assert 'type="password"' in form.content

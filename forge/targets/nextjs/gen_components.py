@@ -120,17 +120,36 @@ def _table_columns(view: EntityView) -> list[str]:
     if not declared:
         return [f.name for f in _readable_fields(view.entity)[:6]]
 
-    by_name = {f.name: f for f in view.entity.fields}
     for column in declared:
-        field = by_name.get(column)
-        if field is not None and _is_sensitive(field):
-            raise GenerationError(
-                f"{view.page.fqn}: table column {column!r} is a write-only field on "
-                f"{view.entity.fqn} (sensitive: true), so the API never returns it "
-                f"and the column would always be blank. Remove it from "
-                f"spec.views[].columns."
-            )
+        _require_readable(view, column, "spec.views[].columns")
     return list(declared)
+
+
+def _require_readable(view: EntityView, name: str, where: str) -> None:
+    """Reject a page contract naming a field the API will never return.
+
+    Both failures below used to render as a column of em-dashes for the life of
+    the deployment, because the old components were typed `any`: nothing —
+    not the generator, not the compiler, not the running app — could tell the
+    difference between "this field is empty" and "this field does not exist".
+    """
+    field = next((f for f in view.entity.fields if f.name == name), None)
+
+    if field is None:
+        available = sorted(f.name for f in _readable_fields(view.entity))
+        raise GenerationError(
+            f"{view.page.fqn}: {where} names {name!r}, but {view.entity.fqn} has "
+            f"no such field, so the column can never show anything. "
+            f"Available fields: {available}. Either add {name!r} to the entity "
+            f"contract or remove it from the page contract."
+        )
+
+    if _is_sensitive(field):
+        raise GenerationError(
+            f"{view.page.fqn}: {where} names {name!r}, which is write-only on "
+            f"{view.entity.fqn} (sensitive: true). The API never returns it, so "
+            f"the column would always be blank. Remove it from the page contract."
+        )
 
 
 # =============================================================================
@@ -145,13 +164,17 @@ class _ReferenceBinding:
         column: The field on this entity holding the target's id.
         api: The api-client export that lists the target entity.
         binding: camelCase stem for the generated React state.
+        model: The target's TypeScript interface, so fetched rows stay typed.
         display: The field on the target to show.
     """
 
-    def __init__(self, column: str, api: str, binding: str, display: str) -> None:
+    def __init__(
+        self, column: str, api: str, binding: str, model: str, display: str
+    ) -> None:
         self.column = column
         self.api = api
         self.binding = binding
+        self.model = model
         self.display = display
 
     @property
@@ -191,14 +214,22 @@ def _reference_bindings(
             # display names from. The value renders as unresolved rather than
             # the component importing a binding that does not exist.
             continue
+        model = ctx.component_for_entity(target)
+        display = field.reference.display_field
+        if model and not ctx.entity_has_field(target, display):
+            raise GenerationError(
+                f"{entity.fqn}: field {field.name!r} references {target} with "
+                f"display {display!r}, but {target} has no such field. The "
+                f"reference would render with nothing to show. Point "
+                f"references.display at a field the target declares."
+            )
         bindings.append(
             _ReferenceBinding(
                 column=field.name,
                 api=api,
-                binding=camel_case(
-                    ctx.component_for_entity(target) or target.split("/")[-1]
-                ),
-                display=field.reference.display_field,
+                binding=camel_case(model or target.split("/")[-1]),
+                model=model or "Record<string, unknown>",
+                display=display,
             )
         )
     return bindings
@@ -227,6 +258,14 @@ def _reference_imports(bindings: list[_ReferenceBinding]) -> str:
     return "import { " + ", ".join(apis) + ' } from "@/lib/api";'
 
 
+def _type_imports(*names: str) -> str:
+    """Import exactly the entity interfaces a component names."""
+    wanted = sorted({n for n in names if n and n.isidentifier()})
+    if not wanted:
+        return ""
+    return "import type { " + ", ".join(wanted) + ' } from "@/lib/types";'
+
+
 def _reference_lookup_effect(bindings: list[_ReferenceBinding], indent: str = "  ") -> str:
     """The effect that populates every reference's id -> name map."""
     unique = _unique_bindings(bindings)
@@ -241,12 +280,11 @@ def _reference_lookup_effect(bindings: list[_ReferenceBinding], indent: str = " 
                 f"{indent}    .list({{ limit: {REFERENCE_LOOKUP_LIMIT} }})",
                 f"{indent}    .then((page) => {{",
                 f"{indent}      const names: Record<string, string> = {{}};",
-                f"{indent}      for (const record of page.items) {{",
-                f"{indent}        const row = record as Record<string, unknown>;",
+                f"{indent}      for (const row of page.items) {{",
                 f"{indent}        if (row.id === undefined || row.id === null) continue;",
                 f"{indent}        const label = row.{binding.display};",
                 f"{indent}        names[String(row.id)] =",
-                f"{indent}          typeof label === \"string\" && label !== \"\"",
+                f'{indent}          typeof label === "string" && label !== ""',
                 f"{indent}            ? label",
                 f"{indent}            : String(row.id);",
                 f"{indent}      }}",
@@ -680,7 +718,7 @@ def _data_table(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
             }
         )
         imports.append("import { " + ", ".join(formatters) + ' } from "@/lib/utils";')
-    imports.append(f'import type {{ {cls} }} from "@/lib/types";')
+    imports.append(_type_imports(cls, *(b.model for b in bindings)))
     imports_src = "\n".join(i for i in imports if i)
 
     state_src = _reference_state(bindings)
@@ -767,7 +805,7 @@ def _entity_form(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
     specs_src = "\n".join(specs)
 
     option_state = "\n".join(
-        f"  const [{b.options}, {b.options_setter}] = useState<Record<string, unknown>[]>([]);"
+        f"  const [{b.options}, {b.options_setter}] = useState<{b.model}[]>([]);"
         for b in bindings
     )
     option_effect = ""
@@ -778,9 +816,7 @@ def _entity_form(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
                 [
                     f"    {binding.api}",
                     f"      .list({{ limit: {REFERENCE_LOOKUP_LIMIT} }})",
-                    "      .then((page) =>",
-                    f"        {binding.options_setter}(page.items as Record<string, unknown>[]),",
-                    "      )",
+                    f"      .then((page) => {binding.options_setter}(page.items))",
                     "      .catch((cause) => {",
                     f'        console.error("Could not load {binding.binding} options", cause);',
                     "        setLoadError("
@@ -800,6 +836,7 @@ def _entity_form(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
     imports.append('import { InlineError } from "@/components/ui/states";')
     imports.append('import { Button } from "@/components/ui/button";')
     imports.append('import { coerceForm, type FieldSpec } from "@/lib/form";')
+    imports.append(_type_imports(cls, *(b.model for b in bindings)))
     imports_src = "\n".join(i for i in imports if i)
 
     content = f'''{imports_src}
@@ -817,7 +854,7 @@ function fieldSpecs(isEdit: boolean): Record<string, FieldSpec> {{
 }}
 
 interface {cls}FormProps {{
-  data?: Record<string, unknown>;
+  data?: {cls};
   onSubmit: (values: Record<string, unknown>) => Promise<void> | void;
   submitLabel?: string;
 }}
@@ -959,13 +996,12 @@ def _form_input(ctx: FrontendContext, entity: EntityIR, field: FieldIR) -> str:
 
     if field.type in _JSON_TYPES:
         control = (
-            f'        <textarea id="{name}" name="{name}" '
-            f'defaultValue={{data?.{name} === undefined
-'
-            f'            ? ""
-'
-            f'            : JSON.stringify(data.{name}, null, 2)}}'
-            f"{required_attr}\n"
+            f'        <textarea id="{name}" name="{name}"{required_attr}\n'
+            f"          defaultValue={{\n"
+            f"            data?.{name} === undefined\n"
+            f'              ? ""\n'
+            f"              : JSON.stringify(data.{name}, null, 2)\n"
+            f"          }}\n"
             f'          spellCheck={{false}}\n'
             f'          className="flex min-h-[100px] w-full rounded-md border '
             f'border-gray-300 bg-white px-3 py-2 font-mono text-sm" />'
@@ -1099,10 +1135,14 @@ def _detail_view(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
             if f.type in ("datetime", "date")
         }
     )
-    if date_formatters or True:
-        # created_at is always rendered in the footer.
-        needed = sorted(set(date_formatters) | {"formatDateTime"})
-        imports.append("import { " + ", ".join(needed) + ' } from "@/lib/utils";')
+    # created_at is rendered in the footer whenever the entity declares it.
+    has_created_at = any(f.name == "created_at" for f in fields)
+    needed = set(date_formatters)
+    if has_created_at:
+        needed.add("formatDateTime")
+    if needed:
+        imports.append("import { " + ", ".join(sorted(needed)) + ' } from "@/lib/utils";')
+    imports.append(_type_imports(cls, *(b.model for b in bindings)))
     imports_src = "\n".join(i for i in imports if i)
 
     state_src = _reference_state(bindings)
@@ -1117,10 +1157,29 @@ def _detail_view(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
         </div>
       )}"""
 
+    # Only what the entity declares: an interface has no `created_at` unless a
+    # mixin put one there, and reading a field off it that does not exist does
+    # not compile.
+    footer_parts = []
+    if any(f.name == "id" for f in fields):
+        footer_parts.append('        ID: {String(data.id)}')
+    if has_created_at:
+        footer_parts.append(
+            '        Created: {formatDateTime(data.created_at)}'
+        )
+    footer_src = ""
+    if footer_parts:
+        joined = "\n        &middot;\n".join(footer_parts)
+        footer_src = (
+            '      <div className="mt-6 text-xs text-gray-400">\n'
+            f"{joined}\n"
+            "      </div>"
+        )
+
     content = f'''{imports_src}
 
 interface {cls}DetailProps {{
-  data: Record<string, unknown>;
+  data: {cls};
 }}
 
 export function {cls}Detail({{ data }}: {cls}DetailProps) {{
@@ -1132,10 +1191,7 @@ export function {cls}Detail({{ data }}: {cls}DetailProps) {{
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 {rows_src}
       </div>
-      <div className="mt-6 text-xs text-gray-400">
-        ID: {{String(data.id ?? "\\u2014")}} &middot; Created:{{" "}}
-        {{formatDateTime(data.created_at as string | null | undefined)}}
-      </div>
+{footer_src}
     </div>
   );
 }}
@@ -1168,15 +1224,8 @@ def _kanban_board(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
         f.name for f in _readable_fields(entity)[:1]
     ]
 
-    by_name = {f.name: f for f in entity.fields}
     for name in card_fields:
-        field = by_name.get(name)
-        if field is not None and _is_sensitive(field):
-            raise GenerationError(
-                f"{view.page.fqn}: kanban card field {name!r} is write-only on "
-                f"{entity.fqn} (sensitive: true), so the API never returns it. "
-                f"Remove it from spec.views[].card_fields."
-            )
+        _require_readable(view, name, "spec.views[].card_fields")
 
     states_src = ",\n".join(
         f'  {{ name: "{state.name}", label: "{state.label or state.name}", '
@@ -1334,7 +1383,9 @@ def _app_sidebar(ctx: FrontendContext) -> GeneratedFile:
       <div className="border-t p-2">
         <button
           type="button"
-          onClick={signOut}
+          onClick={() => {
+            void signOut();
+          }}
           className={cn(
             "w-full rounded-md px-3 py-2 text-left text-sm font-medium",
             "text-gray-600 hover:bg-gray-50",

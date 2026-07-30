@@ -215,6 +215,13 @@ class FrontendContext:
                 )
         return ""
 
+    def entity_has_field(self, entity_fqn: str, field_name: str) -> bool:
+        """Whether an entity declares a field, used to validate references."""
+        for entity in self.ir.entities:
+            if entity.fqn == entity_fqn:
+                return any(f.name == field_name for f in entity.fields)
+        return False
+
     def _reject_login_route_collision(self) -> None:
         """Fail if a page contract claims the path the login page needs."""
         for view in self.views:

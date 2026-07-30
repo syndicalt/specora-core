@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
 import yaml
 from rich.console import Console
@@ -209,9 +208,7 @@ class Interview:
         except json.JSONDecodeError:
             pass
 
-        raise InterviewParseError(
-            f"Could not parse LLM response as YAML or JSON:\n{raw[:500]}"
-        )
+        raise InterviewParseError(f"Could not parse LLM response as YAML or JSON:\n{raw[:500]}")
 
     def confirm(self, message: str) -> bool:
         """Ask a yes/no confirmation with styled input box.

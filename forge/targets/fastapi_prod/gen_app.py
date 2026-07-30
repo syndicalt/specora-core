@@ -123,7 +123,14 @@ def _imports_section(
 
     # Sorted, so the generated module satisfies an isort-style import check the
     # same way a hand-written one would.
-    config_names = ["CORS_ALLOW_CREDENTIALS", "CORS_ORIGINS", "DATABASE_BACKEND", "DATABASE_URL"]
+    config_names = [
+        "CORS_ALLOW_CREDENTIALS",
+        "CORS_ORIGINS",
+        "DATABASE_BACKEND",
+        "DATABASE_URL",
+        "HEALER_INGEST_TOKEN",
+        "HEALER_URL",
+    ]
     if has_auth:
         config_names.extend(["AUTH_COOKIE_SECURE", "AUTH_REFRESH_TOKEN_EXPIRE_DAYS"])
     local = [
@@ -161,7 +168,6 @@ def _imports_section(
         "from __future__ import annotations",
         "",
         "import logging",
-        "import os",
         "import traceback",
         "import uuid",
         "from contextlib import asynccontextmanager",
@@ -283,7 +289,22 @@ def _lifespan_section(has_auth: bool) -> str:
     ]
     if has_auth:
         lines.append("    await get_refresh_token_store().initialize()")
-    lines.extend(["    yield", ""])
+    lines.extend([
+        "",
+        "    # A healer that is configured but silently receiving nothing is worse",
+        "    # than one that is obviously not configured, and the ingest endpoint",
+        "    # rejects an unauthenticated report.",
+        "    if HEALER_URL and not HEALER_INGEST_TOKEN:",
+        "        logger.warning(",
+        '            "SPECORA_HEALER_URL is set to %s but SPECORA_HEALER_INGEST_TOKEN "',
+        '            "is empty; the healer will reject every error report and none of "',
+        '            "them will be recorded.",',
+        "            HEALER_URL,",
+        "        )",
+        "",
+        "    yield",
+        "",
+    ])
     return "\n".join(lines)
 
 
@@ -329,8 +350,6 @@ def _error_handling_section(ir: DomainIR) -> str:
 
 # ── Error handling ───────────────────────────────────────────────────────────
 
-HEALER_URL = os.getenv("SPECORA_HEALER_URL", "")
-
 # Route prefix -> contract FQN, so a healer report names the contract to fix.
 ROUTE_TO_FQN = {{
 {entries}
@@ -350,17 +369,34 @@ async def _report_to_healer(payload: dict) -> None:
     Reporting must never sit on the request path. Awaiting a 5s POST before
     responding turns an error storm into an outage, and the healer being
     unreachable is exactly when errors are most likely.
+
+    Both failure modes are logged. httpx does not raise on a 4xx, so an ingest
+    endpoint rejecting the bearer token would otherwise be indistinguishable
+    from a delivered report — silence on the one path whose job is to make
+    failures visible.
     """
     import httpx
 
+    correlation_id = payload["context"]["correlation_id"]
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(f"{{HEALER_URL}}/healer/ingest", json=payload)
+            response = await client.post(
+                f"{{HEALER_URL}}/healer/ingest",
+                json=payload,
+                headers={{"Authorization": f"Bearer {{HEALER_INGEST_TOKEN}}"}},
+            )
     except (httpx.HTTPError, OSError) as exc:
+        logger.warning("Healer report %s was not delivered: %s", correlation_id, exc)
+        return
+
+    if response.status_code >= 400:
+        # Truncated: the body is another service's output and belongs in the
+        # log bounded, not verbatim.
         logger.warning(
-            "Healer report for %s failed: %s",
-            payload["context"]["correlation_id"],
-            exc,
+            "Healer rejected report %s with %d: %s",
+            correlation_id,
+            response.status_code,
+            response.text[:200],
         )
 
 
@@ -420,11 +456,15 @@ def _auth_endpoints_section(login: _LoginSpec | None) -> str:
 
 # The refresh token is also deposited in a cookie so a browser client has an
 # XSS-proof place to keep it: httpOnly puts it out of reach of script, the path
-# means it is only ever sent to the one endpoint that spends it, and SameSite
-# stops another site from posting it. The JSON body still carries it for
-# non-browser clients.
+# keeps it off every request that is not an auth call, and SameSite stops
+# another site from posting it. The JSON body still carries it for non-browser
+# clients.
+#
+# The path is /auth rather than /auth/refresh because a cookie is only sent to
+# paths under its own: scoped to /auth/refresh, the browser would not send it to
+# /auth/logout, and logout could not revoke the session it is being asked to end.
 REFRESH_COOKIE_NAME = "specora_refresh_token"
-REFRESH_COOKIE_PATH = "/auth/refresh"
+REFRESH_COOKIE_PATH = "/auth"
 
 
 def _set_refresh_cookie(response: Response, token: str) -> None:
@@ -439,6 +479,18 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
     )
 
 
+def _clear_refresh_cookie(response: Response) -> None:
+    # Every attribute must match the cookie that was set, or the browser treats
+    # this as a different cookie and the original survives the deletion.
+    response.delete_cookie(
+        REFRESH_COOKIE_NAME,
+        path=REFRESH_COOKIE_PATH,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite="lax",
+    )
+
+
 def _unauthenticated(error: str) -> JSONResponse:
     """A 401 that also clears the refresh cookie.
 
@@ -450,7 +502,7 @@ def _unauthenticated(error: str) -> JSONResponse:
         content={"error": error},
         headers={"WWW-Authenticate": "Bearer"},
     )
-    response.delete_cookie(REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH)
+    _clear_refresh_cookie(response)
     return response
 
 
@@ -471,6 +523,41 @@ async def refresh(request: Request, response: Response, body: RefreshRequest) ->
 
     _set_refresh_cookie(response, tokens.refresh_token)
     return tokens
+
+
+class LogoutResponse(BaseModel):
+    status: str = "signed_out"
+
+
+@app.post("/auth/logout")
+async def logout(
+    request: Request, response: Response, body: RefreshRequest
+) -> LogoutResponse:
+    """Sign out of all devices: revoke every refresh token for this user.
+
+    **This ends every session for the account, not just the calling client.**
+    Any other browser or device signed in as this user must log in again.
+
+    That is deliberate. If a refresh token was stolen and the thief has already
+    rotated it once, the copy the user holds is the dead one and the thief's is
+    live — revoking only the token presented would leave running precisely the
+    session the user is trying to end.
+
+    Clearing the cookie alone would only hide the credential from one browser; a
+    copy captured beforehand would still be redeemable at `/auth/refresh`. The
+    token is therefore revoked server-side before the cookie is cleared.
+
+    Accepts the refresh token from the JSON body or from the `specora_refresh_token`
+    cookie. Always succeeds — with no token, an expired or malformed one, or on a
+    repeat call. Logout is the one operation a client must always be able to
+    complete; returning an error for an already-dead session leaves callers
+    retrying or, worse, treating the session as still live.
+    """
+    presented = body.refresh_token or request.cookies.get(REFRESH_COOKIE_NAME)
+    if presented:
+        await get_auth_provider().revoke_refresh(presented)
+    _clear_refresh_cookie(response)
+    return LogoutResponse()
 '''
     if login is None:
         return section

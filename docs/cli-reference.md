@@ -541,7 +541,7 @@ Options:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `-t`, `--target` | Text (repeatable) | `typescript`, `fastapi`, `postgres` | Target generator(s) to run. Can be specified multiple times. |
+| `-t`, `--target` | Text (repeatable) | `prod` | Target generator(s) to run. Can be specified multiple times. |
 | `-o`, `--output` | Path | `runtime/` | Output directory for generated files. Created if it does not exist. |
 
 #### Available Targets
@@ -549,8 +549,25 @@ Options:
 | Target | Generator Class | Output |
 |--------|----------------|--------|
 | `typescript` | `TypeScriptGenerator` | TypeScript interfaces and types |
-| `fastapi` | `FastAPIGenerator` | FastAPI route handlers and models |
+| `fastapi-prod` | `FastAPIProductionGenerator` | FastAPI backend: models, repositories, auth, routes |
 | `postgres` | `PostgresGenerator` | `CREATE TABLE` DDL statements |
+| `docker` | `DockerGenerator` | Dockerfiles and `docker-compose.yml` |
+| `tests` | `TestSuiteGenerator` | Generated app's own test suite |
+| `migrations` | `MigrationGenerator` | Schema migration scripts |
+| `nextjs` | `NextJSGenerator` | Next.js frontend |
+
+#### Target Aliases
+
+| Alias | Expands to |
+|-------|-----------|
+| `prod` | `fastapi-prod`, `postgres`, `docker`, `tests`, `nextjs`, `migrations` |
+| `fastapi` | `fastapi-prod` |
+
+`fastapi` previously selected a separate in-memory generator that emitted no
+authentication and no workflow enforcement regardless of what the contracts
+declared — a domain with an `infra/auth` contract and a state machine produced
+an open, stateless application with no warning. That generator has been removed;
+`fastapi` is now a name for `fastapi-prod`, and the CLI reports the redirect.
 
 If an unknown target name is provided, it is skipped with a warning listing available targets.
 

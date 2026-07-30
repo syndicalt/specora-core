@@ -75,7 +75,7 @@ entities:
     # Show what we inferred and confirm
     interview.show(f"\n  [bold]Domain:[/bold] {domain_name}")
     interview.show(f"  [bold]Description:[/bold] {description}")
-    interview.show(f"  [bold]Entities:[/bold]")
+    interview.show("  [bold]Entities:[/bold]")
     for e in entities:
         interview.show(f"    - {e['name']}: {e.get('description', '')}")
 
@@ -94,21 +94,22 @@ entities:
 def _manual_domain_input(interview: Interview) -> tuple[str, str, list[dict]]:
     """Collect domain info manually with helpful examples."""
     domain_name = interview.ask_user(
-        'Domain name (one word, snake_case)\n'
+        "Domain name (one word, snake_case)\n"
         '  [dim]Examples: "todolist", "veterinary", "ecommerce", "helpdesk"[/dim]'
     )
     desc = interview.ask_user(
-        'Describe what this system does in one sentence\n'
-        '  [dim]Example: "Manage tasks, projects, and team assignments for a productivity app"[/dim]'
+        "Describe what this system does in one sentence\n"
+        '  [dim]Example: "Manage tasks, projects, and team assignments '
+        'for a productivity app"[/dim]'
     )
     entities_raw = interview.ask_user(
-        'What are the core things (entities) this system manages?\n'
-        '  [dim]These become your data models — the nouns of your system.[/dim]\n'
-        '  [dim]Enter them comma-separated. Examples:[/dim]\n'
-        '  [dim]  To-do app:   task, project, label, user[/dim]\n'
-        '  [dim]  Vet clinic:  patient, owner, appointment, veterinarian, medical_record[/dim]\n'
-        '  [dim]  E-commerce:  product, order, customer, review, category[/dim]\n'
-        '  [dim]  Help desk:   ticket, agent, customer, knowledge_article[/dim]'
+        "What are the core things (entities) this system manages?\n"
+        "  [dim]These become your data models — the nouns of your system.[/dim]\n"
+        "  [dim]Enter them comma-separated. Examples:[/dim]\n"
+        "  [dim]  To-do app:   task, project, label, user[/dim]\n"
+        "  [dim]  Vet clinic:  patient, owner, appointment, veterinarian, medical_record[/dim]\n"
+        "  [dim]  E-commerce:  product, order, customer, review, category[/dim]\n"
+        "  [dim]  Help desk:   ticket, agent, customer, knowledge_article[/dim]"
     )
     entities = [
         {"name": e.strip().lower().replace(" ", "_"), "description": ""}

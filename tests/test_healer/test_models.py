@@ -1,8 +1,6 @@
 """Tests for healer.models — data structures for the healing pipeline."""
-import json
-from datetime import datetime, timezone
 
-import pytest
+import json
 
 from healer.models import (
     HealerProposal,
@@ -14,7 +12,6 @@ from healer.models import (
 
 
 class TestHealerTicket:
-
     def test_create_minimal_ticket(self) -> None:
         ticket = HealerTicket(
             source=TicketSource.VALIDATION,
@@ -67,7 +64,6 @@ class TestHealerTicket:
 
 
 class TestHealerProposal:
-
     def test_create_proposal(self) -> None:
         proposal = HealerProposal(
             contract_fqn="entity/todo_list/task",
@@ -98,7 +94,6 @@ class TestHealerProposal:
 
 
 class TestEnums:
-
     def test_ticket_source_values(self) -> None:
         assert TicketSource.VALIDATION.value == "validation"
         assert TicketSource.COMPILATION.value == "compilation"

@@ -69,13 +69,13 @@ def build_change_contract(changes: list[FieldChange]) -> ChangeContract:
 def _affected_surface(path: str) -> str:
     if path.startswith("spec.fields"):
         return "database"
-    if path.startswith("spec.endpoints") or path.startswith("spec.global_behaviors"):
+    if path.startswith(("spec.endpoints", "spec.global_behaviors")):
         return "api"
-    if path.startswith("spec.views") or path.startswith("spec.sections") or path.startswith("spec.actions"):
+    if path.startswith(("spec.views", "spec.sections", "spec.actions")):
         return "frontend"
-    if path.startswith("spec.transitions") or path.startswith("spec.guards") or path.startswith("spec.side_effects"):
+    if path.startswith(("spec.transitions", "spec.guards", "spec.side_effects")):
         return "workflow"
-    if path.startswith("spec.input") or path.startswith("spec.output") or path.startswith("spec.ai_integration"):
+    if path.startswith(("spec.input", "spec.output", "spec.ai_integration")):
         return "agent"
     if path.startswith("metadata"):
         return "documentation"
@@ -95,7 +95,7 @@ def _requires_migration(change: FieldChange) -> bool:
         return False
     if change.change_type in {"removed", "type_changed"}:
         return True
-    if change.path.endswith(".type") or change.path.endswith(".required") or change.path.endswith(".default"):
+    if change.path.endswith((".type", ".required", ".default")):
         return True
     return False
 

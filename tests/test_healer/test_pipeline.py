@@ -1,8 +1,9 @@
 """Tests for healer.pipeline — end-to-end pipeline orchestration."""
-import yaml
+
 from pathlib import Path
 
 import pytest
+import yaml
 
 from healer.models import HealerTicket, TicketSource, TicketStatus
 from healer.pipeline import HealerPipeline
@@ -35,7 +36,6 @@ def setup(tmp_path: Path):
 
 
 class TestTier1Pipeline:
-
     def test_processes_validation_error_end_to_end(self, setup) -> None:
         queue, pipeline, contract_path = setup
 

@@ -1,4 +1,5 @@
 """Emit Entity contract YAML from interview data."""
+
 from __future__ import annotations
 
 import yaml

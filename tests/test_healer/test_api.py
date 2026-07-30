@@ -1,11 +1,17 @@
 """Tests for healer.api.server — HTTP endpoint contracts."""
+
 import pytest
+
+# The HTTP surface lives behind the `[healer]` extra; without it there is
+# nothing to test, which is a skip and not a failure.
+pytest.importorskip("fastapi")
+
 from fastapi.testclient import TestClient
 
-from healer.api.server import app
 import healer.api.server as srv
-from healer.queue import HealerQueue
+from healer.api.server import app
 from healer.pipeline import HealerPipeline
+from healer.queue import HealerQueue
 from healer.ratelimit import TokenBucketLimiter
 from healer.security import (
     APPROVAL_SECRET_ENV,
@@ -61,11 +67,15 @@ class TestIngest:
         assert "ticket_id" in data
 
     def test_ingest_with_contract_fqn(self, client) -> None:
-        resp = client.post("/healer/ingest", json={
-            "source": "validation",
-            "contract_fqn": "entity/test/task",
-            "error": "'Task' does not match",
-        }, headers=DATA_PLANE_AUTH)
+        resp = client.post(
+            "/healer/ingest",
+            json={
+                "source": "validation",
+                "contract_fqn": "entity/test/task",
+                "error": "'Task' does not match",
+            },
+            headers=DATA_PLANE_AUTH,
+        )
         assert resp.status_code == 202
 
 

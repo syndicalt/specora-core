@@ -10,8 +10,8 @@ Usage:
 
 from __future__ import annotations
 
-import sys
 import logging
+import sys
 from pathlib import Path
 
 import click
@@ -52,8 +52,14 @@ SPLASH = """
 
 
 @click.command("new")
-@click.option("--input", "-i", "input_dir", default="domains/", type=click.Path(),
-              help="Base directory for contract output (default: domains/)")
+@click.option(
+    "--input",
+    "-i",
+    "input_dir",
+    default="domains/",
+    type=click.Path(),
+    help="Base directory for contract output (default: domains/)",
+)
 def factory_new(input_dir: str) -> None:
     """Bootstrap a new domain from a conversational interview."""
     contracts_base = Path(input_dir)
@@ -120,7 +126,9 @@ def factory_new(input_dir: str) -> None:
                 session.add_entity(entity_name, data)
                 session.save()
             except (KeyboardInterrupt, EOFError):
-                console.print("\n[yellow]Session saved. Resume with 'specora factory new'.[/yellow]")
+                console.print(
+                    "\n[yellow]Session saved. Resume with 'specora factory new'.[/yellow]"
+                )
                 session.save()
                 sys.exit(0)
 
@@ -145,7 +153,9 @@ def factory_new(input_dir: str) -> None:
                 session.add_workflow(workflow_name, wf_data)
                 session.save()
             except (KeyboardInterrupt, EOFError):
-                console.print("\n[yellow]Session saved. Resume with 'specora factory new'.[/yellow]")
+                console.print(
+                    "\n[yellow]Session saved. Resume with 'specora factory new'.[/yellow]"
+                )
                 session.save()
                 sys.exit(0)
 
@@ -191,8 +201,7 @@ def factory_new(input_dir: str) -> None:
                 )
             )
             console.print(
-                "[red]Factory produced invalid contracts. "
-                "This is a bug — please report it.[/red]"
+                "[red]Factory produced invalid contracts. This is a bug — please report it.[/red]"
             )
             session.save()
             return
@@ -249,5 +258,3 @@ def _validate_emitted_contracts(
         errors = validate_contract(contract)
         all_errors.extend(errors)
     return all_errors
-
-

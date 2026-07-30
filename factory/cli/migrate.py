@@ -1,8 +1,9 @@
 """specora factory migrate — import from external schema formats."""
+
 from __future__ import annotations
 
-import sys
 import re
+import sys
 from pathlib import Path
 
 import click
@@ -17,8 +18,10 @@ from forge.parser.validator import validate_contract
 
 console = Console()
 
-_SYSTEM_PROMPT = """You are a schema migration expert for the Specora CDD engine.
-You receive a schema file (OpenAPI, SQL DDL, or Prisma) and convert it into Specora Entity contracts.
+_SYSTEM_PROMPT = """\
+You are a schema migration expert for the Specora CDD engine.
+You receive a schema file (OpenAPI, SQL DDL, or Prisma) and convert it into
+Specora Entity contracts.
 
 For each entity/table/model found, output a Specora Entity contract in YAML.
 
@@ -52,8 +55,11 @@ Rules:
 - Names must be snake_case
 - FQNs must be kind/domain/name format, all lowercase
 - graph_edge must be SCREAMING_SNAKE_CASE
-- Map SQL types: VARCHAR/TEXT->string, INT/BIGINT->integer, DECIMAL/FLOAT->number, BOOLEAN->boolean, TIMESTAMP->datetime, DATE->date, UUID->uuid
-- Map OpenAPI types: string->string, integer->integer, number->number, boolean->boolean, array->array, object->object
+- Map SQL types: VARCHAR/TEXT->string, INT/BIGINT->integer,
+  DECIMAL/FLOAT->number, BOOLEAN->boolean, TIMESTAMP->datetime, DATE->date,
+  UUID->uuid
+- Map OpenAPI types: string->string, integer->integer, number->number,
+  boolean->boolean, array->array, object->object
 - Include mixin/stdlib/timestamped and mixin/stdlib/identifiable by default
 - Detect foreign keys and create references with graph edges
 
@@ -71,8 +77,14 @@ Output each contract separated by `---` (YAML document separator).
     default="auto",
     help="Source format",
 )
-@click.option("--input", "-i", "input_dir", default="domains/", type=click.Path(),
-              help="Base directory for contract output (default: domains/)")
+@click.option(
+    "--input",
+    "-i",
+    "input_dir",
+    default="domains/",
+    type=click.Path(),
+    help="Base directory for contract output (default: domains/)",
+)
 def factory_migrate(source: str, domain: str, fmt: str, input_dir: str) -> None:
     """Import external schemas into Specora contracts via LLM."""
     source_path = Path(source)
@@ -151,7 +163,8 @@ def factory_migrate(source: str, domain: str, fmt: str, input_dir: str) -> None:
 
     response_input = (
         console.input(
-            f"\n[bold]Write {len(valid_contracts)} contracts to {Path(input_dir) / domain}/? [Y/n] [/bold]"
+            f"\n[bold]Write {len(valid_contracts)} contracts to "
+            f"{Path(input_dir) / domain}/? [Y/n] [/bold]"
         )
         .strip()
         .lower()
@@ -169,7 +182,8 @@ def factory_migrate(source: str, domain: str, fmt: str, input_dir: str) -> None:
         console.print(f"  [green]wrote[/green] {file_path}")
 
     console.print(
-        f"\n[bold green]Migrated {len(valid_contracts)} contracts to {Path(input_dir) / domain}/[/bold green]"
+        f"\n[bold green]Migrated {len(valid_contracts)} contracts to "
+        f"{Path(input_dir) / domain}/[/bold green]"
     )
 
 

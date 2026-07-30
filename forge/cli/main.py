@@ -523,7 +523,6 @@ def _get_generators(target_names: tuple[str, ...]) -> list:
     Returns:
         List of instantiated generator objects.
     """
-    from forge.targets.fastapi.gen_routes import FastAPIGenerator
     from forge.targets.fastapi_prod.generator import (
         DockerGenerator,
         FastAPIProductionGenerator,
@@ -536,7 +535,6 @@ def _get_generators(target_names: tuple[str, ...]) -> list:
 
     registry = {
         "typescript": TypeScriptGenerator,
-        "fastapi": FastAPIGenerator,
         "postgres": PostgresGenerator,
         "fastapi-prod": FastAPIProductionGenerator,
         "docker": DockerGenerator,
@@ -548,11 +546,29 @@ def _get_generators(target_names: tuple[str, ...]) -> list:
     # Aliases — expand shorthand names into multiple generators
     aliases = {
         "prod": ["fastapi-prod", "postgres", "docker", "tests", "nextjs", "migrations"],
+        "fastapi": ["fastapi-prod"],
+    }
+
+    # `fastapi` used to select a separate generator that emitted no auth and no
+    # workflow enforcement no matter what the contracts declared, so a domain
+    # with infra/auth and a state machine produced an open, stateless app with
+    # no warning. It is now a name for the production backend; the redirect is
+    # announced because silently swapping a target is the same class of defect.
+    redirects = {
+        "fastapi": "fastapi-prod",
     }
 
     # Expand aliases
     expanded = []
     for name in target_names:
+        if name in redirects:
+            console.print(
+                f"[yellow]Target '{name}' now generates '{redirects[name]}'.[/yellow]"
+            )
+            console.print(
+                "  The old in-memory target ignored infra/auth and workflow "
+                "state machines. It has been removed."
+            )
         if name in aliases:
             expanded.extend(aliases[name])
         else:

@@ -270,13 +270,14 @@ import {{ {api}, errorMessage }} from "@/lib/api";
 import {{ {cls}Detail }} from "@/components/{cls}Detail";
 import {{ Button }} from "@/components/ui/button";
 import {{ ErrorState, InlineError, LoadingState }} from "@/components/ui/states";
+import type {{ {cls} }} from "@/lib/types";
 
 export default function {cls}DetailPage() {{
   const params = useParams();
   const router = useRouter();
   const id = Array.isArray(params.id) ? params.id[0] : String(params.id ?? "");
 
-  const [data, setData] = useState<Record<string, unknown> | null>(null);
+  const [data, setData] = useState<{cls} | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -288,7 +289,7 @@ export default function {cls}DetailPage() {{
     {api}
       .get(id)
       .then((record) => {{
-        if (live) setData(record as Record<string, unknown>);
+        if (live) setData(record);
       }})
       .catch((cause) => {{
         // Without this the page sat on "Loading..." forever.
@@ -399,13 +400,14 @@ import {{ useParams, useRouter }} from "next/navigation";
 import {{ {api}, errorMessage }} from "@/lib/api";
 import {{ {cls}Form }} from "@/components/{cls}Form";
 import {{ ErrorState, InlineError, LoadingState }} from "@/components/ui/states";
+import type {{ {cls} }} from "@/lib/types";
 
 export default function Edit{cls}Page() {{
   const params = useParams();
   const router = useRouter();
   const id = Array.isArray(params.id) ? params.id[0] : String(params.id ?? "");
 
-  const [data, setData] = useState<Record<string, unknown> | null>(null);
+  const [data, setData] = useState<{cls} | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -414,7 +416,7 @@ export default function Edit{cls}Page() {{
     {api}
       .get(id)
       .then((record) => {{
-        if (live) setData(record as Record<string, unknown>);
+        if (live) setData(record);
       }})
       .catch((cause) => {{
         if (live) setLoadError(errorMessage(cause));

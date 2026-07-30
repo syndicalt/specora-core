@@ -82,6 +82,12 @@ def generate_config(ir: DomainIR) -> GeneratedFile:
         '        "CORS_ALLOW_CREDENTIALS=false."',
         "    )",
         "",
+        "# Healer sidecar. The ingest endpoint is authenticated, so a URL without a",
+        "# token reports nothing — app.py warns about that combination at startup",
+        "# rather than discovering it one dropped report at a time.",
+        'HEALER_URL = os.getenv("SPECORA_HEALER_URL", "").rstrip("/")',
+        'HEALER_INGEST_TOKEN = os.getenv("SPECORA_HEALER_INGEST_TOKEN", "")',
+        "",
     ]
 
     if has_auth:

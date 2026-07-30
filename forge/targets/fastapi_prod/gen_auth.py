@@ -148,6 +148,10 @@ class AuthProvider(ABC):
     @abstractmethod
     async def rotate_refresh(self, refresh_token: str) -> Optional[TokenPair]:
         \"\"\"Exchange a refresh token for a new pair, invalidating the old one.\"\"\"
+
+    @abstractmethod
+    async def revoke_refresh(self, refresh_token: str) -> bool:
+        \"\"\"Revoke the presented token and its siblings. False if it was not valid.\"\"\"
 """
     return GeneratedFile(path="backend/auth/interface.py", content=content, provenance=infra.fqn)
 
@@ -404,6 +408,17 @@ class JWTAuthProvider(AuthProvider):
                 role=str(payload.get("role", "")),
             )
         )
+
+    async def revoke_refresh(self, refresh_token: str) -> bool:
+        # Subject-wide, not just this jti. Logout is a security action, and if
+        # the token was stolen and already rotated once, the copy the user holds
+        # is the dead one while the thief's is live — revoking only what was
+        # presented would leave the session the user is trying to end.
+        payload = self._decode(refresh_token, expected_type="refresh")
+        if payload is None:
+            return False
+        await get_refresh_token_store().revoke_subject(str(payload["sub"]))
+        return True
 
     def _encode(self, claims: dict, now: datetime, ttl: timedelta) -> str:
         payload = {{

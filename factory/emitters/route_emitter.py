@@ -1,4 +1,5 @@
 """Emit Route contract YAML from interview data."""
+
 from __future__ import annotations
 
 import yaml
@@ -61,13 +62,15 @@ def emit_route(name: str, domain: str, entity_fqn: str, workflow_fqn: str = "") 
     ]
 
     if workflow_fqn:
-        endpoints.append({
-            "method": "PUT",
-            "path": "/{id}/state",
-            "summary": f"Transition {name.rstrip('s')} state",
-            "request_body": {"required_fields": ["state"]},
-            "response": {"status": 200, "shape": "entity"},
-        })
+        endpoints.append(
+            {
+                "method": "PUT",
+                "path": "/{id}/state",
+                "summary": f"Transition {name.rstrip('s')} state",
+                "request_body": {"required_fields": ["state"]},
+                "response": {"status": 200, "shape": "entity"},
+            }
+        )
 
     contract = {
         "apiVersion": "specora.dev/v1",

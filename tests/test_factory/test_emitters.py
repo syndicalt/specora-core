@@ -1,8 +1,8 @@
 """Tests for factory contract emitters."""
+
 from __future__ import annotations
 
 import yaml
-import pytest
 
 
 class TestEntityEmitter:
@@ -182,7 +182,9 @@ class TestRouteEmitter:
         from factory.emitters.route_emitter import emit_route
 
         result = emit_route(
-            "tasks", "helpdesk", "entity/helpdesk/task",
+            "tasks",
+            "helpdesk",
+            "entity/helpdesk/task",
             workflow_fqn="workflow/helpdesk/task_lifecycle",
         )
         parsed = yaml.safe_load(result)
@@ -204,7 +206,16 @@ class TestPageEmitter:
         """Emit page, verify route/entity/generation_tier."""
         from factory.emitters.page_emitter import emit_page
 
-        field_names = ["number", "title", "priority", "state", "assigned_to", "created_at", "description", "category"]
+        field_names = [
+            "number",
+            "title",
+            "priority",
+            "state",
+            "assigned_to",
+            "created_at",
+            "description",
+            "category",
+        ]
 
         result = emit_page("tasks", "helpdesk", "entity/helpdesk/task", field_names)
         parsed = yaml.safe_load(result)

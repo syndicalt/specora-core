@@ -156,7 +156,7 @@ def _preamble(*, has_auth: bool) -> list[str]:
         ]
     )
 
-    auth_header = "      ...authorizationHeader()," if has_auth else None
+    auth_header = "        ...authorizationHeader()," if has_auth else None
 
     lines = [
         "",

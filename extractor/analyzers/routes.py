@@ -1,5 +1,6 @@
 # extractor/analyzers/routes.py
 """Pass 2c: Extract API routes from any framework via LLM."""
+
 from __future__ import annotations
 
 import json
@@ -12,7 +13,8 @@ from extractor.models import Confidence, ExtractedRoute
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a code analysis expert. You read route/controller/view files and extract API endpoints.
+SYSTEM_PROMPT = """\
+You are a code analysis expert. You read route/controller/view files and extract API endpoints.
 
 For each endpoint, output a JSON array:
 
@@ -55,6 +57,7 @@ def analyze_routes(
 def _extract_via_llm(content: str, source_file: str) -> Optional[list[ExtractedRoute]]:
     try:
         from engine.engine import LLMEngine
+
         engine = LLMEngine.from_env()
     except Exception:
         return None
@@ -81,14 +84,16 @@ def _extract_via_llm(content: str, source_file: str) -> Optional[list[ExtractedR
     for item in data:
         if not isinstance(item, dict):
             continue
-        routes.append(ExtractedRoute(
-            path=item.get("path", ""),
-            method=item.get("method", "GET").upper(),
-            entity_name=item.get("entity_name", ""),
-            source_file=source_file,
-            summary=item.get("summary", ""),
-            confidence=Confidence.HIGH,
-        ))
+        routes.append(
+            ExtractedRoute(
+                path=item.get("path", ""),
+                method=item.get("method", "GET").upper(),
+                entity_name=item.get("entity_name", ""),
+                source_file=source_file,
+                summary=item.get("summary", ""),
+                confidence=Confidence.HIGH,
+            )
+        )
 
     return routes
 
@@ -98,7 +103,7 @@ def _extract_via_regex(content: str, source_file: str) -> list[ExtractedRoute]:
     routes = []
     patterns = [
         re.compile(r'@(?:app|router)\.(get|post|put|patch|delete)\s*\(\s*["\']([^"\']+)["\']'),
-        re.compile(r'@api_view\s*\(\s*\[([^\]]+)\]\s*\)'),
+        re.compile(r"@api_view\s*\(\s*\[([^\]]+)\]\s*\)"),
         re.compile(r'\.(?:get|post|put|patch|delete)\s*\(\s*["\']([^"\']+)["\']'),
     ]
 
@@ -110,12 +115,14 @@ def _extract_via_regex(content: str, source_file: str) -> list[ExtractedRoute]:
                 method, path = "GET", match.group(1)
 
             entity = path.strip("/").split("/")[0].rstrip("s") if "/" in path else ""
-            routes.append(ExtractedRoute(
-                path=path,
-                method=method,
-                entity_name=entity,
-                source_file=source_file,
-                confidence=Confidence.LOW,
-            ))
+            routes.append(
+                ExtractedRoute(
+                    path=path,
+                    method=method,
+                    entity_name=entity,
+                    source_file=source_file,
+                    confidence=Confidence.LOW,
+                )
+            )
 
     return routes

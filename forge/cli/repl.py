@@ -226,7 +226,7 @@ def cmd_generate(args: str) -> None:
     _tool(f"forge generate {path}")
 
     from forge.ir.compiler import Compiler
-    from forge.targets.fastapi.gen_routes import FastAPIGenerator
+    from forge.targets.fastapi_prod.generator import FastAPIProductionGenerator
     from forge.targets.postgres.gen_ddl import PostgresGenerator
     from forge.targets.typescript.gen_types import TypeScriptGenerator
 
@@ -234,7 +234,11 @@ def cmd_generate(args: str) -> None:
         def run():
             compiler = Compiler(contract_root=Path(path))
             ir = compiler.compile()
-            generators = [TypeScriptGenerator(), FastAPIGenerator(), PostgresGenerator()]
+            generators = [
+                TypeScriptGenerator(),
+                FastAPIProductionGenerator(),
+                PostgresGenerator(),
+            ]
             output_path = Path("runtime/")
             files_written = []
             for gen in generators:

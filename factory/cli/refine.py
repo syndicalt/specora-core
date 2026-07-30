@@ -1,4 +1,5 @@
 """specora factory refine — modify existing contracts via natural language."""
+
 from __future__ import annotations
 
 import re
@@ -20,8 +21,10 @@ from forge.parser.validator import validate_contract
 
 console = Console()
 
-_SYSTEM_PROMPT = """You are a contract modification expert for the Specora CDD engine.
-You receive an existing contract (YAML) and a natural-language instruction describing what to change.
+_SYSTEM_PROMPT = """\
+You are a contract modification expert for the Specora CDD engine.
+You receive an existing contract (YAML) and a natural-language instruction
+describing what to change.
 Apply the requested change and return the complete modified contract.
 
 Rules:
@@ -101,9 +104,7 @@ def factory_refine(path: str, instruction: str) -> None:
         sys.exit(1)
 
     # Show the result
-    new_yaml = yaml.dump(
-        after, default_flow_style=False, sort_keys=False, allow_unicode=True
-    )
+    new_yaml = yaml.dump(after, default_flow_style=False, sort_keys=False, allow_unicode=True)
     console.print(Syntax(new_yaml, "yaml", theme="monokai", line_numbers=True))
 
     # Extract explanation
@@ -112,9 +113,7 @@ def factory_refine(path: str, instruction: str) -> None:
         console.print(f"\n[dim]{explanation}[/dim]")
 
     # Confirm
-    response_input = (
-        console.input("\n[bold]Apply this change? [Y/n] [/bold]").strip().lower()
-    )
+    response_input = console.input("\n[bold]Apply this change? [Y/n] [/bold]").strip().lower()
     if response_input not in ("", "y", "yes"):
         console.print("[yellow]Cancelled.[/yellow]")
         return

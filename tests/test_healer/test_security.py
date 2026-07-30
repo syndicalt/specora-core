@@ -5,12 +5,18 @@ endpoint that rewrites contracts, a stored-XSS sink on the approver's page, a
 write-before-validate applier, and a synchronous pipeline call inside an async
 handler.
 """
+
 from __future__ import annotations
 
 import time
 
 import pytest
 import yaml
+
+# The HTTP surface lives behind the `[healer]` extra; without it there is
+# nothing to test, which is a skip and not a failure.
+pytest.importorskip("fastapi")
+
 from fastapi.testclient import TestClient
 
 import healer.api.server as srv
@@ -109,8 +115,8 @@ def _proposed_ticket(queue: HealerQueue, contract_fqn: str = "entity/test/task")
 # Control plane authentication
 # ---------------------------------------------------------------------------
 
-class TestControlPlaneAuth:
 
+class TestControlPlaneAuth:
     def test_anonymous_approve_is_rejected(self, client, healer_env) -> None:
         ticket_id = _proposed_ticket(healer_env)
         resp = client.post(f"/healer/approve/{ticket_id}")
@@ -152,9 +158,7 @@ class TestControlPlaneAuth:
         resp = client.post(f"/healer/approve/{ticket_id}")
         assert resp.status_code == 503
 
-    def test_signed_token_is_accepted_once_and_rejected_on_reuse(
-        self, client, healer_env
-    ) -> None:
+    def test_signed_token_is_accepted_once_and_rejected_on_reuse(self, client, healer_env) -> None:
         ticket_id = _proposed_ticket(healer_env)
         token = issue_action_token(ticket_id, ACTION_APPROVE)
 
@@ -208,7 +212,6 @@ class TestControlPlaneAuth:
 
 
 class TestActionTokenCodec:
-
     def test_round_trip(self) -> None:
         token = issue_action_token("ticket-1", ACTION_APPROVE, secret="s3cret")
         claims = verify_action_token(token, "ticket-1", ACTION_APPROVE, secret="s3cret")
@@ -235,8 +238,8 @@ class TestActionTokenCodec:
 # CSRF
 # ---------------------------------------------------------------------------
 
-class TestCsrf:
 
+class TestCsrf:
     def test_form_post_without_csrf_is_rejected(self, client, healer_env) -> None:
         ticket_id = _proposed_ticket(healer_env)
         token = issue_action_token(ticket_id, ACTION_APPROVE)
@@ -250,17 +253,13 @@ class TestCsrf:
 
     def test_view_page_embeds_csrf_and_action_token(self, client, healer_env) -> None:
         ticket_id = _proposed_ticket(healer_env)
-        page = client.get(
-            f"/healer/tickets/{ticket_id}/view", headers=CONTROL_PLANE_AUTH
-        ).text
+        page = client.get(f"/healer/tickets/{ticket_id}/view", headers=CONTROL_PLANE_AUTH).text
         assert 'name="csrf"' in page
         assert 'name="token"' in page
 
     def test_form_post_with_page_credentials_succeeds(self, client, healer_env) -> None:
         ticket_id = _proposed_ticket(healer_env)
-        page = client.get(
-            f"/healer/tickets/{ticket_id}/view", headers=CONTROL_PLANE_AUTH
-        ).text
+        page = client.get(f"/healer/tickets/{ticket_id}/view", headers=CONTROL_PLANE_AUTH).text
         csrf = _extract_input(page, "csrf")
         token = _extract_input(page, "token")
         resp = client.post(
@@ -275,7 +274,7 @@ class TestCsrf:
 def _extract_input(page: str, name: str) -> str:
     marker = f'name="{name}" value="'
     start = page.index(marker) + len(marker)
-    return page[start:page.index('"', start)]
+    return page[start : page.index('"', start)]
 
 
 # ---------------------------------------------------------------------------
@@ -286,19 +285,14 @@ XSS = '<script>alert("pwn")</script>'
 
 
 class TestOutputEscaping:
-
-    def test_contract_fqn_from_ingest_is_escaped_in_the_view_page(
-        self, client, healer_env
-    ) -> None:
+    def test_contract_fqn_from_ingest_is_escaped_in_the_view_page(self, client, healer_env) -> None:
         client.post(
             "/healer/ingest",
             json={"source": "runtime", "contract_fqn": XSS, "error": "boom"},
             headers=DATA_PLANE_AUTH,
         )
         ticket_id = healer_env.list_tickets()[0].id
-        page = client.get(
-            f"/healer/tickets/{ticket_id}/view", headers=CONTROL_PLANE_AUTH
-        ).text
+        page = client.get(f"/healer/tickets/{ticket_id}/view", headers=CONTROL_PLANE_AUTH).text
         assert "<script>" not in page
         assert "&lt;script&gt;alert(&quot;pwn&quot;)&lt;/script&gt;" in page
 
@@ -309,9 +303,7 @@ class TestOutputEscaping:
             headers=DATA_PLANE_AUTH,
         )
         ticket_id = healer_env.list_tickets()[0].id
-        page = client.get(
-            f"/healer/tickets/{ticket_id}/view", headers=CONTROL_PLANE_AUTH
-        ).text
+        page = client.get(f"/healer/tickets/{ticket_id}/view", headers=CONTROL_PLANE_AUTH).text
         assert "<script>" not in page
 
     def test_proposal_change_values_are_escaped(self, client, healer_env) -> None:
@@ -328,17 +320,13 @@ class TestOutputEscaping:
                 method="deterministic",
             ),
         )
-        page = client.get(
-            f"/healer/tickets/{ticket_id}/view", headers=CONTROL_PLANE_AUTH
-        ).text
+        page = client.get(f"/healer/tickets/{ticket_id}/view", headers=CONTROL_PLANE_AUTH).text
         assert "<script>" not in page
 
     def test_resolution_note_is_escaped(self, client, healer_env) -> None:
         ticket_id = _proposed_ticket(healer_env)
         healer_env.update_status(ticket_id, TicketStatus.FAILED, resolution_note=XSS)
-        page = client.get(
-            f"/healer/tickets/{ticket_id}/view", headers=CONTROL_PLANE_AUTH
-        ).text
+        page = client.get(f"/healer/tickets/{ticket_id}/view", headers=CONTROL_PLANE_AUTH).text
         assert "<script>" not in page
 
 
@@ -346,8 +334,8 @@ class TestOutputEscaping:
 # Data plane
 # ---------------------------------------------------------------------------
 
-class TestDataPlane:
 
+class TestDataPlane:
     def test_ingest_without_token_is_rejected(self, client, healer_env) -> None:
         resp = client.post("/healer/ingest", json={"source": "manual", "error": "x"})
         assert resp.status_code == 401
@@ -397,7 +385,6 @@ class TestDataPlane:
 
 
 class TestIngestDoesNotBlockTheEventLoop:
-
     def test_ingest_returns_before_the_pipeline_runs(self, healer_env, monkeypatch) -> None:
         """A slow pipeline must not delay the ingest response.
 
@@ -456,6 +443,7 @@ class TestIngestDoesNotBlockTheEventLoop:
 # Applier
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def contract_path(tmp_path):
     directory = tmp_path / "domains" / "test" / "entities"
@@ -466,15 +454,18 @@ def contract_path(tmp_path):
 
 
 class TestApplierSafety:
-
     def test_invalid_fix_leaves_the_file_byte_identical(self, contract_path, tmp_path) -> None:
         original = contract_path.read_bytes()
         proposal = HealerProposal(
             contract_fqn="entity/test/task",
             before={},
-            after={"apiVersion": "wrong", "kind": "Entity",
-                   "metadata": {"name": "task", "domain": "test"},
-                   "requires": [], "spec": {"fields": {}}},
+            after={
+                "apiVersion": "wrong",
+                "kind": "Entity",
+                "metadata": {"name": "task", "domain": "test"},
+                "requires": [],
+                "spec": {"fields": {}},
+            },
             changes=[],
             explanation="bad fix",
             confidence=0.5,
@@ -507,15 +498,11 @@ class TestApplierSafety:
             confidence=1.0,
             method="deterministic",
         )
-        result = apply_fix(
-            proposal, tmp_path / "does_not_exist.yaml", diff_root=tmp_path / "diffs"
-        )
+        result = apply_fix(proposal, tmp_path / "does_not_exist.yaml", diff_root=tmp_path / "diffs")
         assert result.success is False
         assert "not found" in result.error
 
-    def test_source_path_is_never_written_to_the_contract(
-        self, contract_path, tmp_path
-    ) -> None:
+    def test_source_path_is_never_written_to_the_contract(self, contract_path, tmp_path) -> None:
         loaded = dict(VALID_CONTRACT)
         loaded["_source_path"] = "/home/someone/private/domains/test/entities/task.yaml"
         loaded["metadata"] = {"name": "task", "domain": "test", "_internal": "x"}
@@ -550,8 +537,11 @@ class TestApplierSafety:
         )
         diff_root = tmp_path / "diffs"
         result = apply_fix(
-            proposal, contract_path, diff_root=diff_root,
-            ticket_id="abc123", actor="approval_link:oncall",
+            proposal,
+            contract_path,
+            diff_root=diff_root,
+            ticket_id="abc123",
+            actor="approval_link:oncall",
         )
         assert result.success is True
 
@@ -580,9 +570,7 @@ class TestContaminatedContractRepair:
         assert "_source_path" not in proposal.after
         assert any(c.path == "_source_path" for c in proposal.changes)
 
-    def test_apply_repairs_the_file_and_records_the_repair(
-        self, contract_path, tmp_path
-    ) -> None:
+    def test_apply_repairs_the_file_and_records_the_repair(self, contract_path, tmp_path) -> None:
         contaminated = dict(VALID_CONTRACT)
         contaminated["_source_path"] = "/home/someone/domains/test/entities/task.yaml"
         contract_path.write_text(yaml.dump(contaminated), encoding="utf-8")
@@ -598,7 +586,6 @@ class TestContaminatedContractRepair:
 
 
 class TestStripInternalKeys:
-
     def test_removes_underscore_keys_at_every_depth(self) -> None:
         cleaned = strip_internal_keys(
             {
@@ -618,8 +605,8 @@ class TestStripInternalKeys:
 # Queue concurrency
 # ---------------------------------------------------------------------------
 
-class TestQueueClaim:
 
+class TestQueueClaim:
     def test_claim_is_atomic_across_threads(self, tmp_path) -> None:
         import threading
 

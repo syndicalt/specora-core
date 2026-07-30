@@ -1,4 +1,5 @@
 """specora factory explain — LLM explains a contract in plain English."""
+
 from __future__ import annotations
 
 import sys

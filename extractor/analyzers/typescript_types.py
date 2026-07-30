@@ -1,5 +1,6 @@
 # extractor/analyzers/typescript_types.py
 """Pass 2b: Extract entities from TypeScript type files via LLM."""
+
 from __future__ import annotations
 
 import json
@@ -12,7 +13,9 @@ from extractor.models import Confidence, ExtractedEntity, ExtractedField
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a code analysis expert. You read TypeScript/JavaScript type files and extract data models.
+SYSTEM_PROMPT = """\
+You are a code analysis expert. You read TypeScript/JavaScript type files and extract
+data models.
 
 For each interface/type/class found, output a JSON array:
 
@@ -25,7 +28,8 @@ For each interface/type/class found, output a JSON array:
       {"name": "email", "type": "email", "required": true},
       {"name": "name", "type": "string", "required": true},
       {"name": "role", "type": "string", "enum_values": ["admin", "user"]},
-      {"name": "departmentId", "type": "uuid", "reference_entity": "Department", "reference_edge": "BELONGS_TO"}
+      {"name": "departmentId", "type": "uuid",
+       "reference_entity": "Department", "reference_edge": "BELONGS_TO"}
     ],
     "state_field": "status",
     "state_values": ["active", "inactive"]
@@ -94,11 +98,15 @@ def _batch_files(file_paths: list[str], root: Path, max_chars: int) -> list[tupl
 def _extract_via_llm(content: str, source_files: list[str]) -> Optional[list[ExtractedEntity]]:
     try:
         from engine.engine import LLMEngine
+
         engine = LLMEngine.from_env()
     except Exception:
         return None
 
-    prompt = f"Analyze these TypeScript files and extract all data models:\n\n```typescript\n{content}\n```"
+    prompt = (
+        "Analyze these TypeScript files and extract all data models:\n\n"
+        f"```typescript\n{content}\n```"
+    )
 
     try:
         response = engine.ask(question=prompt, system=SYSTEM_PROMPT)
@@ -129,25 +137,29 @@ def _parse_response(response: str, source_files: list[str]) -> Optional[list[Ext
 
         fields = []
         for f in item.get("fields", []):
-            fields.append(ExtractedField(
-                name=f.get("name", ""),
-                type=f.get("type", "string"),
-                required=f.get("required", False),
-                description=f.get("description", ""),
-                enum_values=f.get("enum_values", []),
-                reference_entity=f.get("reference_entity", ""),
-                reference_edge=f.get("reference_edge", ""),
-            ))
+            fields.append(
+                ExtractedField(
+                    name=f.get("name", ""),
+                    type=f.get("type", "string"),
+                    required=f.get("required", False),
+                    description=f.get("description", ""),
+                    enum_values=f.get("enum_values", []),
+                    reference_entity=f.get("reference_entity", ""),
+                    reference_edge=f.get("reference_edge", ""),
+                )
+            )
 
-        entities.append(ExtractedEntity(
-            name=item["name"],
-            source_file=source,
-            fields=fields,
-            description=item.get("description", ""),
-            confidence=Confidence.HIGH,
-            state_field=item.get("state_field", ""),
-            state_values=item.get("state_values", []),
-        ))
+        entities.append(
+            ExtractedEntity(
+                name=item["name"],
+                source_file=source,
+                fields=fields,
+                description=item.get("description", ""),
+                confidence=Confidence.HIGH,
+                state_field=item.get("state_field", ""),
+                state_values=item.get("state_values", []),
+            )
+        )
 
     return entities
 
@@ -170,11 +182,13 @@ def _extract_via_regex(file_paths: list[str], root: Path) -> list[ExtractedEntit
             for match in pattern.finditer(content):
                 name = match.group(1)
                 if name[0].isupper():
-                    entities.append(ExtractedEntity(
-                        name=name,
-                        source_file=fp,
-                        fields=[],
-                        confidence=Confidence.LOW,
-                    ))
+                    entities.append(
+                        ExtractedEntity(
+                            name=name,
+                            source_file=fp,
+                            fields=[],
+                            confidence=Confidence.LOW,
+                        )
+                    )
 
     return entities

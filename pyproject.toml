@@ -79,4 +79,30 @@ line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+# Every family below is at zero across the repository. A rule is only added
+# here once the codebase already satisfies it — enabling a rule and then
+# ignoring it repo-wide buys nothing.
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings — catches invalid escapes in the template strings
+    "F",     # pyflakes
+    "I",     # import order
+    "C4",    # comprehension misuse
+    "DTZ",   # naive datetimes: this engine emits created_at/updated_at
+    "ASYNC", # blocking calls in async defs — the generated repositories are async
+    "G",     # logging call misuse
+    "LOG",   # logging module misuse
+    "N",     # pep8 naming
+    "RSE",   # raise with unnecessary parentheses
+    "YTT",   # sys.version comparisons
+]
+# Not enabled, and why:
+#   B  (bugbear) — 2 outstanding: engine/providers/zai.py:40 B904 loses the
+#      exception chain, forge/targets/migrations/differ.py:85 B007. Worth
+#      turning on once both are fixed.
+#   S  (bandit) — 679 of the 714 hits are S101 (`assert` in tests), which is
+#      what a test suite is made of. Enabling it would require a blanket
+#      per-file ignore for tests/, i.e. enabling nothing.
+#   UP (pyupgrade) — 93 hits, almost all UP045 (`Optional[X]` -> `X | None`).
+#      Mechanical and auto-fixable, but the affected files span workstreams
+#      still in flight.

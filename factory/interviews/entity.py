@@ -53,7 +53,8 @@ def run_entity_interview(
     if not description:
         description = interview.ask_user(
             f"Describe what a '{entity_name}' is in one sentence\n"
-            f"  [dim]Example: \"A task that can be assigned to a user with a due date and priority\"[/dim]"
+            '  [dim]Example: "A task that can be assigned to a user '
+            'with a due date and priority"[/dim]'
         )
 
     fields_input = interview.ask_user(
@@ -71,7 +72,8 @@ Generate a YAML mapping of field definitions. For each field, include:
 - description (brief)
 - required: true if it seems essential
 - enum: [...] if the field has a fixed set of values
-- references: if the field points to another entity (check existing entities: {existing_entities or []})
+- references: if the field points to another entity
+  (check existing entities: {existing_entities or []})
 
 Also include:
 - mixins: list of mixin FQNs to include
@@ -94,7 +96,9 @@ description: "..."
         structured = interview.ask_llm_structured(fields_input, instruction)
     except InterviewLLMError as e:
         interview.show(f"[red]AI provider error:[/red] {e}")
-        interview.show("[yellow]Using basic field defaults. You can edit the contracts later.[/yellow]")
+        interview.show(
+            "[yellow]Using basic field defaults. You can edit the contracts later.[/yellow]"
+        )
         structured = {
             "fields": {},
             "mixins": ["mixin/stdlib/timestamped", "mixin/stdlib/identifiable"],

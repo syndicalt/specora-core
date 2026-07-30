@@ -1,6 +1,6 @@
 # tests/test_healer/test_queue.py
 """Tests for healer.queue — SQLite-backed priority queue."""
-import tempfile
+
 from pathlib import Path
 
 import pytest
@@ -15,7 +15,6 @@ def queue(tmp_path: Path) -> HealerQueue:
 
 
 class TestEnqueueAndGet:
-
     def test_enqueue_returns_id(self, queue: HealerQueue) -> None:
         ticket = HealerTicket(source=TicketSource.VALIDATION, raw_error="test")
         ticket_id = queue.enqueue(ticket)
@@ -37,10 +36,11 @@ class TestEnqueueAndGet:
 
 
 class TestNextQueued:
-
     def test_returns_highest_priority(self, queue: HealerQueue) -> None:
         low = HealerTicket(source=TicketSource.VALIDATION, raw_error="low", priority=Priority.LOW)
-        critical = HealerTicket(source=TicketSource.RUNTIME, raw_error="critical", priority=Priority.CRITICAL)
+        critical = HealerTicket(
+            source=TicketSource.RUNTIME, raw_error="critical", priority=Priority.CRITICAL
+        )
         queue.enqueue(low)
         queue.enqueue(critical)
 
@@ -52,8 +52,12 @@ class TestNextQueued:
         assert queue.next_queued() is None
 
     def test_fifo_within_same_priority(self, queue: HealerQueue) -> None:
-        first = HealerTicket(source=TicketSource.VALIDATION, raw_error="first", priority=Priority.HIGH)
-        second = HealerTicket(source=TicketSource.VALIDATION, raw_error="second", priority=Priority.HIGH)
+        first = HealerTicket(
+            source=TicketSource.VALIDATION, raw_error="first", priority=Priority.HIGH
+        )
+        second = HealerTicket(
+            source=TicketSource.VALIDATION, raw_error="second", priority=Priority.HIGH
+        )
         queue.enqueue(first)
         queue.enqueue(second)
 
@@ -63,7 +67,6 @@ class TestNextQueued:
 
 
 class TestUpdateStatus:
-
     def test_update_status(self, queue: HealerQueue) -> None:
         ticket = HealerTicket(source=TicketSource.VALIDATION, raw_error="test")
         queue.enqueue(ticket)
@@ -84,7 +87,6 @@ class TestUpdateStatus:
 
 
 class TestListAndStats:
-
     def test_list_tickets_by_status(self, queue: HealerQueue) -> None:
         t1 = HealerTicket(source=TicketSource.VALIDATION, raw_error="a")
         t2 = HealerTicket(source=TicketSource.VALIDATION, raw_error="b")

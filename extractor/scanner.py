@@ -1,4 +1,5 @@
 """Pass 1: Discover and classify source files by role."""
+
 from __future__ import annotations
 
 import re
@@ -8,9 +9,20 @@ from extractor.models import FileClassification, FileRole
 
 # Directories to skip
 SKIP_DIRS = {
-    "node_modules", ".git", "__pycache__", ".venv", "venv", "env",
-    ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
-    ".egg-info", ".eggs", "htmlcov",
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "env",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    "dist",
+    "build",
+    ".egg-info",
+    ".eggs",
+    "htmlcov",
 }
 
 # File extensions we care about
@@ -71,14 +83,27 @@ CONFIG_PATTERNS = [
 
 # Content patterns for classification when filename isn't enough
 CONTENT_MODEL_HINTS = [
-    "BaseModel", "Base = declarative_base", "class Meta:",
-    "Column(", "Field(", "interface ", "type ", "@dataclass",
-    "TypedDict", "NamedTuple", "Schema",
+    "BaseModel",
+    "Base = declarative_base",
+    "class Meta:",
+    "Column(",
+    "Field(",
+    "interface ",
+    "type ",
+    "@dataclass",
+    "TypedDict",
+    "NamedTuple",
+    "Schema",
 ]
 
 CONTENT_ROUTE_HINTS = [
-    "APIRouter", "@app.get", "@app.post", "@router.",
-    "Blueprint", "express.Router", "@api_view",
+    "APIRouter",
+    "@app.get",
+    "@app.post",
+    "@router.",
+    "Blueprint",
+    "express.Router",
+    "@api_view",
 ]
 
 
@@ -109,12 +134,14 @@ def scan_directory(root: Path) -> list[FileClassification]:
 
         role = _classify_file(path, rel_path)
 
-        results.append(FileClassification(
-            path=rel_path,
-            role=role,
-            language=language,
-            size_bytes=size,
-        ))
+        results.append(
+            FileClassification(
+                path=rel_path,
+                role=role,
+                language=language,
+                size_bytes=size,
+            )
+        )
 
     return results
 

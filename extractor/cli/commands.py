@@ -1,7 +1,7 @@
 """specora extract — reverse-engineer codebases into contracts."""
+
 from __future__ import annotations
 
-import sys
 import time
 from pathlib import Path
 
@@ -19,7 +19,9 @@ console = Console()
 
 @click.command("extract")
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--domain", "-d", default="", help="Domain name (auto-inferred from directory name if omitted)")
+@click.option(
+    "--domain", "-d", default="", help="Domain name (auto-inferred from directory name if omitted)"
+)
 @click.option("--output", "-o", default="domains/", help="Output base directory")
 def extract(path: str, domain: str, output: str) -> None:
     """Reverse-engineer a codebase into Specora contracts.
@@ -45,11 +47,17 @@ def extract(path: str, domain: str, output: str) -> None:
         report = synthesize(source_path, domain)
     elapsed = time.time() - start
 
-    console.print(f"  [dim]Scanned {report.files_scanned} files, analyzed {report.files_analyzed} ({elapsed:.1f}s)[/dim]")
+    console.print(
+        f"  [dim]Scanned {report.files_scanned} files, "
+        f"analyzed {report.files_analyzed} ({elapsed:.1f}s)[/dim]"
+    )
     console.print()
 
     if not report.entities:
-        console.print("  [yellow]No entities found. The codebase may not contain recognizable models.[/yellow]")
+        console.print(
+            "  [yellow]No entities found. "
+            "The codebase may not contain recognizable models.[/yellow]"
+        )
         return
 
     # Display report and get user approvals
@@ -61,7 +69,9 @@ def extract(path: str, domain: str, output: str) -> None:
 
     # Confirm write
     output_dir = Path(output) / domain
-    console.print(f"  Writing {len(accepted)} entities (+ routes + pages) to [cyan]{output_dir}[/cyan]")
+    console.print(
+        f"  Writing {len(accepted)} entities (+ routes + pages) to [cyan]{output_dir}[/cyan]"
+    )
     try:
         response = console.input("  [bold]Proceed? [Y/n] [/bold]").strip().lower()
     except (EOFError, KeyboardInterrupt):

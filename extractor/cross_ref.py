@@ -1,4 +1,5 @@
 """Pass 3: Resolve relationships and detect workflows."""
+
 from __future__ import annotations
 
 from extractor.models import (
@@ -43,14 +44,16 @@ def cross_reference(
         # Detect workflows from state fields
         if entity.state_field and entity.state_values and len(entity.state_values) >= 2:
             wf_name = f"{entity.name}_lifecycle"
-            workflows.append(ExtractedWorkflow(
-                name=wf_name,
-                entity_name=entity.name,
-                states=entity.state_values,
-                initial=entity.state_values[0],
-                source_file=entity.source_file,
-                confidence=Confidence.MEDIUM,
-            ))
+            workflows.append(
+                ExtractedWorkflow(
+                    name=wf_name,
+                    entity_name=entity.name,
+                    states=entity.state_values,
+                    initial=entity.state_values[0],
+                    source_file=entity.source_file,
+                    confidence=Confidence.MEDIUM,
+                )
+            )
 
     # Match routes to entities
     for route in routes:

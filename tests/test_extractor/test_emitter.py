@@ -1,7 +1,7 @@
 """Tests for extractor.emitter — AnalysisReport to contract YAML."""
+
 from pathlib import Path
 
-import pytest
 import yaml
 
 from extractor.emitter import emit_contracts
@@ -14,7 +14,6 @@ from extractor.models import (
 
 
 class TestEmitContracts:
-
     def test_emits_entity_contracts(self, tmp_path: Path) -> None:
         report = AnalysisReport(
             domain="shop",
@@ -44,18 +43,24 @@ class TestEmitContracts:
         report = AnalysisReport(
             domain="shop",
             entities=[
-                ExtractedEntity(name="product", source_file="m.py", fields=[
-                    ExtractedField(name="name", type="string"),
-                ]),
+                ExtractedEntity(
+                    name="product",
+                    source_file="m.py",
+                    fields=[
+                        ExtractedField(name="name", type="string"),
+                    ],
+                ),
             ],
         )
-        files = emit_contracts(report, output_dir=tmp_path / "domains" / "shop")
+        written = emit_contracts(report, output_dir=tmp_path / "domains" / "shop")
 
         route_file = tmp_path / "domains" / "shop" / "routes" / "products.contract.yaml"
         assert route_file.exists()
 
         page_file = tmp_path / "domains" / "shop" / "pages" / "products.contract.yaml"
         assert page_file.exists()
+
+        assert {route_file, page_file} <= set(written)
 
     def test_emits_workflow(self, tmp_path: Path) -> None:
         report = AnalysisReport(
@@ -71,7 +76,9 @@ class TestEmitContracts:
                 ),
             ],
         )
-        files = emit_contracts(report, output_dir=tmp_path / "domains" / "shop")
+        written = emit_contracts(report, output_dir=tmp_path / "domains" / "shop")
 
         wf_file = tmp_path / "domains" / "shop" / "workflows" / "order_lifecycle.contract.yaml"
         assert wf_file.exists()
+
+        assert wf_file in set(written)

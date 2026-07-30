@@ -1,4 +1,5 @@
 """specora factory visualize — Mermaid diagram generation."""
+
 from __future__ import annotations
 
 import sys
@@ -15,7 +16,13 @@ console = Console()
 
 @click.command("visualize")
 @click.argument("path", default="domains/", type=click.Path(exists=True))
-@click.option("--type", "diagram_type", type=click.Choice(["er", "state", "deps"]), default="er", help="Diagram type")
+@click.option(
+    "--type",
+    "diagram_type",
+    type=click.Choice(["er", "state", "deps"]),
+    default="er",
+    help="Diagram type",
+)
 @click.option("--output", "-o", default="", help="Save to file instead of printing")
 def factory_visualize(path: str, diagram_type: str, output: str) -> None:
     """Generate Mermaid diagrams for contracts."""
@@ -47,7 +54,7 @@ def factory_visualize(path: str, diagram_type: str, output: str) -> None:
         console.print(f"[green]Saved to {output}[/green]")
     else:
         console.print(Syntax(mermaid, "mermaid", theme="monokai"))
-        console.print(f"\n[dim]Paste into https://mermaid.live to render[/dim]")
+        console.print("\n[dim]Paste into https://mermaid.live to render[/dim]")
 
 
 def _generate_er_diagram(contracts: dict[str, dict]) -> str:
@@ -58,7 +65,7 @@ def _generate_er_diagram(contracts: dict[str, dict]) -> str:
 
     lines = ["erDiagram"]
 
-    for fqn, contract in sorted(entities.items()):
+    for _fqn, contract in sorted(entities.items()):
         name = contract.get("metadata", {}).get("name", "?")
         fields = contract.get("spec", {}).get("fields", {})
 
@@ -90,13 +97,13 @@ def _generate_state_diagrams(contracts: dict[str, dict]) -> str:
         return ""
 
     diagrams = []
-    for fqn, contract in sorted(workflows.items()):
+    for _fqn, contract in sorted(workflows.items()):
         name = contract.get("metadata", {}).get("name", "?")
         spec = contract.get("spec", {})
         initial = spec.get("initial", "")
         transitions = spec.get("transitions", [])
 
-        lines = [f"---", f"title: {name}", f"---", "stateDiagram-v2"]
+        lines = ["---", f"title: {name}", "---", "stateDiagram-v2"]
 
         if initial:
             lines.append(f"    [*] --> {initial}")

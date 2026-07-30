@@ -1,4 +1,5 @@
 """Pass 2a: Extract entities from Python model files via LLM."""
+
 from __future__ import annotations
 
 import json
@@ -11,7 +12,8 @@ from extractor.models import Confidence, ExtractedEntity, ExtractedField
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a code analysis expert. You read Python model/schema files and extract data models.
+SYSTEM_PROMPT = """\
+You are a code analysis expert. You read Python model/schema files and extract data models.
 
 For each class/model found, output a JSON array of entities:
 
@@ -24,7 +26,8 @@ For each class/model found, output a JSON array of entities:
       {"name": "email", "type": "email", "required": true, "description": "User email"},
       {"name": "name", "type": "string", "required": true},
       {"name": "role", "type": "string", "enum_values": ["admin", "user", "guest"]},
-      {"name": "department_id", "type": "uuid", "reference_entity": "Department", "reference_edge": "BELONGS_TO"}
+      {"name": "department_id", "type": "uuid",
+       "reference_entity": "Department", "reference_edge": "BELONGS_TO"}
     ],
     "state_field": "status",
     "state_values": ["active", "inactive", "suspended"]
@@ -49,7 +52,8 @@ Reference detection:
 - Set reference_edge to SCREAMING_SNAKE (e.g., BELONGS_TO, CREATED_BY)
 
 State machine detection:
-- Enum fields with lifecycle-like values (active/inactive, open/closed, pending/approved) → set state_field and state_values
+- Enum fields with lifecycle-like values (active/inactive, open/closed,
+  pending/approved) → set state_field and state_values
 
 Only output the JSON array. No other text.
 """
@@ -109,6 +113,7 @@ def _extract_via_llm(content: str, source_files: list[str]) -> Optional[list[Ext
     """Use LLM to extract entities from Python code."""
     try:
         from engine.engine import LLMEngine
+
         engine = LLMEngine.from_env()
     except Exception as e:
         logger.warning("LLM not available: %s", e)
@@ -149,26 +154,30 @@ def _parse_llm_response(response: str, source_files: list[str]) -> Optional[list
 
         fields = []
         for f in item.get("fields", []):
-            fields.append(ExtractedField(
-                name=f.get("name", ""),
-                type=f.get("type", "string"),
-                required=f.get("required", False),
-                description=f.get("description", ""),
-                enum_values=f.get("enum_values", []),
-                reference_entity=f.get("reference_entity", ""),
-                reference_display=f.get("reference_display", "name"),
-                reference_edge=f.get("reference_edge", ""),
-            ))
+            fields.append(
+                ExtractedField(
+                    name=f.get("name", ""),
+                    type=f.get("type", "string"),
+                    required=f.get("required", False),
+                    description=f.get("description", ""),
+                    enum_values=f.get("enum_values", []),
+                    reference_entity=f.get("reference_entity", ""),
+                    reference_display=f.get("reference_display", "name"),
+                    reference_edge=f.get("reference_edge", ""),
+                )
+            )
 
-        entities.append(ExtractedEntity(
-            name=item["name"],
-            source_file=source,
-            fields=fields,
-            description=item.get("description", ""),
-            confidence=Confidence.HIGH,
-            state_field=item.get("state_field", ""),
-            state_values=item.get("state_values", []),
-        ))
+        entities.append(
+            ExtractedEntity(
+                name=item["name"],
+                source_file=source,
+                fields=fields,
+                description=item.get("description", ""),
+                confidence=Confidence.HIGH,
+                state_field=item.get("state_field", ""),
+                state_values=item.get("state_values", []),
+            )
+        )
 
     return entities
 
@@ -186,12 +195,14 @@ def _extract_via_regex(file_paths: list[str], root: Path) -> list[ExtractedEntit
 
         for match in class_pattern.finditer(content):
             name = match.group(1)
-            entities.append(ExtractedEntity(
-                name=name,
-                source_file=fp,
-                fields=[],
-                description=f"Extracted from {fp}",
-                confidence=Confidence.LOW,
-            ))
+            entities.append(
+                ExtractedEntity(
+                    name=name,
+                    source_file=fp,
+                    fields=[],
+                    description=f"Extracted from {fp}",
+                    confidence=Confidence.LOW,
+                )
+            )
 
     return entities

@@ -6,14 +6,16 @@ from forge.diff.tracker import create_diff
 
 
 def test_added_optional_field_is_backward_compatible() -> None:
-    cc = build_change_contract([
-        FieldChange(
-            path="spec.fields.nickname",
-            old_value=None,
-            new_value={"type": "string"},
-            change_type="added",
-        )
-    ])
+    cc = build_change_contract(
+        [
+            FieldChange(
+                path="spec.fields.nickname",
+                old_value=None,
+                new_value={"type": "string"},
+                change_type="added",
+            )
+        ]
+    )
 
     assert cc.compatibility == Compatibility.BACKWARD_COMPATIBLE
     assert cc.migration_required is False
@@ -23,14 +25,16 @@ def test_added_optional_field_is_backward_compatible() -> None:
 
 
 def test_removed_field_is_destructive_and_requires_migration() -> None:
-    cc = build_change_contract([
-        FieldChange(
-            path="spec.fields.legacy_code",
-            old_value={"type": "string"},
-            new_value=None,
-            change_type="removed",
-        )
-    ])
+    cc = build_change_contract(
+        [
+            FieldChange(
+                path="spec.fields.legacy_code",
+                old_value={"type": "string"},
+                new_value=None,
+                change_type="removed",
+            )
+        ]
+    )
 
     assert cc.compatibility == Compatibility.DESTRUCTIVE
     assert cc.migration_required is True
@@ -39,14 +43,16 @@ def test_removed_field_is_destructive_and_requires_migration() -> None:
 
 
 def test_workflow_guard_change_is_behavioral() -> None:
-    cc = build_change_contract([
-        FieldChange(
-            path="spec.guards.new -> done.require_fields[0]",
-            old_value=None,
-            new_value="resolution",
-            change_type="added",
-        )
-    ])
+    cc = build_change_contract(
+        [
+            FieldChange(
+                path="spec.guards.new -> done.require_fields[0]",
+                old_value=None,
+                new_value="resolution",
+                change_type="added",
+            )
+        ]
+    )
 
     assert cc.compatibility == Compatibility.BEHAVIORAL
     assert cc.migration_required is False

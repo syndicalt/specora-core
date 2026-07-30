@@ -1,13 +1,11 @@
 """Tests for healer.analyzer.classifier — error classification."""
-import pytest
 
 from forge.parser.validator import ContractValidationError
-from healer.analyzer.classifier import classify_validation_error, classify_raw_error
+from healer.analyzer.classifier import classify_raw_error, classify_validation_error
 from healer.models import Priority
 
 
 class TestClassifyValidationError:
-
     def test_naming_error(self) -> None:
         err = ContractValidationError(
             contract_fqn="entity/todo_list/?",
@@ -23,7 +21,10 @@ class TestClassifyValidationError:
         err = ContractValidationError(
             contract_fqn="entity/todo_list/task",
             path="requires.[2]",
-            message="'todo_list/User' does not match '^(entity|workflow|page|route|agent|mixin|infra)/[a-z][a-z0-9_/]*$'",
+            message=(
+                "'todo_list/User' does not match "
+                "'^(entity|workflow|page|route|agent|mixin|infra)/[a-z][a-z0-9_/]*$'"
+            ),
         )
         result = classify_validation_error(err)
         assert result.error_type == "fqn_format"
@@ -51,7 +52,6 @@ class TestClassifyValidationError:
 
 
 class TestClassifyRawError:
-
     def test_runtime_500(self) -> None:
         result = classify_raw_error(
             source="runtime",

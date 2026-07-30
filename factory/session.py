@@ -20,6 +20,7 @@ Typical flow::
 When the interview is complete, call ``session.cleanup()`` to remove the
 persisted state file.
 """
+
 from __future__ import annotations
 
 import json
@@ -213,9 +214,7 @@ class Session:
         try:
             self._session_path.unlink(missing_ok=True)
             # Remove the .factory directory if it is now empty.
-            if self._session_path.parent.exists() and not any(
-                self._session_path.parent.iterdir()
-            ):
+            if self._session_path.parent.exists() and not any(self._session_path.parent.iterdir()):
                 self._session_path.parent.rmdir()
             logger.info("Session cleaned up")
         except OSError as exc:

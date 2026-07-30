@@ -1,14 +1,15 @@
 """Emit contracts from an AnalysisReport using Factory emitters."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
+from extractor.models import AnalysisReport, ExtractedEntity
 from factory.emitters.entity_emitter import emit_entity
 from factory.emitters.page_emitter import emit_page
 from factory.emitters.route_emitter import emit_route
 from factory.emitters.workflow_emitter import emit_workflow
 from forge.normalize import normalize_name
-from extractor.models import AnalysisReport, ExtractedEntity
 
 
 def emit_contracts(

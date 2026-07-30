@@ -5,6 +5,7 @@ to ``subprocess.run(..., shell=True)``. Any content the user pasted into the
 REPL — a contract, an error message, output from somewhere else — could
 prompt-inject the router into returning a chained shell command, and it ran.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -122,9 +123,7 @@ class TestRouteNaturalLanguage:
         assert decision.suggestion == raw[:200]
 
     def test_legitimate_request_routes(self, fake_engine) -> None:
-        fake_engine(
-            {"command": "forge validate domains/library", "explanation": "Validating."}
-        )
+        fake_engine({"command": "forge validate domains/library", "explanation": "Validating."})
         decision = route_natural_language("check my library contracts")
 
         assert decision.status == "routed"
@@ -147,9 +146,7 @@ class TestRouteNaturalLanguage:
             def ask_json(self, *args, **kwargs):
                 raise StructuredOutputError("No JSON object found.", "I cannot help.")
 
-        monkeypatch.setattr(
-            LLMEngine, "from_env", classmethod(lambda cls: _Prose())
-        )
+        monkeypatch.setattr(LLMEngine, "from_env", classmethod(lambda cls: _Prose()))
         decision = route_natural_language("anything")
 
         assert decision.status == "error"
@@ -172,9 +169,7 @@ class TestReplDispatch:
     def test_injected_decision_dispatches_nothing(self, fake_engine, tmp_path) -> None:
         repl = pytest.importorskip("forge.cli.repl")
         marker = tmp_path / "pwned"
-        fake_engine(
-            {"command": f"validate x; touch {marker}", "explanation": "validating"}
-        )
+        fake_engine({"command": f"validate x; touch {marker}", "explanation": "validating"})
 
         repl.cmd_natural("tell me about my contracts")
 

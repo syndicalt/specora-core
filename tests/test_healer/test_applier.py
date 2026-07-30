@@ -1,10 +1,11 @@
 """Tests for healer.applier — apply fixes with rollback."""
-import yaml
+
 from pathlib import Path
 
 import pytest
+import yaml
 
-from healer.applier import apply_fix, ApplyResult
+from healer.applier import apply_fix
 from healer.models import HealerProposal
 
 
@@ -30,7 +31,6 @@ def contract_path(domain_dir: Path) -> Path:
 
 
 class TestApplyFix:
-
     def test_applies_valid_fix(self, contract_path: Path, tmp_path: Path) -> None:
         proposal = HealerProposal(
             contract_fqn="entity/test/task",
@@ -57,7 +57,13 @@ class TestApplyFix:
         proposal = HealerProposal(
             contract_fqn="entity/test/task",
             before={},
-            after={"apiVersion": "wrong", "kind": "Entity", "metadata": {"name": "task", "domain": "test"}, "requires": [], "spec": {"fields": {}}},
+            after={
+                "apiVersion": "wrong",
+                "kind": "Entity",
+                "metadata": {"name": "task", "domain": "test"},
+                "requires": [],
+                "spec": {"fields": {}},
+            },
             changes=[],
             explanation="Bad fix",
             confidence=0.5,

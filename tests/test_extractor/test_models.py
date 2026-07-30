@@ -1,5 +1,4 @@
 """Tests for extractor.models — data structures for codebase analysis."""
-import pytest
 
 from extractor.models import (
     AnalysisReport,
@@ -14,7 +13,6 @@ from extractor.models import (
 
 
 class TestFileClassification:
-
     def test_create(self) -> None:
         fc = FileClassification(path="models.py", role=FileRole.MODEL, language="python")
         assert fc.path == "models.py"
@@ -23,7 +21,6 @@ class TestFileClassification:
 
 
 class TestExtractedEntity:
-
     def test_create_minimal(self) -> None:
         entity = ExtractedEntity(
             name="User",
@@ -40,7 +37,9 @@ class TestExtractedEntity:
             source_file="models.py",
             description="A library book",
             fields=[
-                ExtractedField(name="title", type="string", required=True, description="Book title"),
+                ExtractedField(
+                    name="title", type="string", required=True, description="Book title"
+                ),
                 ExtractedField(name="isbn", type="string"),
             ],
         )
@@ -53,7 +52,6 @@ class TestExtractedEntity:
 
 
 class TestExtractedRoute:
-
     def test_create(self) -> None:
         route = ExtractedRoute(
             path="/api/users",
@@ -65,7 +63,6 @@ class TestExtractedRoute:
 
 
 class TestExtractedWorkflow:
-
     def test_create(self) -> None:
         wf = ExtractedWorkflow(
             name="order_lifecycle",
@@ -96,7 +93,6 @@ class TestExtractedWorkflow:
 
 
 class TestAnalysisReport:
-
     def test_create_empty(self) -> None:
         report = AnalysisReport(domain="test")
         assert report.domain == "test"
@@ -109,8 +105,20 @@ class TestAnalysisReport:
                 ExtractedEntity(name="Product", source_file="m.py", fields=[]),
                 ExtractedEntity(name="Order", source_file="m.py", fields=[]),
             ],
-            routes=[ExtractedRoute(path="/products", method="GET", entity_name="product", source_file="r.py")],
-            workflows=[ExtractedWorkflow(name="order_lifecycle", entity_name="order", states=["new", "done"], initial="new", source_file="m.py")],
+            routes=[
+                ExtractedRoute(
+                    path="/products", method="GET", entity_name="product", source_file="r.py"
+                )
+            ],
+            workflows=[
+                ExtractedWorkflow(
+                    name="order_lifecycle",
+                    entity_name="order",
+                    states=["new", "done"],
+                    initial="new",
+                    source_file="m.py",
+                )
+            ],
         )
         s = report.summary()
         assert "2 entities" in s
