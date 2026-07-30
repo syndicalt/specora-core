@@ -16,6 +16,9 @@ spec:
     email:
       type: email
       required: true
+    phone:
+      type: string
+      description: Contact number for callbacks. Optional — not every customer gives one.
     company:
       type: string
     plan:
