@@ -218,6 +218,107 @@ class TestTelemetry:
         assert estimate_cost("env-model", 1_000_000, 0) == pytest.approx(1.0)
 
 
+class TestEngineInstrumentation:
+    """The interface a spend ceiling plugs into."""
+
+    @staticmethod
+    def _engine():
+        pytest.importorskip("anthropic")
+        from engine.config import EngineConfig
+        from engine.engine import LLMEngine
+        from engine.registry import ModelCapabilities
+
+        caps = ModelCapabilities("anthropic", True, True, 200_000, "frontier")
+        return LLMEngine(
+            EngineConfig(
+                model_id="claude-sonnet-4-6",
+                capabilities=caps,
+                api_key="sk-test",
+                base_url=None,
+                strategy=caps.best_strategy(),
+            )
+        )
+
+    def test_gate_blocks_the_call_before_the_provider_is_touched(self) -> None:
+        from unittest.mock import MagicMock
+
+        from engine import telemetry
+
+        engine = self._engine()
+        engine._provider = MagicMock()
+
+        class _Ceiling:
+            def check(self, *, model, provider, purpose):
+                raise CallBlockedError("budget exhausted")
+
+        gate = _Ceiling()
+        telemetry.register_gate(gate)
+        try:
+            with pytest.raises(CallBlockedError):
+                engine.ask("hello")
+        finally:
+            telemetry.unregister_gate(gate)
+
+        engine._provider.chat.assert_not_called()
+
+    def test_successful_call_is_recorded_with_normalised_tokens(self) -> None:
+        from unittest.mock import MagicMock
+
+        from engine import telemetry
+        from engine.providers.base import LLMResponse
+
+        engine = self._engine()
+        engine._provider = MagicMock()
+        engine._provider.chat = MagicMock(
+            return_value=LLMResponse(
+                content="hi",
+                usage={"input_tokens": 11, "output_tokens": 4},
+            )
+        )
+
+        sink = UsageAggregator()
+        telemetry.register_sink(sink)
+        try:
+            engine.ask("hello", purpose="unit-test")
+        finally:
+            telemetry.unregister_sink(sink)
+
+        (record,) = sink.records()
+        assert record.model == "claude-sonnet-4-6"
+        assert record.provider == "anthropic"
+        assert record.purpose == "unit-test"
+        assert record.outcome == "ok"
+        assert (record.input_tokens, record.output_tokens) == (11, 4)
+        assert record.attempts == 1
+
+    def test_openai_style_usage_keys_normalise_too(self) -> None:
+        from engine.engine import _normalise_usage
+
+        assert _normalise_usage({"prompt_tokens": 7, "completion_tokens": 2}) == (7, 2)
+        assert _normalise_usage(None) == (0, 0)
+
+    def test_failed_call_is_recorded_as_an_error(self) -> None:
+        from unittest.mock import MagicMock
+
+        from engine import telemetry
+
+        engine = self._engine()
+        engine._provider = MagicMock()
+        engine._provider.chat = MagicMock(side_effect=_HttpError(401))
+
+        sink = UsageAggregator()
+        telemetry.register_sink(sink)
+        try:
+            with pytest.raises(_HttpError):
+                engine.ask("hello")
+        finally:
+            telemetry.unregister_sink(sink)
+
+        (record,) = sink.records()
+        assert record.outcome == "error"
+        assert record.error_type == "_HttpError"
+
+
 class TestPromptRegistry:
     def test_cli_router_prompt_is_registered(self) -> None:
         prompt = get_prompt("cli_router")

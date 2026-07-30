@@ -148,6 +148,35 @@ class TestSchemaDiffer:
         assert len(changes) == 1
         assert changes[0].change_type == "alter_type"
 
+    def test_field_becoming_server_computed_is_detected(self) -> None:
+        # The raw `required`/`default` attributes are untouched here, but the
+        # rendered column gains DEFAULT now() and NOT NULL. Comparing only the
+        # raw attributes emitted no migration and let the database diverge.
+        from forge.targets.migrations.differ import diff_entities
+
+        old = [EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[
+            FieldIR(name="seen_at", type="datetime"),
+        ])]
+        new = [EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[
+            FieldIR(name="seen_at", type="datetime", computed="now"),
+        ])]
+        kinds = [c.change_type for c in diff_entities(old, new)]
+        assert kinds == ["set_default", "set_not_null"]
+
+    def test_server_default_is_an_expression_not_a_literal(self) -> None:
+        from forge.targets.migrations.differ import SchemaChange
+        from forge.targets.migrations.sql_writer import schema_change_to_sql
+
+        change = SchemaChange(
+            change_type="set_default",
+            table_name="tasks",
+            field_name="seen_at",
+            field_ir=FieldIR(name="seen_at", type="datetime", computed="now"),
+        )
+        sql = schema_change_to_sql(change)
+        assert "SET DEFAULT now();" in sql
+        assert "'now()'" not in sql
+
     def test_field_became_required(self) -> None:
         from forge.targets.migrations.differ import diff_entities
 

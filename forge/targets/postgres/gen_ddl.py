@@ -153,13 +153,48 @@ def default_clause(field: FieldIR) -> str:
     default, so any writer other than the generated repository — psql, a seed
     script, a second service — could not insert a row at all.
     """
-    if field.computed in ("now", "now_on_update"):
-        return "DEFAULT now()"
-    if field.computed == "uuid" and field.type == "uuid":
-        return "DEFAULT gen_random_uuid()"
+    expression = server_default_expression(field)
+    if expression:
+        return f"DEFAULT {expression}"
     if field.default is None or field.default == "":
         return ""
     return f"DEFAULT {sql_literal(field.default)}"
+
+
+def server_default_expression(field: FieldIR) -> str:
+    """The SQL expression the database itself uses to fill this column, if any.
+
+    Only `computed` values the database can evaluate qualify. `current_user` and
+    `sequence(...)` are computed by the application, so they get no DEFAULT and
+    the column stays nullable — there is nothing here that could guarantee a
+    value.
+    """
+    if field.computed in ("now", "now_on_update"):
+        return "now()"
+    if field.computed == "uuid" and field.type == "uuid":
+        return "gen_random_uuid()"
+    return ""
+
+
+def column_is_not_null(field: FieldIR) -> bool:
+    """Whether the column must be `NOT NULL`.
+
+    A column the *database* always fills is `NOT NULL` whether or not the
+    contract remembered `required: true`, because there is no state in which it
+    can legitimately be null and the `DEFAULT` makes the constraint free.
+
+    This is load-bearing, not tidiness. The generated `list()` pages with a row
+    comparison — `("created_at", "id") < ($1, $2)` — and a row comparison
+    against NULL evaluates to NULL, not true. A row with a null `created_at`
+    sorts first under `ORDER BY created_at DESC` (Postgres puts NULLS FIRST) and
+    is then excluded from every continuation page: visible on page one, invisible
+    forever after. The generated `create()` cannot produce such a row, but a data
+    migration, an ETL job or a DBA backfill can, and those are exactly what a
+    production database gets. Closing it in the schema costs nothing; the
+    alternative is an OR-branch in the pagination predicate that costs every
+    query its index plan.
+    """
+    return field.required or bool(server_default_expression(field))
 
 
 def column_definition(field: FieldIR) -> str:
@@ -175,7 +210,7 @@ def column_definition(field: FieldIR) -> str:
         return f"    {ident} TEXT UNIQUE"
 
     parts = [f"    {ident}", pg_column_type(field.type, field.constraints)]
-    if field.required:
+    if column_is_not_null(field):
         parts.append("NOT NULL")
     clause = default_clause(field)
     if clause:

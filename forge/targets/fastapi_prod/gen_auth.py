@@ -161,7 +161,12 @@ import asyncio
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 
-from backend.config import DATABASE_BACKEND, DATABASE_URL
+from backend.config import (
+    DATABASE_BACKEND,
+    DATABASE_POOL_MAX_SIZE,
+    DATABASE_STATEMENT_TIMEOUT_MS,
+    DATABASE_URL,
+)
 
 
 class RefreshTokenStore(ABC):
@@ -240,12 +245,22 @@ class PostgresRefreshTokenStore(RefreshTokenStore):
         self._lock = asyncio.Lock()
 
     async def _get_pool(self):
+        # Its own small pool, bounded by the same operator ceiling as the
+        # repository pool so the two together cannot exceed what the deployment
+        # sized its database connections for.
         if self._pool is None:
             async with self._lock:
                 if self._pool is None:
                     import asyncpg
 
-                    self._pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+                    self._pool = await asyncpg.create_pool(
+                        DATABASE_URL,
+                        min_size=1,
+                        max_size=max(1, min(5, DATABASE_POOL_MAX_SIZE)),
+                        server_settings={{
+                            "statement_timeout": str(DATABASE_STATEMENT_TIMEOUT_MS)
+                        }},
+                    )
         return self._pool
 
     async def initialize(self) -> None:

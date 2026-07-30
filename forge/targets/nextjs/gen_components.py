@@ -1,45 +1,280 @@
-"""Generate reusable React components for the frontend."""
+"""Generate the reusable React components for the frontend.
+
+Names, api bindings and URLs all come from `FrontendContext`; nothing in here
+derives an identifier. Beyond that, the defects this file exists to not repeat:
+
+  * **Write-only fields leaked into read views.** A field marked
+    `sensitive: true` is present on create and update and absent from every
+    response. Rendering one in a table or a detail view produces a column that
+    is permanently blank, and a page contract that names one as a column is a
+    contract error, not a blank column.
+
+  * **`decimal` parsed into a JavaScript number.** A double cannot represent
+    `0.1` exactly, which is the entire reason `decimal` is a distinct type.
+    Decimal values cross the wire as strings and are never passed through
+    `Number()`.
+
+  * **Silent form data loss.** The old submit handler was
+    `formData.forEach((v, k) => { if (v) obj[k] = v; })`. `0` and `false` are
+    falsy, so an integer set to zero was dropped; and an unchecked checkbox is
+    absent from `FormData` entirely, so a boolean could be turned on and never
+    off. Every value is now coerced by its declared type.
+
+  * **Failures that render as nothing.** A delete that 403s did nothing
+    visible; a fetch that failed left an empty table that looked like an empty
+    collection. Every mutation surfaces its outcome.
+"""
+
 from __future__ import annotations
 
-from forge.ir.model import DomainIR, EntityIR, FieldIR, PageIR, StateMachineIR
-from forge.targets.base import GeneratedFile
+from forge.ir.model import EntityIR, FieldIR
+from forge.targets.base import GeneratedFile, GenerationError, provenance_header
+from forge.targets.naming import camel_case
+from forge.targets.nextjs.context import EntityView, FrontendContext
+
+#: Rows fetched to build a reference field's id -> display-name map.
+#:
+#: There is no batch-lookup endpoint, so display names are resolved from the
+#: first page of the referenced collection and anything beyond it renders as
+#: explicitly unresolved. Raising this trades a slower page for a wider window.
+REFERENCE_LOOKUP_LIMIT = 200
+
+#: IR types that need a JSON editor and a JSON parse on submit.
+_JSON_TYPES = frozenset({"array", "object"})
 
 
-def generate_components(ir: DomainIR) -> list[GeneratedFile]:
-    """Generate all reusable components."""
+def generate_components(ctx: FrontendContext) -> list[GeneratedFile]:
+    """Generate the shared primitives and one component set per entity."""
     files = [
-        _generate_shadcn_button(),
-        _generate_shadcn_input(),
-        _generate_shadcn_badge(),
-        _generate_shadcn_card(),
-        _generate_shadcn_select(),
-        _generate_shadcn_table(),
-        _generate_globals_css(),
+        _shadcn_button(),
+        _shadcn_input(),
+        _shadcn_badge(),
+        _shadcn_card(),
+        _shadcn_select(),
+        _shadcn_table(),
+        _states(),
+        _reference_value(),
+        _globals_css(),
     ]
 
-    # Entity-aware components — one per entity that has a page
-    entity_map = {e.fqn: e for e in ir.entities}
-    for page in ir.pages:
-        entity = entity_map.get(page.entity_fqn)
-        if entity:
-            files.append(_generate_data_table(entity, page))
-            files.append(_generate_entity_form(entity))
-            files.append(_generate_detail_view(entity))
-            if entity.state_machine:
-                files.append(_generate_kanban_board(entity, page))
+    # One set per entity, not per page: two page contracts may bind the same
+    # entity, and generating the set twice would claim the same path twice.
+    for view in ctx.component_views:
+        files.append(_data_table(ctx, view))
+        files.append(_entity_form(ctx, view))
+        files.append(_detail_view(ctx, view))
+        if view.entity.state_machine is not None:
+            files.append(_kanban_board(ctx, view))
 
-    files.append(_generate_app_sidebar(ir))
-
+    files.append(_app_sidebar(ctx))
     return files
 
 
-def _to_pascal(name: str) -> str:
-    return "".join(p.capitalize() for p in name.split("_"))
+# =============================================================================
+# Field classification
+# =============================================================================
 
 
-# ── shadcn primitives (minimal versions) ─────────────────────────────
+def _is_sensitive(field: FieldIR) -> bool:
+    """Whether a field is write-only.
 
-def _generate_shadcn_button() -> GeneratedFile:
+    Read with `getattr` so this generator keeps working against an IR built
+    before `sensitive` existed, where the answer is uniformly "no".
+    """
+    return bool(getattr(field, "sensitive", False))
+
+
+def _readable_fields(entity: EntityIR) -> list[FieldIR]:
+    """Fields the API actually returns — everything except write-only ones."""
+    return [f for f in entity.fields if not _is_sensitive(f)]
+
+
+def _writable_fields(entity: EntityIR) -> list[FieldIR]:
+    """Fields a form may submit.
+
+    Computed and immutable fields are set by the server; offering an input for
+    one produces a control whose value is silently discarded.
+    """
+    return [f for f in entity.fields if not f.computed and not f.immutable]
+
+
+def _field_kind(field: FieldIR) -> str:
+    """The coercion kind for a field, as understood by `lib/form.ts`."""
+    if field.reference is not None or field.enum_values:
+        return "string"
+    if field.type in _JSON_TYPES:
+        return "json"
+    if field.type in ("integer", "number", "decimal", "boolean"):
+        return field.type
+    return "string"
+
+
+def _label(name: str) -> str:
+    return name.replace("_", " ").title()
+
+
+def _table_columns(view: EntityView) -> list[str]:
+    """The table's columns, validated against what the API returns."""
+    table_view = next((v for v in view.page.views if v.get("type") == "table"), None)
+    declared = table_view.get("columns") if table_view else None
+    if not declared:
+        return [f.name for f in _readable_fields(view.entity)[:6]]
+
+    by_name = {f.name: f for f in view.entity.fields}
+    for column in declared:
+        field = by_name.get(column)
+        if field is not None and _is_sensitive(field):
+            raise GenerationError(
+                f"{view.page.fqn}: table column {column!r} is a write-only field on "
+                f"{view.entity.fqn} (sensitive: true), so the API never returns it "
+                f"and the column would always be blank. Remove it from "
+                f"spec.views[].columns."
+            )
+    return list(declared)
+
+
+# =============================================================================
+# Reference resolution
+# =============================================================================
+
+
+class _ReferenceBinding:
+    """Everything needed to resolve one reference field to a display name.
+
+    Attributes:
+        column: The field on this entity holding the target's id.
+        api: The api-client export that lists the target entity.
+        binding: camelCase stem for the generated React state.
+        display: The field on the target to show.
+    """
+
+    def __init__(self, column: str, api: str, binding: str, display: str) -> None:
+        self.column = column
+        self.api = api
+        self.binding = binding
+        self.display = display
+
+    @property
+    def state(self) -> str:
+        return f"{self.binding}Names"
+
+    @property
+    def setter(self) -> str:
+        return f"set{self.binding[:1].upper()}{self.binding[1:]}Names"
+
+    @property
+    def options(self) -> str:
+        return f"{self.binding}Options"
+
+    @property
+    def options_setter(self) -> str:
+        return f"set{self.binding[:1].upper()}{self.binding[1:]}Options"
+
+
+def _reference_bindings(
+    ctx: FrontendContext, entity: EntityIR, fields: list[FieldIR]
+) -> list[_ReferenceBinding]:
+    """Resolve the reference fields among `fields`, deduplicated by target.
+
+    Two fields pointing at the same entity — `debit_account_id` and
+    `credit_account_id` — must share one lookup. Emitting a binding per field
+    declared the same `const` twice and the component did not compile.
+    """
+    bindings: list[_ReferenceBinding] = []
+    for field in fields:
+        if field.reference is None:
+            continue
+        target = field.reference.target_entity
+        api = ctx.api_for_entity(target)
+        if not api:
+            # The target has no route contract, so it has no endpoint to read
+            # display names from. The value renders as unresolved rather than
+            # the component importing a binding that does not exist.
+            continue
+        bindings.append(
+            _ReferenceBinding(
+                column=field.name,
+                api=api,
+                binding=camel_case(
+                    ctx.component_for_entity(target) or target.split("/")[-1]
+                ),
+                display=field.reference.display_field,
+            )
+        )
+    return bindings
+
+
+def _unique_bindings(bindings: list[_ReferenceBinding]) -> list[_ReferenceBinding]:
+    """One binding per target entity, preserving order."""
+    seen: set[str] = set()
+    unique = []
+    for binding in bindings:
+        if binding.binding in seen:
+            continue
+        seen.add(binding.binding)
+        unique.append(binding)
+    return unique
+
+
+def _binding_for(bindings: list[_ReferenceBinding], column: str) -> _ReferenceBinding | None:
+    return next((b for b in bindings if b.column == column), None)
+
+
+def _reference_imports(bindings: list[_ReferenceBinding]) -> str:
+    apis = sorted({b.api for b in bindings})
+    if not apis:
+        return ""
+    return "import { " + ", ".join(apis) + ' } from "@/lib/api";'
+
+
+def _reference_lookup_effect(bindings: list[_ReferenceBinding], indent: str = "  ") -> str:
+    """The effect that populates every reference's id -> name map."""
+    unique = _unique_bindings(bindings)
+    if not unique:
+        return ""
+
+    lines = [f"{indent}useEffect(() => {{"]
+    for binding in unique:
+        lines.extend(
+            [
+                f"{indent}  {binding.api}",
+                f"{indent}    .list({{ limit: {REFERENCE_LOOKUP_LIMIT} }})",
+                f"{indent}    .then((page) => {{",
+                f"{indent}      const names: Record<string, string> = {{}};",
+                f"{indent}      for (const record of page.items) {{",
+                f"{indent}        const row = record as Record<string, unknown>;",
+                f"{indent}        if (row.id === undefined || row.id === null) continue;",
+                f"{indent}        const label = row.{binding.display};",
+                f"{indent}        names[String(row.id)] =",
+                f'{indent}          typeof label === "string" && label !== "" ? label : String(row.id);',
+                f"{indent}      }}",
+                f"{indent}      {binding.setter}(names);",
+                f"{indent}    }})",
+                f"{indent}    .catch((cause) => {{",
+                f"{indent}      // A failed lookup leaves references unresolved, which the",
+                f"{indent}      // ReferenceValue component shows as such. It must not take",
+                f"{indent}      // the whole view down with it.",
+                f'{indent}      console.error("Could not resolve {binding.binding} names", cause);',
+                f"{indent}    }});",
+            ]
+        )
+    lines.append(f"{indent}}}, []);")
+    return "\n".join(lines)
+
+
+def _reference_state(bindings: list[_ReferenceBinding], indent: str = "  ") -> str:
+    return "\n".join(
+        f"{indent}const [{b.state}, {b.setter}] = useState<Record<string, string>>({{}});"
+        for b in _unique_bindings(bindings)
+    )
+
+
+# =============================================================================
+# shadcn-style primitives
+# =============================================================================
+
+
+def _shadcn_button() -> GeneratedFile:
     content = '''"use client";
 import { cn } from "@/lib/utils";
 import { forwardRef, type ButtonHTMLAttributes } from "react";
@@ -79,10 +314,12 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 Button.displayName = "Button";
 export { Button };
 '''
-    return GeneratedFile(path="frontend/src/components/ui/button.tsx", content=content, provenance="shadcn/ui")
+    return GeneratedFile(
+        path="frontend/src/components/ui/button.tsx", content=content, provenance="shadcn/ui"
+    )
 
 
-def _generate_shadcn_input() -> GeneratedFile:
+def _shadcn_input() -> GeneratedFile:
     content = '''import { cn } from "@/lib/utils";
 import { forwardRef, type InputHTMLAttributes } from "react";
 
@@ -101,10 +338,12 @@ const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>
 Input.displayName = "Input";
 export { Input };
 '''
-    return GeneratedFile(path="frontend/src/components/ui/input.tsx", content=content, provenance="shadcn/ui")
+    return GeneratedFile(
+        path="frontend/src/components/ui/input.tsx", content=content, provenance="shadcn/ui"
+    )
 
 
-def _generate_shadcn_badge() -> GeneratedFile:
+def _shadcn_badge() -> GeneratedFile:
     content = '''import { cn } from "@/lib/utils";
 
 const colorMap: Record<string, string> = {
@@ -119,6 +358,7 @@ const colorMap: Record<string, string> = {
 };
 
 export function Badge({ value, className }: { value: string; className?: string }) {
+  if (!value) return <span className="text-gray-400">&mdash;</span>;
   const color = colorMap[value] || colorMap.default;
   return (
     <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium", color, className)}>
@@ -127,10 +367,12 @@ export function Badge({ value, className }: { value: string; className?: string 
   );
 }
 '''
-    return GeneratedFile(path="frontend/src/components/ui/badge.tsx", content=content, provenance="shadcn/ui")
+    return GeneratedFile(
+        path="frontend/src/components/ui/badge.tsx", content=content, provenance="shadcn/ui"
+    )
 
 
-def _generate_shadcn_card() -> GeneratedFile:
+def _shadcn_card() -> GeneratedFile:
     content = '''import { cn } from "@/lib/utils";
 
 export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
@@ -146,13 +388,15 @@ export function CardTitle({ children, className }: { children: React.ReactNode; 
 }
 
 export function CardContent({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cn("", className)}>{children}</div>;
+  return <div className={className}>{children}</div>;
 }
 '''
-    return GeneratedFile(path="frontend/src/components/ui/card.tsx", content=content, provenance="shadcn/ui")
+    return GeneratedFile(
+        path="frontend/src/components/ui/card.tsx", content=content, provenance="shadcn/ui"
+    )
 
 
-def _generate_shadcn_select() -> GeneratedFile:
+def _shadcn_select() -> GeneratedFile:
     content = '''import { cn } from "@/lib/utils";
 import { forwardRef, type SelectHTMLAttributes } from "react";
 
@@ -173,14 +417,22 @@ const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElem
 Select.displayName = "Select";
 export { Select };
 '''
-    return GeneratedFile(path="frontend/src/components/ui/select.tsx", content=content, provenance="shadcn/ui")
+    return GeneratedFile(
+        path="frontend/src/components/ui/select.tsx", content=content, provenance="shadcn/ui"
+    )
 
 
-def _generate_shadcn_table() -> GeneratedFile:
+def _shadcn_table() -> GeneratedFile:
     content = '''import { cn } from "@/lib/utils";
 
 export function Table({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <table className={cn("w-full caption-bottom text-sm", className)}>{children}</table>;
+  // The wrapper scrolls, not the page: a wide table must not push the whole
+  // layout sideways on a narrow viewport.
+  return (
+    <div className="w-full overflow-x-auto">
+      <table className={cn("w-full caption-bottom text-sm", className)}>{children}</table>
+    </div>
+  );
 }
 export function TableHeader({ children }: { children: React.ReactNode }) {
   return <thead className="border-b bg-gray-50">{children}</thead>;
@@ -189,7 +441,7 @@ export function TableBody({ children }: { children: React.ReactNode }) {
   return <tbody className="divide-y">{children}</tbody>;
 }
 export function TableRow({ children, className, onClick }: { children: React.ReactNode; className?: string; onClick?: () => void }) {
-  return <tr className={cn("hover:bg-gray-50 cursor-pointer", className)} onClick={onClick}>{children}</tr>;
+  return <tr className={cn(onClick && "cursor-pointer hover:bg-gray-50", className)} onClick={onClick}>{children}</tr>;
 }
 export function TableHead({ children, className }: { children: React.ReactNode; className?: string }) {
   return <th className={cn("h-12 px-4 text-left font-medium text-gray-500", className)}>{children}</th>;
@@ -198,10 +450,102 @@ export function TableCell({ children, className }: { children: React.ReactNode; 
   return <td className={cn("px-4 py-3", className)}>{children}</td>;
 }
 '''
-    return GeneratedFile(path="frontend/src/components/ui/table.tsx", content=content, provenance="shadcn/ui")
+    return GeneratedFile(
+        path="frontend/src/components/ui/table.tsx", content=content, provenance="shadcn/ui"
+    )
 
 
-def _generate_globals_css() -> GeneratedFile:
+def _states() -> GeneratedFile:
+    """Shared loading/empty/error panels.
+
+    A failed request used to leave the same empty table an empty collection
+    does, so "the server is down" and "you have no tickets" looked identical.
+    """
+    content = '''"use client";
+import { Button } from "@/components/ui/button";
+
+export function LoadingState({ label = "Loading..." }: { label?: string }) {
+  return <div className="py-12 text-center text-sm text-gray-500">{label}</div>;
+}
+
+export function EmptyState({ label }: { label: string }) {
+  return <div className="py-12 text-center text-sm text-gray-500">{label}</div>;
+}
+
+export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4">
+      <p className="text-sm text-red-700">{message}</p>
+      {onRetry && (
+        <Button variant="outline" size="sm" className="mt-3" onClick={onRetry}>
+          Try again
+        </Button>
+      )}
+    </div>
+  );
+}
+
+export function InlineError({ message }: { message: string }) {
+  return (
+    <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+      {message}
+    </p>
+  );
+}
+'''
+    return GeneratedFile(
+        path="frontend/src/components/ui/states.tsx", content=content, provenance="shadcn/ui"
+    )
+
+
+def _reference_value() -> GeneratedFile:
+    """Render a foreign key as its display name, or as visibly unresolved."""
+    content = '''import { cn } from "@/lib/utils";
+
+/**
+ * A reference rendered as the target's display name.
+ *
+ * Display names come from the first page of the referenced collection — the
+ * API has no batch lookup — so an id outside that page cannot be resolved.
+ * Falling back to the raw identifier would put a UUID on screen looking like
+ * data; this says plainly that the name is missing and keeps the id in the
+ * tooltip for whoever needs it.
+ */
+export function ReferenceValue({
+  id,
+  names,
+  className,
+}: {
+  id: unknown;
+  names: Record<string, string>;
+  className?: string;
+}) {
+  if (id === null || id === undefined || id === "") {
+    return <span className={cn("text-gray-400", className)}>&mdash;</span>;
+  }
+
+  const key = String(id);
+  const label = names[key];
+  if (label) return <span className={className}>{label}</span>;
+
+  return (
+    <span
+      className={cn("italic text-gray-400", className)}
+      title={`Unresolved reference: ${key}`}
+    >
+      unresolved
+    </span>
+  );
+}
+'''
+    return GeneratedFile(
+        path="frontend/src/components/ui/reference.tsx",
+        content=content,
+        provenance="domain/frontend",
+    )
+
+
+def _globals_css() -> GeneratedFile:
     content = """@tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -210,109 +554,139 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 """
-    return GeneratedFile(path="frontend/src/app/globals.css", content=content, provenance="shadcn/ui")
+    return GeneratedFile(
+        path="frontend/src/app/globals.css", content=content, provenance="shadcn/ui"
+    )
 
 
-# ── Entity-aware components ──────────────────────────────────────────
+# =============================================================================
+# Entity components
+# =============================================================================
 
-def _generate_data_table(entity: EntityIR, page: PageIR) -> GeneratedFile:
-    cls = _to_pascal(entity.name)
-    table_view = next((v for v in page.views if v.get("type") == "table"), None)
-    columns = table_view.get("columns", []) if table_view else [f.name for f in entity.fields[:6]]
 
-    # Identify reference fields that need display name resolution
-    ref_fields = []
-    for col in columns:
-        field = next((f for f in entity.fields if f.name == col), None)
-        if field and field.reference:
-            ref_entity = field.reference.target_entity.split("/")[-1]
-            display = field.reference.display_field or "name"
-            ref_fields.append((col, ref_entity, display))
+def _data_table(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
+    entity = view.entity
+    cls = view.component
+    columns = _table_columns(view)
+    by_name = {f.name: f for f in entity.fields}
 
-    # Build imports for referenced entity APIs
-    ref_api_imports = []
-    ref_state_hooks = []
-    ref_fetch_calls = []
-    for col, ref_entity, display in ref_fields:
-        ref_plural = ref_entity + "s"
-        if ref_plural not in [r[0] for r in ref_api_imports]:
-            ref_api_imports.append((ref_plural, ref_entity))
-            ref_state_hooks.append(f'  const [{ref_entity}Map, set{_to_pascal(ref_entity)}Map] = useState<Record<string, string>>({{}})')
-            ref_fetch_calls.append(
-                f'    {ref_plural}.list(1000, 0).then((d: any) => {{\n'
-                f'      const m: Record<string, string> = {{}};\n'
-                f'      (d.items || []).forEach((i: any) => {{ m[i.id] = i.{display} || i.id; }});\n'
-                f'      set{_to_pascal(ref_entity)}Map(m);\n'
-                f'    }});'
+    bindings = _reference_bindings(
+        ctx, entity, [by_name[c] for c in columns if c in by_name]
+    )
+
+    header_cells = "\n".join(
+        f"            <TableHead>{_label(column)}</TableHead>" for column in columns
+    )
+
+    body_cells = []
+    for column in columns:
+        field = by_name.get(column)
+        binding = _binding_for(bindings, column)
+        if binding is not None:
+            body_cells.append(
+                f"              <TableCell>\n"
+                f"                <ReferenceValue id={{item.{column}}} names={{{binding.state}}} />\n"
+                f"              </TableCell>"
             )
-
-    extra_imports = "\n".join(f'import {{ {plural} }} from "@/lib/api";' for plural, _ in ref_api_imports)
-    hooks_str = "\n".join(ref_state_hooks)
-    fetches_str = "\n".join(ref_fetch_calls)
-
-    use_effect_block = ""
-    if ref_fields:
-        use_effect_block = f"""
-  useEffect(() => {{
-{fetches_str}
-  }}, []);"""
-
-    col_headers = "\n".join(f'            <TableHead>{col.replace("_", " ").title()}</TableHead>' for col in columns)
-    col_cells = []
-    for col in columns:
-        field = next((f for f in entity.fields if f.name == col), None)
-        ref_match = next(((rf_col, rf_ent, rf_disp) for rf_col, rf_ent, rf_disp in ref_fields if rf_col == col), None)
-        if ref_match:
-            _, ref_entity, _ = ref_match
-            col_cells.append(f'            <TableCell>{{{ref_entity}Map[item.{col}] || item.{col} || "\u2014"}}</TableCell>')
-        elif field and field.enum_values:
-            col_cells.append(f'            <TableCell><Badge value={{String(item.{col} || "")}} /></TableCell>')
+        elif field is not None and field.enum_values:
+            body_cells.append(
+                f"              <TableCell>"
+                f'<Badge value={{item.{column} == null ? "" : String(item.{column})}} />'
+                f"</TableCell>"
+            )
+        elif field is not None and field.type in ("datetime", "date"):
+            formatter = "formatDateTime" if field.type == "datetime" else "formatDate"
+            body_cells.append(
+                f"              <TableCell>"
+                f"{{{formatter}(item.{column} as string | null | undefined)}}"
+                f"</TableCell>"
+            )
         else:
-            col_cells.append(f'            <TableCell>{{String(item.{col} ?? "\u2014")}}</TableCell>')
-    col_cells_str = "\n".join(col_cells)
+            # `decimal` lands here and is rendered as the string the API sent.
+            # Passing it through Number() would round it.
+            body_cells.append(
+                f"              <TableCell>"
+                f'{{item.{column} == null ? "\\u2014" : String(item.{column})}}'
+                f"</TableCell>"
+            )
+    body_cells_src = "\n".join(body_cells)
 
-    content = f'''"use client";
-import {{ useEffect, useState }} from "react";
-import {{ useRouter }} from "next/navigation";
-import {{ Table, TableHeader, TableBody, TableRow, TableHead, TableCell }} from "@/components/ui/table";
-import {{ Badge }} from "@/components/ui/badge";
-import {{ {page.name} }} from "@/lib/api";
-{extra_imports}
+    needs_dates = any(
+        by_name.get(c) is not None and by_name[c].type in ("datetime", "date")
+        for c in columns
+    )
+    imports = [
+        '"use client";',
+        'import { useEffect, useState } from "react";',
+        'import { useRouter } from "next/navigation";',
+        'import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";',
+    ]
+    if any(by_name.get(c) is not None and by_name[c].enum_values for c in columns):
+        imports.append('import { Badge } from "@/components/ui/badge";')
+    if bindings:
+        imports.append('import { ReferenceValue } from "@/components/ui/reference";')
+        imports.append(_reference_imports(bindings))
+    if needs_dates:
+        formatters = sorted(
+            {
+                "formatDateTime" if by_name[c].type == "datetime" else "formatDate"
+                for c in columns
+                if by_name.get(c) is not None and by_name[c].type in ("datetime", "date")
+            }
+        )
+        imports.append("import { " + ", ".join(formatters) + ' } from "@/lib/utils";')
+    imports.append(f'import type {{ {cls} }} from "@/lib/types";')
+    imports_src = "\n".join(i for i in imports if i)
+
+    state_src = _reference_state(bindings)
+    effect_src = _reference_lookup_effect(bindings)
+    # `useEffect`/`useState` are only used by the reference lookup.
+    if not bindings:
+        imports_src = imports_src.replace(
+            'import { useEffect, useState } from "react";\n', ""
+        )
+
+    content = f'''{imports_src}
 
 interface {cls}TableProps {{
-  items: any[];
+  items: {cls}[];
   basePath: string;
-  onRefresh?: () => void;
+  onDelete?: (id: string) => void;
 }}
 
-export function {cls}Table({{ items, basePath, onRefresh }}: {cls}TableProps) {{
+export function {cls}Table({{ items, basePath, onDelete }}: {cls}TableProps) {{
   const router = useRouter();
-{hooks_str}
-{use_effect_block}
-
-  async function handleDelete(e: React.MouseEvent, id: string) {{
-    e.stopPropagation();
-    if (!confirm("Delete this {entity.name}?")) return;
-    await {page.name}.delete(id);
-    if (onRefresh) onRefresh();
-  }}
+{state_src}
+{effect_src}
 
   return (
     <Table>
       <TableHeader>
         <TableRow>
-{col_headers}
+{header_cells}
             <TableHead>Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {{items.map((item: any) => (
-          <TableRow key={{item.id}} onClick={{() => router.push(`${{basePath}}/${{item.id}}`)}}>
-{col_cells_str}
+        {{items.map((item) => (
+          <TableRow
+            key={{String(item.id)}}
+            onClick={{() => router.push(`${{basePath}}/${{encodeURIComponent(String(item.id))}}`)}}
+          >
+{body_cells_src}
             <TableCell>
-              <button className="text-sm text-red-600 hover:underline" onClick={{(e) => handleDelete(e, item.id)}}>
-                Delete
-              </button>
+              {{onDelete && (
+                <button
+                  type="button"
+                  className="text-sm text-red-600 hover:underline"
+                  onClick={{(event) => {{
+                    event.stopPropagation();
+                    onDelete(String(item.id));
+                  }}}}
+                >
+                  Delete
+                </button>
+              )}}
             </TableCell>
           </TableRow>
         ))}}
@@ -324,125 +698,117 @@ export function {cls}Table({{ items, basePath, onRefresh }}: {cls}TableProps) {{
     return GeneratedFile(
         path=f"frontend/src/components/{cls}Table.tsx",
         content=content,
-        provenance=page.fqn,
+        provenance=view.page.fqn,
     )
 
 
-def _generate_entity_form(entity: EntityIR) -> GeneratedFile:
-    cls = _to_pascal(entity.name)
-    form_fields = [f for f in entity.fields if not f.computed and not f.immutable]
+def _entity_form(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
+    entity = view.entity
+    cls = view.component
+    fields = _writable_fields(entity)
+    bindings = _unique_bindings(_reference_bindings(ctx, entity, fields))
 
-    # Collect reference fields for the useEffect fetch
-    ref_fields = [f for f in form_fields if f.reference]
-    ref_imports = []
-    ref_state_hooks = []
-    ref_fetch_calls = []
-    for rf in ref_fields:
-        # Extract entity name from FQN: entity/helpdesk/customer → customers
-        ref_entity = rf.reference.target_entity.split("/")[-1]
-        ref_plural = ref_entity + "s"
-        display = rf.reference.display_field or "name"
-        ref_imports.append(f'import {{ {ref_plural} }} from "@/lib/api";')
-        ref_state_hooks.append(f'  const [{ref_entity}Options, set{_to_pascal(ref_entity)}Options] = useState<any[]>([]);')
-        ref_fetch_calls.append(f'    {ref_plural}.list(1000, 0).then((d: any) => set{_to_pascal(ref_entity)}Options(d.items || []));')
+    specs = []
+    for field in fields:
+        required = "true" if field.required else "false"
+        if _is_sensitive(field) and field.required:
+            # On an edit the stored value is never returned, so demanding it
+            # again would make every edit require re-entering the secret.
+            required = "!isEdit"
+        specs.append(
+            f'    {field.name}: {{ kind: "{_field_kind(field)}", '
+            f'required: {required}, label: "{_label(field.name)}" }},'
+        )
+    specs_src = "\n".join(specs)
 
-    field_inputs = []
-    for f in form_fields:
-        label = f.name.replace("_", " ").title()
-        required = ' required' if f.required else ''
+    option_state = "\n".join(
+        f"  const [{b.options}, {b.options_setter}] = useState<Record<string, unknown>[]>([]);"
+        for b in bindings
+    )
+    option_effect = ""
+    if bindings:
+        lines = ["  useEffect(() => {"]
+        for binding in bindings:
+            lines.extend(
+                [
+                    f"    {binding.api}",
+                    f"      .list({{ limit: {REFERENCE_LOOKUP_LIMIT} }})",
+                    f"      .then((page) =>",
+                    f"        {binding.options_setter}(page.items as Record<string, unknown>[]),",
+                    f"      )",
+                    f"      .catch((cause) => {{",
+                    f'        console.error("Could not load {binding.binding} options", cause);',
+                    f'        setLoadError("Some choices could not be loaded. Reload to try again.");',
+                    f"      }});",
+                ]
+            )
+        lines.append("  }, []);")
+        option_effect = "\n".join(lines)
 
-        if f.reference:
-            # Reference field → dynamic select loading from the referenced entity's API
-            ref_entity = f.reference.target_entity.split("/")[-1]
-            display = f.reference.display_field or "name"
-            field_inputs.append(f'''        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{label}{" *" if f.required else ""}</label>
-          <select name="{f.name}" defaultValue={{data?.{f.name} || ""}}{required}
-            className="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm">
-            <option value="">Select {ref_entity}...</option>
-            {{{ref_entity}Options.map((opt: any) => (
-              <option key={{opt.id}} value={{opt.id}}>{{opt.{display} || opt.id}}</option>
-            ))}}
-          </select>
-        </div>''')
-        elif f.enum_values:
-            options = "\n".join(f'            <option value="{v}">{v}</option>' for v in f.enum_values)
-            field_inputs.append(f'''        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{label}{" *" if f.required else ""}</label>
-          <select name="{f.name}" defaultValue={{data?.{f.name} || ""}}{required}
-            className="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm">
-            <option value="">Select...</option>
-{options}
-          </select>
-        </div>''')
-        elif f.type == "text":
-            field_inputs.append(f'''        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{label}{" *" if f.required else ""}</label>
-          <textarea name="{f.name}" defaultValue={{data?.{f.name} || ""}}{required}
-            className="flex w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm min-h-[100px]" />
-        </div>''')
-        elif f.type == "boolean":
-            field_inputs.append(f'''        <div className="flex items-center gap-2">
-          <input type="checkbox" name="{f.name}" defaultChecked={{data?.{f.name}}} className="h-4 w-4" />
-          <label className="text-sm font-medium text-gray-700">{label}</label>
-        </div>''')
-        elif f.type in ("integer", "number"):
-            step = '1' if f.type == "integer" else 'any'
-            field_inputs.append(f'''        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{label}{" *" if f.required else ""}</label>
-          <input type="number" step="{step}" name="{f.name}" defaultValue={{data?.{f.name} || ""}}{required}
-            className="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm" />
-        </div>''')
-        else:
-            input_type = "email" if f.type == "email" else "date" if f.type in ("date", "datetime") else "text"
-            field_inputs.append(f'''        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{label}{" *" if f.required else ""}</label>
-          <input type="{input_type}" name="{f.name}" defaultValue={{data?.{f.name} || ""}}{required}
-            className="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm" />
-        </div>''')
+    inputs = "\n".join(_form_input(ctx, entity, field) for field in fields)
 
-    fields_str = "\n".join(field_inputs)
+    imports = ['"use client";', 'import { useState } from "react";']
+    if bindings:
+        imports = ['"use client";', 'import { useEffect, useState } from "react";']
+        imports.append(_reference_imports(bindings))
+    imports.append('import { InlineError } from "@/components/ui/states";')
+    imports.append('import { Button } from "@/components/ui/button";')
+    imports.append('import { coerceForm, type FieldSpec } from "@/lib/form";')
+    imports_src = "\n".join(i for i in imports if i)
 
-    ref_imports_str = "\n".join(set(ref_imports))
-    ref_hooks_str = "\n".join(ref_state_hooks)
-    ref_fetches_str = "\n".join(ref_fetch_calls)
+    content = f'''{imports_src}
 
-    use_effect_block = ""
-    if ref_fields:
-        use_effect_block = f"""
-  useEffect(() => {{
-{ref_fetches_str}
-  }}, []);"""
-
-    content = f'''"use client";
-import {{ useState, useEffect }} from "react";
-{ref_imports_str}
+/**
+ * How each field is validated and converted before it is sent.
+ *
+ * `isEdit` only affects write-only fields: the API never returns them, so an
+ * edit that leaves one blank means "unchanged", not "clear it".
+ */
+function fieldSpecs(isEdit: boolean): Record<string, FieldSpec> {{
+  return {{
+{specs_src}
+  }};
+}}
 
 interface {cls}FormProps {{
-  data?: any;
-  onSubmit: (data: any) => void;
+  data?: Record<string, unknown>;
+  onSubmit: (values: Record<string, unknown>) => Promise<void> | void;
   submitLabel?: string;
 }}
 
 export function {cls}Form({{ data, onSubmit, submitLabel = "Save" }}: {cls}FormProps) {{
-{ref_hooks_str}
-{use_effect_block}
+  const isEdit = data !== undefined;
+  const [errors, setErrors] = useState<Record<string, string>>({{}});
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+{option_state}
+{option_effect}
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {{
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const obj: any = {{}};
-    formData.forEach((v, k) => {{ if (v) obj[k] = v; }});
-    onSubmit(obj);
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {{
+    event.preventDefault();
+    if (pending) return;
+
+    const {{ values, errors: found }} = coerceForm(event.currentTarget, fieldSpecs(isEdit));
+    setErrors(found);
+    if (Object.keys(found).length > 0) return;
+
+    setPending(true);
+    try {{
+      await onSubmit(values);
+    }} finally {{
+      // The caller owns the failure message; this only has to stop the form
+      // from staying disabled after one.
+      setPending(false);
+    }}
   }}
 
   return (
-    <form onSubmit={{handleSubmit}} className="space-y-4 max-w-lg">
-{fields_str}
-      <button type="submit"
-        className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700">
-        {{submitLabel}}
-      </button>
+    <form onSubmit={{handleSubmit}} noValidate className="max-w-lg space-y-4">
+      {{loadError !== null && <InlineError message={{loadError}} />}}
+{inputs}
+      <Button type="submit" disabled={{pending}}>
+        {{pending ? "Saving..." : submitLabel}}
+      </Button>
     </form>
   );
 }}
@@ -454,89 +820,267 @@ export function {cls}Form({{ data, onSubmit, submitLabel = "Save" }}: {cls}FormP
     )
 
 
-def _generate_detail_view(entity: EntityIR) -> GeneratedFile:
-    cls = _to_pascal(entity.name)
+def _form_input(ctx: FrontendContext, entity: EntityIR, field: FieldIR) -> str:
+    """Emit one labelled control, with the contract's constraints applied."""
+    label = _label(field.name)
+    marker = " *" if field.required else ""
+    name = field.name
+    error_line = (
+        f'      {{errors.{name} && <p role="alert" className="mt-1 text-sm text-red-600">'
+        f"{{errors.{name}}}</p>}}"
+    )
 
-    # Identify reference fields
-    ref_fields = []
-    for f in entity.fields:
-        if f.reference:
-            ref_entity = f.reference.target_entity.split("/")[-1]
-            display = f.reference.display_field or "name"
-            ref_fields.append((f.name, ref_entity, display))
+    def wrap(control: str, *, label_for: str = name) -> str:
+        return (
+            f"      <div>\n"
+            f'        <label htmlFor="{label_for}" className="mb-1 block text-sm '
+            f'font-medium text-gray-700">{label}{marker}</label>\n'
+            f"{control}\n"
+            f"{error_line}\n"
+            f"      </div>"
+        )
 
-    ref_api_imports = []
-    ref_state_hooks = []
-    ref_fetch_calls = []
-    for col, ref_entity, display in ref_fields:
-        ref_plural = ref_entity + "s"
-        if ref_plural not in [r[0] for r in ref_api_imports]:
-            ref_api_imports.append((ref_plural, ref_entity))
-            ref_state_hooks.append(f'  const [{ref_entity}Map, set{_to_pascal(ref_entity)}Map] = useState<Record<string, string>>({{}})')
-            ref_fetch_calls.append(
-                f'    {ref_plural}.list(1000, 0).then((d: any) => {{\n'
-                f'      const m: Record<string, string> = {{}};\n'
-                f'      (d.items || []).forEach((i: any) => {{ m[i.id] = i.{display} || i.id; }});\n'
-                f'      set{_to_pascal(ref_entity)}Map(m);\n'
-                f'    }});'
+    required_attr = " required" if field.required else ""
+    constraints = _input_constraints(field)
+    input_class = (
+        'className="flex h-10 w-full rounded-md border border-gray-300 bg-white '
+        'px-3 py-2 text-sm"'
+    )
+
+    if field.reference is not None:
+        target = field.reference.target_entity
+        api = ctx.api_for_entity(target)
+        if api:
+            binding = camel_case(ctx.component_for_entity(target) or target.split("/")[-1])
+            display = field.reference.display_field
+            control = (
+                f'        <select id="{name}" name="{name}" '
+                f'defaultValue={{String(data?.{name} ?? "")}}{required_attr}\n'
+                f"          {input_class}>\n"
+                f'          <option value="">Select...</option>\n'
+                f"          {{{binding}Options.map((option) => (\n"
+                f"            <option key={{String(option.id)}} value={{String(option.id)}}>\n"
+                f"              {{typeof option.{display} === \"string\" && option.{display} !== \"\"\n"
+                f"                ? String(option.{display})\n"
+                f"                : String(option.id)}}\n"
+                f"            </option>\n"
+                f"          ))}}\n"
+                f"        </select>"
             )
+            return wrap(control)
+        # No route for the target, so there is nothing to populate a picker
+        # from; the identifier is entered directly rather than silently
+        # offering an empty dropdown.
+        control = (
+            f'        <input id="{name}" name="{name}" type="text" '
+            f'defaultValue={{String(data?.{name} ?? "")}}{required_attr}\n'
+            f'          placeholder="Identifier"\n'
+            f"          {input_class} />"
+        )
+        return wrap(control)
 
-    extra_imports = "\n".join(f'import {{ {plural} }} from "@/lib/api";' for plural, _ in ref_api_imports)
-    hooks_str = "\n".join(ref_state_hooks)
-    fetches_str = "\n".join(ref_fetch_calls)
+    if field.enum_values:
+        options = "\n".join(
+            f'          <option value="{value}">{value}</option>' for value in field.enum_values
+        )
+        control = (
+            f'        <select id="{name}" name="{name}" '
+            f'defaultValue={{String(data?.{name} ?? "")}}{required_attr}\n'
+            f"          {input_class}>\n"
+            f'          <option value="">Select...</option>\n'
+            f"{options}\n"
+            f"        </select>"
+        )
+        return wrap(control)
 
-    use_effect_block = ""
-    if ref_fields:
-        use_effect_block = f"""
-  useEffect(() => {{
-{fetches_str}
-  }}, []);"""
+    if _is_sensitive(field):
+        # Never prefilled: the API does not return the stored value, so there
+        # is nothing to prefill with, and a blank on edit means "unchanged"
+        # rather than "clear it" — which is why `required` is dropped there
+        # even for a field the entity declares required.
+        required_on_create = (
+            "\n          {...(isEdit ? {} : { required: true })}" if field.required else ""
+        )
+        control = (
+            f'        <input id="{name}" name="{name}" type="password"\n'
+            f'          autoComplete="new-password"{constraints}\n'
+            f'          placeholder={{isEdit ? "Leave blank to keep unchanged" : ""}}'
+            f"{required_on_create}\n"
+            f"          {input_class} />"
+        )
+        return wrap(control)
 
-    field_rows = []
-    for f in entity.fields:
-        if f.computed and f.name in ("id", "created_at", "updated_at"):
+    if field.type in _JSON_TYPES:
+        control = (
+            f'        <textarea id="{name}" name="{name}" '
+            f'defaultValue={{data?.{name} === undefined ? "" : JSON.stringify(data.{name}, null, 2)}}'
+            f"{required_attr}\n"
+            f'          spellCheck={{false}}\n'
+            f'          className="flex min-h-[100px] w-full rounded-md border '
+            f'border-gray-300 bg-white px-3 py-2 font-mono text-sm" />'
+        )
+        return wrap(control)
+
+    if field.type == "text":
+        control = (
+            f'        <textarea id="{name}" name="{name}" '
+            f'defaultValue={{String(data?.{name} ?? "")}}{required_attr}{constraints}\n'
+            f'          className="flex min-h-[100px] w-full rounded-md border '
+            f'border-gray-300 bg-white px-3 py-2 text-sm" />'
+        )
+        return wrap(control)
+
+    if field.type == "boolean":
+        return (
+            f'      <div className="flex items-center gap-2">\n'
+            f'        <input id="{name}" type="checkbox" name="{name}" '
+            f"defaultChecked={{data?.{name} === true}} className=\"h-4 w-4\" />\n"
+            f'        <label htmlFor="{name}" className="text-sm font-medium '
+            f'text-gray-700">{label}</label>\n'
+            f"      </div>"
+        )
+
+    if field.type in ("integer", "number", "decimal"):
+        # A decimal is typed as text, not number: `<input type="number">` hands
+        # back a value already round-tripped through a double.
+        input_type = "text" if field.type == "decimal" else "number"
+        step = ""
+        if field.type == "integer":
+            step = ' step="1"'
+        elif field.type == "number":
+            step = ' step="any"'
+        extra = ' inputMode="decimal"' if field.type == "decimal" else ""
+        control = (
+            f'        <input id="{name}" type="{input_type}"{step}{extra} name="{name}" '
+            f'defaultValue={{String(data?.{name} ?? "")}}{required_attr}{constraints}\n'
+            f"          {input_class} />"
+        )
+        return wrap(control)
+
+    input_type = {
+        "email": "email",
+        "date": "date",
+        "datetime": "datetime-local",
+        "uuid": "text",
+    }.get(field.type, "text")
+    control = (
+        f'        <input id="{name}" type="{input_type}" name="{name}" '
+        f'defaultValue={{String(data?.{name} ?? "")}}{required_attr}{constraints}\n'
+        f"          {input_class} />"
+    )
+    return wrap(control)
+
+
+def _input_constraints(field: FieldIR) -> str:
+    """Render a field's contract constraints as HTML validation attributes.
+
+    Unbounded free text reaching the API is what §6 of the codegen contract
+    rules out; a `maxLength` in the contract has to reach the control.
+    """
+    attrs = []
+    constraints = field.constraints or {}
+    if "maxLength" in constraints:
+        attrs.append(f' maxLength={{{int(constraints["maxLength"])}}}')
+    if "minLength" in constraints:
+        attrs.append(f' minLength={{{int(constraints["minLength"])}}}')
+    if "min" in constraints:
+        attrs.append(f' min={{{constraints["min"]}}}')
+    if "max" in constraints:
+        attrs.append(f' max={{{constraints["max"]}}}')
+    if "pattern" in constraints:
+        escaped = str(constraints["pattern"]).replace("\\", "\\\\").replace('"', '\\"')
+        attrs.append(f' pattern="{escaped}"')
+    return "".join(attrs)
+
+
+def _detail_view(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
+    entity = view.entity
+    cls = view.component
+    fields = _readable_fields(entity)
+    bindings = _reference_bindings(ctx, entity, fields)
+
+    rows = []
+    for field in fields:
+        if field.name in ("id", "created_at", "updated_at"):
             continue
-        label = f.name.replace("_", " ").title()
-        ref_match = next(((rf_col, rf_ent, rf_disp) for rf_col, rf_ent, rf_disp in ref_fields if rf_col == f.name), None)
-        if ref_match:
-            _, ref_entity, _ = ref_match
-            field_rows.append(f'        <div><span className="text-gray-500 text-sm">{label}</span><div>{{{ref_entity}Map[data.{f.name}] || data.{f.name} || "\u2014"}}</div></div>')
-        elif f.enum_values:
-            field_rows.append(f'        <div><span className="text-gray-500 text-sm">{label}</span><div><Badge value={{String(data.{f.name} || "\u2014")}} /></div></div>')
+        label = _label(field.name)
+        binding = _binding_for(bindings, field.name)
+        if binding is not None:
+            value = (
+                f"<ReferenceValue id={{data.{field.name}}} names={{{binding.state}}} />"
+            )
+        elif field.enum_values:
+            value = f'<Badge value={{data.{field.name} == null ? "" : String(data.{field.name})}} />'
+        elif field.type == "datetime":
+            value = f"{{formatDateTime(data.{field.name} as string | null | undefined)}}"
+        elif field.type == "date":
+            value = f"{{formatDate(data.{field.name} as string | null | undefined)}}"
+        elif field.type in _JSON_TYPES:
+            value = (
+                f'<pre className="whitespace-pre-wrap font-mono text-xs">'
+                f'{{data.{field.name} === undefined ? "\\u2014" : '
+                f"JSON.stringify(data.{field.name}, null, 2)}}</pre>"
+            )
         else:
-            field_rows.append(f'        <div><span className="text-gray-500 text-sm">{label}</span><div>{{String(data.{f.name} ?? "\u2014")}}</div></div>')
+            value = f'{{data.{field.name} == null ? "\\u2014" : String(data.{field.name})}}'
+        rows.append(
+            f'        <div>\n'
+            f'          <span className="text-sm text-gray-500">{label}</span>\n'
+            f"          <div>{value}</div>\n"
+            f"        </div>"
+        )
+    rows_src = "\n".join(rows)
 
-    fields_str = "\n".join(field_rows)
+    imports = ['"use client";']
+    if bindings:
+        imports.append('import { useEffect, useState } from "react";')
+        imports.append('import { ReferenceValue } from "@/components/ui/reference";')
+        imports.append(_reference_imports(bindings))
+    if any(f.enum_values for f in fields) or entity.state_machine is not None:
+        imports.append('import { Badge } from "@/components/ui/badge";')
+    date_formatters = sorted(
+        {
+            "formatDateTime" if f.type == "datetime" else "formatDate"
+            for f in fields
+            if f.type in ("datetime", "date")
+        }
+    )
+    if date_formatters or True:
+        # created_at is always rendered in the footer.
+        needed = sorted(set(date_formatters) | {"formatDateTime"})
+        imports.append("import { " + ", ".join(needed) + ' } from "@/lib/utils";')
+    imports_src = "\n".join(i for i in imports if i)
+
+    state_src = _reference_state(bindings)
+    effect_src = _reference_lookup_effect(bindings)
 
     state_widget = ""
-    if entity.state_machine:
-        state_widget = '''
-      {data.state && (
+    if entity.state_machine is not None:
+        state_widget = """
+      {data.state !== undefined && (
         <div className="mb-6">
-          <Badge value={data.state} />
+          <Badge value={String(data.state)} />
         </div>
-      )}'''
+      )}"""
 
-    content = f'''"use client";
-import {{ useEffect, useState }} from "react";
-import {{ Badge }} from "@/components/ui/badge";
-{extra_imports}
+    content = f'''{imports_src}
 
 interface {cls}DetailProps {{
-  data: any;
+  data: Record<string, unknown>;
 }}
 
 export function {cls}Detail({{ data }}: {cls}DetailProps) {{
-{hooks_str}
-{use_effect_block}
+{state_src}
+{effect_src}
 
   return (
     <div>{state_widget}
-      <div className="grid grid-cols-2 gap-4">
-{fields_str}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+{rows_src}
       </div>
-      <div className="mt-4 text-xs text-gray-400">
-        ID: {{data.id}} | Created: {{data.created_at}}
+      <div className="mt-6 text-xs text-gray-400">
+        ID: {{String(data.id ?? "\\u2014")}} &middot; Created:{{" "}}
+        {{formatDateTime(data.created_at as string | null | undefined)}}
       </div>
     </div>
   );
@@ -549,143 +1093,164 @@ export function {cls}Detail({{ data }}: {cls}DetailProps) {{
     )
 
 
-def _generate_kanban_board(entity: EntityIR, page: PageIR) -> GeneratedFile:
-    cls = _to_pascal(entity.name)
-    sm = entity.state_machine
-    kanban_view = next((v for v in page.views if v.get("type") == "kanban"), None)
-    card_fields = kanban_view.get("card_fields", []) if kanban_view else [entity.fields[0].name if entity.fields else "id"]
+#: Full Tailwind class names per workflow state category.
+#:
+#: Built as complete strings because Tailwind scans source for literal class
+#: names; the previous `bg-${state.color}-500` was never emitted into the
+#: stylesheet, so every column marker rendered invisible.
+_CATEGORY_DOT = {
+    "open": "bg-blue-500",
+    "hold": "bg-yellow-500",
+    "closed": "bg-green-500",
+}
 
-    states_json = []
-    for state in sm.states:
-        color = {"open": "blue", "hold": "yellow", "closed": "green"}.get(state.category, "gray")
-        terminal = "true" if state.terminal else "false"
-        states_json.append(f'  {{ name: "{state.name}", label: "{state.label}", color: "{color}", terminal: {terminal} }}')
-    states_str = ",\n".join(states_json)
 
-    # Build valid transitions map from state machine
-    transitions_entries = []
-    for src, targets in sm.transitions.items():
-        targets_str = ", ".join(f'"{t}"' for t in targets)
-        transitions_entries.append(f'  "{src}": [{targets_str}]')
-    transitions_str = ",\n".join(transitions_entries)
+def _kanban_board(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
+    entity = view.entity
+    cls = view.component
+    machine = entity.state_machine
+    kanban_view = next((v for v in view.page.views if v.get("type") == "kanban"), None)
+    card_fields = (kanban_view or {}).get("card_fields") or [
+        f.name for f in _readable_fields(entity)[:1]
+    ]
 
-    route_path = page.route or f"/{entity.name}s"
+    by_name = {f.name: f for f in entity.fields}
+    for name in card_fields:
+        field = by_name.get(name)
+        if field is not None and _is_sensitive(field):
+            raise GenerationError(
+                f"{view.page.fqn}: kanban card field {name!r} is write-only on "
+                f"{entity.fqn} (sensitive: true), so the API never returns it. "
+                f"Remove it from spec.views[].card_fields."
+            )
+
+    states_src = ",\n".join(
+        f'  {{ name: "{state.name}", label: "{state.label or state.name}", '
+        f'dot: "{_CATEGORY_DOT.get(state.category, "bg-gray-500")}", '
+        f"terminal: {str(state.terminal).lower()} }}"
+        for state in machine.states
+    )
+    transitions_src = ",\n".join(
+        f'  "{source}": [{", ".join(chr(34) + t + chr(34) for t in targets)}]'
+        for source, targets in machine.transitions.items()
+    )
+
     card_lines = []
-    for i, cf in enumerate(card_fields):
-        if i == 0:
-            card_lines.append(f'              <div className="font-medium text-sm">{{item.{cf}}}</div>')
-        else:
-            card_lines.append(f'              <div className="text-sm text-gray-600">{{item.{cf}}}</div>')
-    card_content = "\n".join(card_lines)
+    for index, name in enumerate(card_fields):
+        style = (
+            "font-medium text-sm" if index == 0 else "text-sm text-gray-600"
+        )
+        card_lines.append(
+            f'                        <div className="{style}">'
+            f'{{item.{name} == null ? "" : String(item.{name})}}</div>'
+        )
+    card_src = "\n".join(card_lines)
 
     content = f'''"use client";
 import {{ useState }} from "react";
 import Link from "next/link";
-import {{ Badge }} from "@/components/ui/badge";
+
+import type {{ {cls} }} from "@/lib/types";
 
 const STATES = [
-{states_str}
+{states_src}
 ];
 
 const VALID_TRANSITIONS: Record<string, string[]> = {{
-{transitions_str}
+{transitions_src}
 }};
 
 interface {cls}KanbanProps {{
-  items: any[];
+  items: {cls}[];
+  basePath: string;
   onTransition: (id: string, newState: string) => void;
 }}
 
-export function {cls}Kanban({{ items, onTransition }}: {cls}KanbanProps) {{
-  const [dragItem, setDragItem] = useState<any>(null);
+export function {cls}Kanban({{ items, basePath, onTransition }}: {cls}KanbanProps) {{
+  const [dragItem, setDragItem] = useState<{cls} | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
 
   function canDrop(targetState: string): boolean {{
-    if (!dragItem) return false;
-    const valid = VALID_TRANSITIONS[dragItem.state] || [];
-    return valid.includes(targetState);
+    if (dragItem === null) return false;
+    // The same transition table the server enforces, so an impossible drop is
+    // refused before it becomes a 409.
+    return (VALID_TRANSITIONS[String(dragItem.state)] || []).includes(targetState);
   }}
 
-  function handleDragStart(e: React.DragEvent, item: any) {{
+  function handleDragStart(event: React.DragEvent, item: {cls}) {{
     setDragItem(item);
-    e.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.effectAllowed = "move";
   }}
 
-  function handleDragOver(e: React.DragEvent, stateName: string) {{
-    e.preventDefault();
+  function handleDragOver(event: React.DragEvent, stateName: string) {{
+    event.preventDefault();
     if (canDrop(stateName)) {{
-      e.dataTransfer.dropEffect = "move";
+      event.dataTransfer.dropEffect = "move";
       setDragOver(stateName);
     }} else {{
-      e.dataTransfer.dropEffect = "none";
+      event.dataTransfer.dropEffect = "none";
     }}
   }}
 
-  function handleDragLeave() {{
+  function handleDrop(event: React.DragEvent, targetState: string) {{
+    event.preventDefault();
     setDragOver(null);
-  }}
-
-  function handleDrop(e: React.DragEvent, targetState: string) {{
-    e.preventDefault();
-    setDragOver(null);
-    if (dragItem && canDrop(targetState)) {{
-      onTransition(dragItem.id, targetState);
+    if (dragItem !== null && canDrop(targetState)) {{
+      onTransition(String(dragItem.id), targetState);
     }}
     setDragItem(null);
-  }}
-
-  function handleDragEnd() {{
-    setDragItem(null);
-    setDragOver(null);
   }}
 
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4 min-w-0">
+    <div className="flex min-w-0 gap-4 overflow-x-auto pb-4">
       {{STATES.map((state) => {{
         const isValidTarget = canDrop(state.name);
         const isDraggedOver = dragOver === state.name;
+        const inState = items.filter((item) => String(item.state) === state.name);
 
         return (
           <div
             key={{state.name}}
-            className={{`flex-shrink-0 w-72 rounded-lg p-3 transition-colors ${{
+            className={{`w-72 flex-shrink-0 rounded-lg p-3 transition-colors ${{
               isDraggedOver && isValidTarget
                 ? "bg-blue-50 ring-2 ring-blue-400"
                 : isValidTarget && dragItem
-                ? "bg-green-50 ring-1 ring-green-300"
-                : "bg-gray-50"
+                  ? "bg-green-50 ring-1 ring-green-300"
+                  : "bg-gray-50"
             }}`}}
-            onDragOver={{(e) => handleDragOver(e, state.name)}}
-            onDragLeave={{handleDragLeave}}
-            onDrop={{(e) => handleDrop(e, state.name)}}
+            onDragOver={{(event) => handleDragOver(event, state.name)}}
+            onDragLeave={{() => setDragOver(null)}}
+            onDrop={{(event) => handleDrop(event, state.name)}}
           >
-            <h3 className="font-medium mb-3 flex items-center gap-2">
-              <span className={{`w-2 h-2 rounded-full bg-${{state.color}}-500`}} />
+            <h3 className="mb-3 flex items-center gap-2 font-medium">
+              <span className={{`h-2 w-2 rounded-full ${{state.dot}}`}} />
               {{state.label}}
-              <span className="text-gray-400 text-sm">
-                {{items.filter((i) => i.state === state.name).length}}
-              </span>
+              <span className="text-sm text-gray-400">{{inState.length}}</span>
             </h3>
             <div className="space-y-2">
-              {{items
-                .filter((item) => item.state === state.name)
-                .map((item) => (
-                  <div
-                    key={{item.id}}
-                    draggable={{!state.terminal}}
-                    onDragStart={{(e) => handleDragStart(e, item)}}
-                    onDragEnd={{handleDragEnd}}
-                    className={{`bg-white rounded-md border p-3 shadow-sm transition-all ${{
-                      !state.terminal ? "cursor-grab active:cursor-grabbing hover:shadow-md" : "opacity-75"
-                    }} ${{
-                      dragItem?.id === item.id ? "opacity-50 ring-2 ring-blue-300" : ""
-                    }}`}}
+              {{inState.map((item) => (
+                <div
+                  key={{String(item.id)}}
+                  draggable={{!state.terminal}}
+                  onDragStart={{(event) => handleDragStart(event, item)}}
+                  onDragEnd={{() => {{
+                    setDragItem(null);
+                    setDragOver(null);
+                  }}}}
+                  className={{`rounded-md border bg-white p-3 shadow-sm transition-all ${{
+                    state.terminal
+                      ? "opacity-75"
+                      : "cursor-grab hover:shadow-md active:cursor-grabbing"
+                  }} ${{dragItem?.id === item.id ? "opacity-50 ring-2 ring-blue-300" : ""}}`}}
+                >
+                  <Link
+                    href={{`${{basePath}}/${{encodeURIComponent(String(item.id))}}`}}
+                    className="block hover:underline"
                   >
-                    <Link href={{`{route_path}/${{item.id}}`}} className="block hover:underline">
-{card_content}
-                    </Link>
-                  </div>
-                ))}}
+{card_src}
+                  </Link>
+                </div>
+              ))}}
             </div>
           </div>
         );
@@ -697,55 +1262,71 @@ export function {cls}Kanban({{ items, onTransition }}: {cls}KanbanProps) {{
     return GeneratedFile(
         path=f"frontend/src/components/{cls}Kanban.tsx",
         content=content,
-        provenance=page.fqn,
+        provenance=view.page.fqn,
     )
 
 
-def _generate_app_sidebar(ir: DomainIR) -> GeneratedFile:
-    entity_map = {e.fqn: e for e in ir.entities}
+def _app_sidebar(ctx: FrontendContext) -> GeneratedFile:
+    nav_src = ",\n".join(
+        f'  {{ href: "{view.url}", label: "{_nav_label(view)}" }}' for view in ctx.views
+    )
+    title = ctx.ir.domain.replace("_", " ").title()
 
-    nav_items = []
-    for page in ir.pages:
-        entity = entity_map.get(page.entity_fqn)
-        icon = entity.icon if entity and entity.icon else "file"
-        label = page.title or page.name.replace("_", " ").title()
-        nav_items.append(f'  {{ href: "{page.route}", label: "{label}", icon: "{icon}" }}')
-    nav_str = ",\n".join(nav_items)
+    sign_out_import = ""
+    sign_out_block = ""
+    if ctx.auth is not None:
+        sign_out_import = 'import { signOut } from "@/lib/session";'
+        sign_out_block = '''
+      <div className="border-t p-2">
+        <button
+          type="button"
+          onClick={signOut}
+          className="w-full rounded-md px-3 py-2 text-left text-sm font-medium text-gray-600 hover:bg-gray-50"
+        >
+          Sign out
+        </button>
+      </div>'''
 
     content = f'''"use client";
 import Link from "next/link";
 import {{ usePathname }} from "next/navigation";
+
 import {{ cn }} from "@/lib/utils";
+{sign_out_import}
 
 const NAV_ITEMS = [
-{nav_str}
+{nav_src}
 ];
 
 export function AppSidebar() {{
   const pathname = usePathname();
 
   return (
-    <aside className="w-64 border-r bg-white h-screen sticky top-0 flex flex-col">
-      <div className="p-4 border-b">
-        <h1 className="text-lg font-bold text-gray-900">{ir.domain.replace("_", " ").title()}</h1>
+    <aside className="sticky top-0 flex h-screen w-64 flex-col border-r bg-white">
+      <div className="border-b p-4">
+        <h1 className="text-lg font-bold text-gray-900">{title}</h1>
         <p className="text-xs text-gray-500">Powered by Specora</p>
       </div>
-      <nav className="flex-1 p-2">
-        {{NAV_ITEMS.map((item) => (
-          <Link
-            key={{item.href}}
-            href={{item.href}}
-            className={{cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-              pathname.startsWith(item.href)
-                ? "bg-blue-50 text-blue-700"
-                : "text-gray-600 hover:bg-gray-50"
-            )}}
-          >
-            {{item.label}}
-          </Link>
-        ))}}
-      </nav>
+      <nav className="flex-1 overflow-y-auto p-2">
+        {{NAV_ITEMS.map((item) => {{
+          // Exact match or a path segment boundary: a plain startsWith marks
+          // /tickets active while sitting on /tickets_archive.
+          const active =
+            pathname === item.href || pathname.startsWith(`${{item.href}}/`);
+          return (
+            <Link
+              key={{item.href}}
+              href={{item.href}}
+              className={{cn(
+                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                active ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-50",
+              )}}
+            >
+              {{item.label}}
+            </Link>
+          );
+        }})}}
+      </nav>{sign_out_block}
     </aside>
   );
 }}
@@ -753,5 +1334,9 @@ export function AppSidebar() {{
     return GeneratedFile(
         path="frontend/src/components/AppSidebar.tsx",
         content=content,
-        provenance=f"domain/{ir.domain}",
+        provenance=f"domain/{ctx.ir.domain}",
     )
+
+
+def _nav_label(view: EntityView) -> str:
+    return view.page.title or _label(view.page.name)

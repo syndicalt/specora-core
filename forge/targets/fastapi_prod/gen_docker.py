@@ -187,6 +187,13 @@ def _generate_env_example(ir: DomainIR, has_auth: bool) -> GeneratedFile:
         "DATABASE_URL=postgresql://specora:specora@localhost:5432/specora",
         "DATABASE_BACKEND=postgres  # postgres | memory",
         "",
+        "# Pool ceiling is this container's concurrency limit for database work.",
+        "DATABASE_POOL_MIN_SIZE=2",
+        "DATABASE_POOL_MAX_SIZE=10",
+        "",
+        "# Postgres cancels a statement that runs past this, freeing the connection.",
+        "DATABASE_STATEMENT_TIMEOUT_MS=15000",
+        "",
         "",
         "# =============================================================================",
         "# Server",
@@ -319,7 +326,8 @@ def _generate_dev_requirements(ir: DomainIR) -> GeneratedFile:
         "# Test-only. The runtime Dockerfile does not copy or install this file.",
         "# Install alongside the runtime set:",
         "#   pip install -r requirements.txt -r requirements-dev.txt",
-        "pytest>=8.2,<9.0",
+        # 9.0.3 is the first release without PYSEC-2026-1845.
+        "pytest>=9.0.3,<10.0",
     ]
     return GeneratedFile(
         path="requirements-dev.txt",

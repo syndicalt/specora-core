@@ -398,7 +398,7 @@ def _hidden_credentials(ticket_id: str, action: str, actor: Actor) -> str:
     fields = [f'<input type="hidden" name="csrf" value="{csrf}">']
     if approval_tokens_enabled():
         token = issue_action_token(
-            ticket_id, action, ttl_seconds=3600, subject=actor.audit_id
+            ticket_id, action, ttl_seconds=3600, subject=actor.principal
         )
         fields.append(f'<input type="hidden" name="token" value="{_esc(token)}">')
     return "".join(fields)

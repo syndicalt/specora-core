@@ -156,6 +156,19 @@ class Actor:
         """Stable identifier written into the diff audit trail."""
         return f"{self.kind}:{self.id}"
 
+    @property
+    def principal(self) -> str:
+        """Who this credential ultimately represents.
+
+        A signed link carries the identity it was minted for in its subject, so
+        the same person keeps one identity across the GET that rendered the
+        page (authenticated by, say, an identity proxy) and the POST that
+        submitted the form (authenticated by the link token minted for them).
+        CSRF binding uses this rather than :attr:`audit_id`, which changes with
+        the credential scheme.
+        """
+        return self.id if self.kind == "approval_link" else self.audit_id
+
 
 @dataclass(frozen=True)
 class Credentials:
@@ -349,7 +362,7 @@ def issue_csrf_token(ticket_id: str, action: str, actor: Actor) -> str:
         action,
         secret=_csrf_secret(),
         ttl_seconds=CSRF_TTL_SECONDS,
-        subject=actor.audit_id,
+        subject=actor.principal,
     )
 
 
@@ -357,7 +370,7 @@ def verify_csrf_token(token: str, ticket_id: str, action: str, actor: Actor) -> 
     if not token:
         raise AuthError(403, "Missing CSRF token.")
     claims = _verify(token, _TYPE_CSRF, ticket_id, action, secret=_csrf_secret())
-    if not hmac.compare_digest(str(claims.get("sub", "")), actor.audit_id):
+    if not hmac.compare_digest(str(claims.get("sub", "")), actor.principal):
         raise AuthError(403, "CSRF token was issued to a different actor.")
 
 

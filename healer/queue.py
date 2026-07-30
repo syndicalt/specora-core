@@ -253,6 +253,11 @@ class HealerQueue:
                 (nonce, ticket_id, action, actor, datetime.now(timezone.utc).isoformat()),
             )
         except sqlite3.IntegrityError:
+            # sqlite3 opens the implicit transaction before running the
+            # statement, so a constraint violation leaves it open and holding
+            # the write lock. Without this rollback one replayed approval link
+            # wedges every other writer with SQLITE_BUSY until the process dies.
+            self._conn.rollback()
             return False
         self._conn.commit()
         return True

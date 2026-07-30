@@ -23,11 +23,15 @@ read back through `FrontendContext`.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
-from forge.ir.model import DomainIR, EntityIR, InfraIR, PageIR
+from forge.ir.model import DomainIR, EndpointIR, EntityIR, InfraIR, PageIR
 from forge.targets.base import GenerationError
-from forge.targets.naming import camel_case, class_name, module_slug
+from forge.targets.naming import camel_case, class_name, module_slug, py_identifier
+
+#: `{id}`-style path parameters in a contract's endpoint path.
+PATH_PARAM = re.compile(r"\{([^}]+)\}")
 
 #: Where an unauthenticated caller is sent. Fixed rather than derived so the
 #: session module, the gate and the login page cannot disagree about it.
@@ -57,6 +61,36 @@ class AuthSpec:
     identity_label: str
 
 
+def endpoint_method_name(endpoint: EndpointIR) -> str:
+    """The api-client method an endpoint compiles to.
+
+    Shared by the client generator (which emits the method) and by the page
+    generator (which must not render a Delete button for a route contract that
+    declares no DELETE endpoint — the binding would not exist and the page
+    would fail to compile).
+    """
+    method = endpoint.method.upper()
+    path = endpoint.path or "/"
+    params = PATH_PARAM.findall(path)
+
+    if method == "GET" and not params:
+        return "list"
+    if method == "GET" and params == ["id"]:
+        return "get"
+    if method == "POST" and not params:
+        return "create"
+    if method in ("PATCH", "PUT") and params == ["id"] and not path.rstrip("/").endswith("state"):
+        return "update"
+    if method == "DELETE" and params == ["id"]:
+        return "remove"
+    if method in ("PUT", "POST") and params == ["id"] and path.rstrip("/").endswith("state"):
+        return "transition"
+
+    static = [seg for seg in path.strip("/").split("/") if seg and not seg.startswith("{")]
+    stem = "_".join(static)
+    return camel_case(py_identifier(stem if stem else f"{method.lower()}_root"))
+
+
 @dataclass(frozen=True)
 class EntityView:
     """One entity's page, with every generated name it needs already resolved.
@@ -69,6 +103,7 @@ class EntityView:
         api: The api-client export that talks to this entity's endpoints.
         url: The browser path of the list view, always leading-slashed.
         binding: A camelCase local binding for use inside generated TSX.
+        methods: The api-client methods this entity's route actually exposes.
     """
 
     entity: EntityIR
@@ -77,6 +112,7 @@ class EntityView:
     api: str
     url: str
     binding: str
+    methods: frozenset[str]
 
     @property
     def app_dir(self) -> str:
@@ -111,6 +147,14 @@ class FrontendContext:
             if route.entity_fqn
         }
 
+        self._methods_by_entity: dict[str, frozenset[str]] = {
+            route.entity_fqn: frozenset(
+                endpoint_method_name(e) for e in route.endpoints
+            )
+            for route in ir.routes
+            if route.entity_fqn
+        }
+
         self.views: list[EntityView] = []
         self._view_by_entity: dict[str, EntityView] = {}
         for page in ir.pages:
@@ -128,6 +172,7 @@ class FrontendContext:
                 binding=camel_case(
                     class_name(entity.name, entity.domain, multi_domain=ir.multi_domain)
                 ),
+                methods=self._methods_by_entity.get(page.entity_fqn, frozenset()),
             )
             self.views.append(view)
             # Two pages may bind the same entity. Components are per-entity, so

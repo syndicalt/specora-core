@@ -27,7 +27,9 @@ from forge.targets.naming import (
 
 # Keyset page bounds. `limit` was previously an unbounded `int` default, so
 # `?limit=999999999` was a single-request denial of service against the
-# hottest endpoint in every generated app.
+# hottest endpoint in every generated app. This ceiling must stay at or below
+# the repository's own MAX_PAGE_LIMIT so the route rejects first, with a 422
+# naming the parameter, rather than the adapter refusing further in.
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
 
@@ -121,6 +123,21 @@ class _RouteModule:
 
         self.repo_dep = f"repo: {self.cls}Repository = Depends({self.repo_getter})"
         self.sensitive = sorted(f.name for f in entity.fields if f.sensitive)
+
+        # The id column's declared type decides how the path parameter is
+        # validated. A UUID column means the Postgres adapter casts the value
+        # (`= $1::text::UUID`), and a non-UUID path segment makes the *server*
+        # raise — so `/tenants/not-a-uuid` answered 500. Typing the parameter
+        # pushes that to FastAPI, which rejects it at the boundary with a 422
+        # naming the parameter, before any adapter sees it.
+        id_field = next((f for f in entity.fields if f.name == "id"), None)
+        self.id_is_uuid = id_field is not None and id_field.type == "uuid"
+        # `uuid.UUID` rather than a `from uuid import UUID`: the create handler
+        # already imports the module for `uuid.uuid4()`, and one binding is
+        # better than two names for the same thing in one module.
+        self.id_annotation = "uuid.UUID" if self.id_is_uuid else "str"
+        self.id_arg = f"str({PATH_PARAM})" if self.id_is_uuid else PATH_PARAM
+        self.repo_imports: set[str] = {self.cls + "Repository", self.repo_getter}
         self.model_imports: set[str] = set()
         self.auth_imports: set[str] = set()
         self.fastapi_imports: set[str] = {"APIRouter", "Depends", "HTTPException"}
@@ -159,6 +176,12 @@ class _RouteModule:
             "",
         ]
 
+    def id_param(self) -> str:
+        """The path parameter declaration, typed from the id column."""
+        if self.id_is_uuid:
+            self.stdlib_imports.add("import uuid")
+        return f"{PATH_PARAM}: {self.id_annotation}"
+
     def params(self, auth_param: str | None, *leading: str) -> list[str]:
         """Handler parameters: the endpoint's own, then the repo, then auth."""
         return [*leading, self.repo_dep, *([auth_param] if auth_param else [])]
@@ -196,9 +219,14 @@ class _RouteModule:
                 lines.append("from backend.models import (")
                 lines.extend(f"    {n}," for n in sorted(self.model_imports))
                 lines.append(")")
-        lines.append(
-            f"from backend.repositories.base import {self.cls}Repository, {self.repo_getter}"
-        )
+        repo_names = ", ".join(sorted(self.repo_imports))
+        single = f"from backend.repositories.base import {repo_names}"
+        if len(single) <= MAX_LINE:
+            lines.append(single)
+        else:
+            lines.append("from backend.repositories.base import (")
+            lines.extend(f"    {n}," for n in sorted(self.repo_imports))
+            lines.append(")")
         if self.auth_imports:
             lines.append(
                 f"from backend.auth.middleware import {', '.join(sorted(self.auth_imports))}"
@@ -252,6 +280,11 @@ def _emit_list(module: _RouteModule, endpoint: EndpointIR) -> None:
     auth_param, auth_import = _auth_dependency(endpoint, module.auth_infra)
     module.fastapi_imports.add("Query")
     module.model_imports.update({f"{module.cls}Page", f"{module.cls}Response"})
+    # The base class, not the two leaf types: `cursor` and `filters` are the
+    # only caller-controlled inputs the repository validates, and every way it
+    # can reject them is a client error. Naming the leaves would let a sibling
+    # added later escape as a 500.
+    module.repo_imports.add("RepositoryError")
     if auth_import:
         module.auth_imports.add(auth_import)
 
@@ -264,7 +297,14 @@ def _emit_list(module: _RouteModule, endpoint: EndpointIR) -> None:
         f'@router.get("/", response_model={module.cls}Page)',
         *_def_lines(name, params),
         f'    """List {module.entity.name} records, newest first."""',
-        "    page = await repo.list(limit=limit, cursor=cursor)",
+        "    try:",
+        "        page = await repo.list(limit=limit, cursor=cursor)",
+        "    except RepositoryError as exc:",
+        # A cursor arrives in a query string, so a truncated or hand-edited one
+        # is ordinary bad input. Uncaught it is a 500 — the failure keyset
+        # pagination was introduced to avoid.
+        '        raise HTTPException(400, detail={"error": "invalid_query", '
+        '"message": str(exc)}) from None',
         f'    return {{"items": [{module.public("i")} for i in page.items], '
         '"next_cursor": page.next_cursor}'
         if module.sensitive
@@ -319,9 +359,9 @@ def _emit_get(module: _RouteModule, endpoint: EndpointIR) -> None:
 
     module.add(name, [
         f'@router.get("/{{{PATH_PARAM}}}", response_model={module.cls}Response)',
-        *_def_lines(name, module.params(auth_param, f"{PATH_PARAM}: str")),
+        *_def_lines(name, module.params(auth_param, module.id_param())),
         f'    """Fetch a {module.entity.name} by ID."""',
-        f"    record = await repo.get({PATH_PARAM})",
+        f"    record = await repo.get({module.id_arg})",
         "    if record is None:",
         '        raise HTTPException(404, detail={"error": "not_found"})',
         f"    return {module.public('record')}",
@@ -339,7 +379,7 @@ def _emit_update(module: _RouteModule, endpoint: EndpointIR) -> None:
         f'@router.patch("/{{{PATH_PARAM}}}", response_model={module.cls}Response)',
         *_def_lines(
             name,
-            module.params(auth_param, f"{PATH_PARAM}: str", f"body: {module.cls}Update"),
+            module.params(auth_param, module.id_param(), f"body: {module.cls}Update"),
         ),
         f'    """Partially update a {module.entity.name}."""',
         # `exclude_unset` is what makes PATCH a partial update: every field on
@@ -350,9 +390,9 @@ def _emit_update(module: _RouteModule, endpoint: EndpointIR) -> None:
         "    if not data:",
         # An empty patch changes nothing; it must still answer with the current
         # representation rather than send an empty SET clause to the adapter.
-        f"        record = await repo.get({PATH_PARAM})",
+        f"        record = await repo.get({module.id_arg})",
         "    else:",
-        f"        record = await repo.update({PATH_PARAM}, data)",
+        f"        record = await repo.update({module.id_arg}, data)",
         "    if record is None:",
         '        raise HTTPException(404, detail={"error": "not_found"})',
         f"    return {module.public('record')}",
@@ -367,9 +407,9 @@ def _emit_delete(module: _RouteModule, endpoint: EndpointIR) -> None:
 
     module.add(name, [
         f'@router.delete("/{{{PATH_PARAM}}}", status_code=204)',
-        *_def_lines(name, module.params(auth_param, f"{PATH_PARAM}: str")),
+        *_def_lines(name, module.params(auth_param, module.id_param())),
         f'    """Delete a {module.entity.name}."""',
-        f"    deleted = await repo.delete({PATH_PARAM})",
+        f"    deleted = await repo.delete({module.id_arg})",
         "    if not deleted:",
         '        raise HTTPException(404, detail={"error": "not_found"})',
         "    return None",
@@ -406,12 +446,12 @@ def _emit_transition(module: _RouteModule, endpoint: EndpointIR) -> None:
         f'@router.put("/{{{PATH_PARAM}}}/state", response_model={module.cls}Response)',
         *_def_lines(
             name,
-            module.params(auth_param, f"{PATH_PARAM}: str", f"body: {module.cls}StateChange"),
+            module.params(auth_param, module.id_param(), f"body: {module.cls}StateChange"),
         ),
         f'    """Move a {module.entity.name} to a new lifecycle state."""',
         # The only write path to `state`. Create and update models exclude the
         # field, so the machine's transitions and guards cannot be bypassed.
-        f"    result = await repo.transition({PATH_PARAM}, body.state)",
+        f"    result = await repo.transition({module.id_arg}, body.state)",
         "    if result.error is not None:",
         "        status = _TRANSITION_STATUS.get(result.error, 422)",
         '        raise HTTPException(status, detail={"error": result.error})',

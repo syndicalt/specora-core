@@ -32,13 +32,15 @@ from __future__ import annotations
 
 import re
 
-from forge.ir.model import DomainIR, EndpointIR, RouteIR
+from forge.ir.model import EndpointIR, RouteIR
 from forge.targets.base import GeneratedFile, GenerationError, provenance_header
 from forge.targets.naming import camel_case, py_identifier
-from forge.targets.nextjs.context import LOGIN_ROUTE, FrontendContext
-
-#: `{id}`-style path parameters in a contract's endpoint path.
-_PATH_PARAM = re.compile(r"\{([^}]+)\}")
+from forge.targets.nextjs.context import (
+    LOGIN_ROUTE,
+    PATH_PARAM,
+    FrontendContext,
+    endpoint_method_name,
+)
 
 
 def generate_api_client(ctx: FrontendContext) -> list[GeneratedFile]:
@@ -170,6 +172,15 @@ def _preamble(*, has_auth: bool) -> list[str]:
         "  items: T[];",
         "  next_cursor: string | null;",
         "}",
+        "",
+        "/**",
+        " * The body of a create or update.",
+        " *",
+        " * Wider than `Partial<T>` on purpose: a field marked `sensitive` in its",
+        " * contract is write-only, so it is absent from the response interface `T`",
+        " * while still being a legal thing to send.",
+        " */",
+        "export type WritePayload<T> = Partial<T> & Record<string, unknown>;",
         "",
         "export interface ListParams {",
         "  /** Rows to fetch. Defaults to PAGE_SIZE. */",
@@ -352,45 +363,47 @@ def _route_object(ctx: FrontendContext, route: RouteIR) -> list[str]:
 def _endpoint_method(endpoint: EndpointIR, base: str, model: str) -> tuple[str, str]:
     """Compile one endpoint into a named client method.
 
+    The name comes from `context.endpoint_method_name` so that the page
+    generator, which decides whether to render a Delete button, and this
+    generator, which decides whether `remove` exists, cannot disagree.
+
     Returns:
         (method name, the full `name: (args) => body,` source line).
     """
     method = endpoint.method.upper()
     path = endpoint.path or "/"
-    params = _PATH_PARAM.findall(path)
+    params = PATH_PARAM.findall(path)
     url = _template_url(base, path)
+    name = endpoint_method_name(endpoint)
 
-    if method == "GET" and not params:
+    if name == "list":
         return (
-            "list",
+            name,
             f"list: (params?: ListParams): Promise<ListPage<{model}>> =>\n"
             f"    requestPage<{model}>(`{url}?${{listQuery(params)}}`),",
         )
-    if method == "GET" and params == ["id"]:
+    if name == "get":
+        return (name, f"get: (id: string): Promise<{model}> => request<{model}>(`{url}`),")
+    if name == "create":
         return (
-            "get",
-            f"get: (id: string): Promise<{model}> => request<{model}>(`{url}`),",
-        )
-    if method == "POST" and not params:
-        return (
-            "create",
-            f"create: (data: Partial<{model}>): Promise<{model}> =>\n"
+            name,
+            f"create: (data: WritePayload<{model}>): Promise<{model}> =>\n"
             f'    request<{model}>(`{url}`, {{ method: "POST", body: JSON.stringify(data) }}),',
         )
-    if method in ("PATCH", "PUT") and params == ["id"]:
+    if name == "update":
         return (
-            "update",
-            f"update: (id: string, data: Partial<{model}>): Promise<{model}> =>\n"
+            name,
+            f"update: (id: string, data: WritePayload<{model}>): Promise<{model}> =>\n"
             f'    request<{model}>(`{url}`, {{ method: "{method}", body: JSON.stringify(data) }}),',
         )
-    if method == "DELETE" and params == ["id"]:
+    if name == "remove":
         return (
-            "remove",
+            name,
             f'remove: (id: string): Promise<void> => request<void>(`{url}`, {{ method: "DELETE" }}),',
         )
-    if method in ("PUT", "POST") and params == ["id"] and path.rstrip("/").endswith("state"):
+    if name == "transition":
         return (
-            "transition",
+            name,
             f"transition: (id: string, state: string): Promise<{model}> =>\n"
             f'    request<{model}>(`{url}`, {{ method: "{method}", body: JSON.stringify({{ state }}) }}),',
         )
@@ -398,25 +411,21 @@ def _endpoint_method(endpoint: EndpointIR, base: str, model: str) -> tuple[str, 
     # Anything the six canonical shapes do not cover still gets a real method,
     # named from the path's static segments. Dropping it — the previous
     # behaviour — left a generated backend handler with no way to call it.
-    return _custom_method(endpoint, method, path, params, url, model)
+    return _custom_method(endpoint, name, method, params, url, model)
 
 
 def _custom_method(
     endpoint: EndpointIR,
+    name: str,
     method: str,
-    path: str,
     params: list[str],
     url: str,
     model: str,
 ) -> tuple[str, str]:
-    static = [seg for seg in path.strip("/").split("/") if seg and not seg.startswith("{")]
-    stem = "_".join(static) or method.lower()
-    name = camel_case(py_identifier(f"{method.lower()}_{stem}" if not static else stem))
-
     args = [f"{camel_case(py_identifier(p))}: string" for p in params]
     takes_body = method in ("POST", "PUT", "PATCH")
     if takes_body:
-        args.append(f"data: Partial<{model}>")
+        args.append(f"data: WritePayload<{model}>")
     signature = ", ".join(args)
 
     options = [f'method: "{method}"']
@@ -445,4 +454,4 @@ def _template_url(base: str, path: str) -> str:
         binding = camel_case(py_identifier(match.group(1)))
         return f"${{encodeURIComponent({binding})}}"
 
-    return f"{base}{_PATH_PARAM.sub(substitute, suffix)}"
+    return f"{base}{PATH_PARAM.sub(substitute, suffix)}"

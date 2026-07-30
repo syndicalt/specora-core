@@ -74,6 +74,27 @@ class TestDefaults:
         assert '"created_at" TIMESTAMPTZ NOT NULL DEFAULT now()' in sql
         assert '"updated_at" TIMESTAMPTZ NOT NULL DEFAULT now()' in sql
 
+    def test_server_computed_column_is_not_null_without_required(self) -> None:
+        # A null created_at is invisible after page one under the generated
+        # keyset predicate, so the DEFAULT must be paired with NOT NULL whether
+        # or not the contract remembered `required: true`.
+        ir = DomainIR(domain="shop", entities=[_entity(fields=[
+            FieldIR(name="seen_at", type="datetime", computed="now"),
+            *_identity_fields(),
+        ])])
+        assert '"seen_at" TIMESTAMPTZ NOT NULL DEFAULT now()' in _schema(ir)
+
+    def test_app_computed_column_stays_nullable(self) -> None:
+        # `current_user` is computed by the application, so nothing in the
+        # database can guarantee a value and NOT NULL would be a lie.
+        ir = DomainIR(domain="shop", entities=[_entity(fields=[
+            FieldIR(name="created_by", type="string", computed="current_user"),
+            *_identity_fields(),
+        ])])
+        sql = _schema(ir)
+        assert '"created_by" TEXT' in sql
+        assert '"created_by" TEXT NOT NULL' not in sql
+
     def test_now_on_update_gets_a_trigger(self) -> None:
         ir = DomainIR(domain="shop", entities=[_entity(fields=_identity_fields())])
         sql = _schema(ir)

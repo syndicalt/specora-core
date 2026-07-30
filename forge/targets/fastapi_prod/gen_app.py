@@ -218,6 +218,9 @@ async def _apply_schema_and_migrations() -> None:
     """
     import asyncpg
 
+    # A dedicated startup pool with no statement timeout: an index build or a
+    # table rewrite legitimately runs far longer than a request-path query, and
+    # having Postgres cancel one halfway is worse than waiting for it.
     pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=2)
     try:
         async with pool.acquire() as conn:

@@ -23,6 +23,7 @@ from forge.targets.migrations.differ import SchemaChange
 from forge.targets.naming import sql_ident, sql_literal
 from forge.targets.postgres.gen_ddl import (
     SchemaContext,
+    column_is_not_null,
     create_table_sql,
     default_clause,
     foreign_key_statements,
@@ -127,14 +128,15 @@ def _add_column(change: SchemaChange, context: SchemaContext) -> tuple[str, list
         f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {sql_ident(field.name)}",
         pg_column_type(field.type, field.constraints),
     ]
-    if field.required:
+    not_null = column_is_not_null(field)
+    if not_null:
         parts.append("NOT NULL")
     clause = default_clause(field)
     if clause:
         parts.append(clause)
 
     lines: list[str] = []
-    if field.required and not clause:
+    if not_null and not clause:
         # Postgres rejects adding a NOT NULL column with no default to a table
         # that already has rows, and there is no value the contract authorises
         # us to backfill with. Emitting it anyway makes the migration fail
@@ -176,7 +178,13 @@ def _alter_type(change: SchemaChange, context: SchemaContext) -> tuple[str, list
 
 
 def _set_not_null(change: SchemaChange, context: SchemaContext) -> tuple[str, list[str]]:
+    # A DEFAULT does not backfill rows that already exist, so this fails if any
+    # of them hold NULL. That failure is the correct outcome — the alternative is
+    # a database that contradicts the contract — but the operator needs to know
+    # a backfill may be required first.
     return (
+        f"-- NOTE: fails if existing rows have NULL {change.table_name}.{change.field_name}; "
+        f"backfill first.\n"
         f"ALTER TABLE {sql_ident(change.table_name)} "
         f"ALTER COLUMN {sql_ident(change.field_name)} SET NOT NULL;",
         [],
@@ -192,10 +200,15 @@ def _drop_not_null(change: SchemaChange, context: SchemaContext) -> tuple[str, l
 
 
 def _set_default(change: SchemaChange, context: SchemaContext) -> tuple[str, list[str]]:
+    # Rendered from the field, not from `new_value`: a server-side default is an
+    # expression (`now()`), and passing it through sql_literal would install the
+    # string 'now()' as the default instead of calling the function.
+    clause = default_clause(change.field_ir) if change.field_ir else ""
+    if not clause:
+        clause = f"DEFAULT {sql_literal(change.new_value)}"
     return (
         f"ALTER TABLE {sql_ident(change.table_name)} "
-        f"ALTER COLUMN {sql_ident(change.field_name)} "
-        f"SET DEFAULT {sql_literal(change.new_value)};",
+        f"ALTER COLUMN {sql_ident(change.field_name)} SET {clause};",
         [],
     )
 

@@ -675,3 +675,30 @@ class TestQueueClaim:
         queue = HealerQueue(db_path=tmp_path / "healer.db")
         assert queue.consume_token_nonce("n1", "t1", "approve", "operator") is True
         assert queue.consume_token_nonce("n1", "t1", "approve", "operator") is False
+
+    def test_rejected_nonce_does_not_wedge_other_writers(self, tmp_path) -> None:
+        """A replayed link must not leave the write transaction open.
+
+        sqlite3 begins the implicit transaction before executing, so an
+        IntegrityError without a rollback holds the write lock and every other
+        connection then fails with 'database is locked'.
+        """
+        import threading
+
+        queue = HealerQueue(db_path=tmp_path / "healer.db")
+        queue.consume_token_nonce("n1", "t1", "approve")
+        queue.consume_token_nonce("n1", "t1", "approve")  # replay -> False
+
+        failure: list[BaseException] = []
+
+        def write_from_another_thread() -> None:
+            try:
+                queue.enqueue(HealerTicket(source=TicketSource.VALIDATION, raw_error="x"))
+            except BaseException as exc:  # noqa: BLE001 - re-raised in the assertion
+                failure.append(exc)
+
+        thread = threading.Thread(target=write_from_another_thread)
+        thread.start()
+        thread.join(timeout=10)
+        assert not failure, f"writer blocked by a leaked transaction: {failure}"
+        assert len(queue.list_tickets()) == 1
