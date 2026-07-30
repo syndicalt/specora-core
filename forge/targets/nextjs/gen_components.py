@@ -829,8 +829,9 @@ def _entity_form(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
 
     rendered = []
     for field in fields:
-        control = _form_input(ctx, entity, field)
-        if field.name not in editable:
+        create_only = field.name not in editable
+        control = _form_input(ctx, entity, field, create_only=create_only)
+        if create_only:
             control = (
                 "      {!isEdit && (\n"
                 + "\n".join("  " + line for line in control.splitlines())
@@ -913,11 +914,29 @@ export function {cls}Form({{ data, onSubmit, submitLabel = "Save" }}: {cls}FormP
     )
 
 
-def _form_input(ctx: FrontendContext, entity: EntityIR, field: FieldIR) -> str:
-    """Emit one labelled control, with the contract's constraints applied."""
+def _form_input(
+    ctx: FrontendContext, entity: EntityIR, field: FieldIR, *, create_only: bool = False
+) -> str:
+    """Emit one labelled control, with the contract's constraints applied.
+
+    A create-only field is rendered inside `{!isEdit && ...}`, where `data` is
+    narrowed to undefined — so it must not reference `data` at all. There is no
+    record to prefill from on a create form anyway.
+    """
     label = _label(field.name)
     marker = " *" if field.required else ""
     name = field.name
+    prefill = '""' if create_only else f'String(data?.{field.name} ?? "")'
+    checked = "false" if create_only else f"data?.{field.name} === true"
+    json_prefill = (
+        '""'
+        if create_only
+        else (
+            f"data?.{field.name} === undefined\n"
+            f'              ? ""\n'
+            f"              : JSON.stringify(data.{field.name}, null, 2)"
+        )
+    )
     error_line = (
         f'      {{errors.{name} && <p role="alert" className="mt-1 text-sm text-red-600">'
         f"{{errors.{name}}}</p>}}"
@@ -948,7 +967,7 @@ def _form_input(ctx: FrontendContext, entity: EntityIR, field: FieldIR) -> str:
             display = field.reference.display_field
             control = (
                 f'        <select id="{name}" name="{name}" '
-                f'defaultValue={{String(data?.{name} ?? "")}}{required_attr}\n'
+                f'defaultValue={{{prefill}}}{required_attr}\n'
                 f"          {input_class}>\n"
                 f'          <option value="">Select...</option>\n'
                 f"          {{{binding}Options.map((option) => (\n"
@@ -967,7 +986,7 @@ def _form_input(ctx: FrontendContext, entity: EntityIR, field: FieldIR) -> str:
         # offering an empty dropdown.
         control = (
             f'        <input id="{name}" name="{name}" type="text" '
-            f'defaultValue={{String(data?.{name} ?? "")}}{required_attr}\n'
+            f'defaultValue={{{prefill}}}{required_attr}\n'
             f'          placeholder="Identifier"\n'
             f"          {input_class} />"
         )
@@ -979,7 +998,7 @@ def _form_input(ctx: FrontendContext, entity: EntityIR, field: FieldIR) -> str:
         )
         control = (
             f'        <select id="{name}" name="{name}" '
-            f'defaultValue={{String(data?.{name} ?? "")}}{required_attr}\n'
+            f'defaultValue={{{prefill}}}{required_attr}\n'
             f"          {input_class}>\n"
             f'          <option value="">Select...</option>\n'
             f"{options}\n"
@@ -1008,9 +1027,7 @@ def _form_input(ctx: FrontendContext, entity: EntityIR, field: FieldIR) -> str:
         control = (
             f'        <textarea id="{name}" name="{name}"{required_attr}\n'
             f"          defaultValue={{\n"
-            f"            data?.{name} === undefined\n"
-            f'              ? ""\n'
-            f"              : JSON.stringify(data.{name}, null, 2)\n"
+            f"            {json_prefill}\n"
             f"          }}\n"
             f'          spellCheck={{false}}\n'
             f'          className="flex min-h-[100px] w-full rounded-md border '
@@ -1021,7 +1038,7 @@ def _form_input(ctx: FrontendContext, entity: EntityIR, field: FieldIR) -> str:
     if field.type == "text":
         control = (
             f'        <textarea id="{name}" name="{name}" '
-            f'defaultValue={{String(data?.{name} ?? "")}}{required_attr}{constraints}\n'
+            f'defaultValue={{{prefill}}}{required_attr}{constraints}\n'
             f'          className="flex min-h-[100px] w-full rounded-md border '
             f'border-gray-300 bg-white px-3 py-2 text-sm" />'
         )
@@ -1031,7 +1048,7 @@ def _form_input(ctx: FrontendContext, entity: EntityIR, field: FieldIR) -> str:
         return (
             f'      <div className="flex items-center gap-2">\n'
             f'        <input id="{name}" type="checkbox" name="{name}" '
-            f"defaultChecked={{data?.{name} === true}} className=\"h-4 w-4\" />\n"
+            f"defaultChecked={{{checked}}} className=\"h-4 w-4\" />\n"
             f'        <label htmlFor="{name}" className="text-sm font-medium '
             f'text-gray-700">{label}</label>\n'
             f"      </div>"
@@ -1049,7 +1066,7 @@ def _form_input(ctx: FrontendContext, entity: EntityIR, field: FieldIR) -> str:
         extra = ' inputMode="decimal"' if field.type == "decimal" else ""
         control = (
             f'        <input id="{name}" type="{input_type}"{step}{extra} name="{name}" '
-            f'defaultValue={{String(data?.{name} ?? "")}}{required_attr}{constraints}\n'
+            f'defaultValue={{{prefill}}}{required_attr}{constraints}\n'
             f"          {input_class} />"
         )
         return wrap(control)
@@ -1062,7 +1079,7 @@ def _form_input(ctx: FrontendContext, entity: EntityIR, field: FieldIR) -> str:
     }.get(field.type, "text")
     control = (
         f'        <input id="{name}" type="{input_type}" name="{name}" '
-        f'defaultValue={{String(data?.{name} ?? "")}}{required_attr}{constraints}\n'
+        f'defaultValue={{{prefill}}}{required_attr}{constraints}\n'
         f"          {input_class} />"
     )
     return wrap(control)
@@ -1428,6 +1445,9 @@ def _app_sidebar(ctx: FrontendContext) -> GeneratedFile:
         >
           {signingOut ? "Signing out..." : "Sign out"}
         </button>
+        <p className="px-3 pt-1 text-xs text-gray-400">
+          Ends your session on every device.
+        </p>
       </div>'''
 
     content = f'''"use client";

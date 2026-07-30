@@ -41,6 +41,7 @@ def main() -> int:
         FastAPIProductionGenerator,
         TestSuiteGenerator,
     )
+    from forge.targets.nextjs.generator import NextJSGenerator
     from forge.targets.postgres.gen_ddl import PostgresGenerator
     from forge.targets.typescript.gen_types import TypeScriptGenerator
 
@@ -48,12 +49,18 @@ def main() -> int:
         shutil.rmtree(args.out)
     args.out.mkdir(parents=True)
 
+    # Every target the `prod` preset in forge/cli/main.py builds. The frontend
+    # belongs here: leaving NextJSGenerator out meant the generated React was
+    # never produced under CI, so nothing checked that it compiled, that its
+    # output paths were unique, or that it agreed with the API it calls — while
+    # the pipeline still reported a clean run.
     generators = [
         FastAPIProductionGenerator(),
         PostgresGenerator(),
         DockerGenerator(),
         TypeScriptGenerator(),
         TestSuiteGenerator(),
+        NextJSGenerator(),
     ]
 
     failures: list[str] = []
