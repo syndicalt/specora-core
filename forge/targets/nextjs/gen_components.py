@@ -28,7 +28,7 @@ derives an identifier. Beyond that, the defects this file exists to not repeat:
 from __future__ import annotations
 
 from forge.ir.model import EntityIR, FieldIR
-from forge.targets.base import GeneratedFile, GenerationError, provenance_header
+from forge.targets.base import GeneratedFile, GenerationError
 from forge.targets.naming import camel_case
 from forge.targets.nextjs.context import EntityView, FrontendContext
 
@@ -246,7 +246,9 @@ def _reference_lookup_effect(bindings: list[_ReferenceBinding], indent: str = " 
                 f"{indent}        if (row.id === undefined || row.id === null) continue;",
                 f"{indent}        const label = row.{binding.display};",
                 f"{indent}        names[String(row.id)] =",
-                f'{indent}          typeof label === "string" && label !== "" ? label : String(row.id);',
+                f"{indent}          typeof label === \"string\" && label !== \"\"",
+                f"{indent}            ? label",
+                f"{indent}            : String(row.id);",
                 f"{indent}      }}",
                 f"{indent}      {binding.setter}(names);",
                 f"{indent}    }})",
@@ -301,7 +303,9 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       <button
         ref={ref}
         className={cn(
-          "inline-flex items-center justify-center rounded-md font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50",
+          "inline-flex items-center justify-center rounded-md font-medium",
+          "transition-colors focus-visible:outline-none",
+          "disabled:pointer-events-none disabled:opacity-50",
           variants[variant],
           sizes[size],
           className
@@ -328,7 +332,10 @@ const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>
     <input
       ref={ref}
       className={cn(
-        "flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50",
+        "flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2",
+        "text-sm placeholder:text-gray-400",
+        "focus:outline-none focus:ring-2 focus:ring-blue-500",
+        "disabled:cursor-not-allowed disabled:opacity-50",
         className
       )}
       {...props}
@@ -361,7 +368,13 @@ export function Badge({ value, className }: { value: string; className?: string 
   if (!value) return <span className="text-gray-400">&mdash;</span>;
   const color = colorMap[value] || colorMap.default;
   return (
-    <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium", color, className)}>
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
+        color,
+        className
+      )}
+    >
       {value}
     </span>
   );
@@ -375,19 +388,28 @@ export function Badge({ value, className }: { value: string; className?: string 
 def _shadcn_card() -> GeneratedFile:
     content = '''import { cn } from "@/lib/utils";
 
-export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cn("rounded-lg border bg-white p-6 shadow-sm", className)}>{children}</div>;
+interface SlotProps {
+  children: React.ReactNode;
+  className?: string;
 }
 
-export function CardHeader({ children, className }: { children: React.ReactNode; className?: string }) {
+export function Card({ children, className }: SlotProps) {
+  return (
+    <div className={cn("rounded-lg border bg-white p-6 shadow-sm", className)}>
+      {children}
+    </div>
+  );
+}
+
+export function CardHeader({ children, className }: SlotProps) {
   return <div className={cn("mb-4", className)}>{children}</div>;
 }
 
-export function CardTitle({ children, className }: { children: React.ReactNode; className?: string }) {
+export function CardTitle({ children, className }: SlotProps) {
   return <h3 className={cn("text-lg font-semibold", className)}>{children}</h3>;
 }
 
-export function CardContent({ children, className }: { children: React.ReactNode; className?: string }) {
+export function CardContent({ children, className }: SlotProps) {
   return <div className={className}>{children}</div>;
 }
 '''
@@ -405,7 +427,8 @@ const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElem
     <select
       ref={ref}
       className={cn(
-        "flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500",
+        "flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2",
+        "text-sm focus:outline-none focus:ring-2 focus:ring-blue-500",
         className
       )}
       {...props}
@@ -425,7 +448,12 @@ export { Select };
 def _shadcn_table() -> GeneratedFile:
     content = '''import { cn } from "@/lib/utils";
 
-export function Table({ children, className }: { children: React.ReactNode; className?: string }) {
+interface SlotProps {
+  children: React.ReactNode;
+  className?: string;
+}
+
+export function Table({ children, className }: SlotProps) {
   // The wrapper scrolls, not the page: a wide table must not push the whole
   // layout sideways on a narrow viewport.
   return (
@@ -440,13 +468,28 @@ export function TableHeader({ children }: { children: React.ReactNode }) {
 export function TableBody({ children }: { children: React.ReactNode }) {
   return <tbody className="divide-y">{children}</tbody>;
 }
-export function TableRow({ children, className, onClick }: { children: React.ReactNode; className?: string; onClick?: () => void }) {
-  return <tr className={cn(onClick && "cursor-pointer hover:bg-gray-50", className)} onClick={onClick}>{children}</tr>;
+export function TableRow({
+  children,
+  className,
+  onClick,
+}: SlotProps & { onClick?: () => void }) {
+  return (
+    <tr
+      className={cn(onClick && "cursor-pointer hover:bg-gray-50", className)}
+      onClick={onClick}
+    >
+      {children}
+    </tr>
+  );
 }
-export function TableHead({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <th className={cn("h-12 px-4 text-left font-medium text-gray-500", className)}>{children}</th>;
+export function TableHead({ children, className }: SlotProps) {
+  return (
+    <th className={cn("h-12 px-4 text-left font-medium text-gray-500", className)}>
+      {children}
+    </th>
+  );
 }
-export function TableCell({ children, className }: { children: React.ReactNode; className?: string }) {
+export function TableCell({ children, className }: SlotProps) {
   return <td className={cn("px-4 py-3", className)}>{children}</td>;
 }
 '''
@@ -585,7 +628,8 @@ def _data_table(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
         if binding is not None:
             body_cells.append(
                 f"              <TableCell>\n"
-                f"                <ReferenceValue id={{item.{column}}} names={{{binding.state}}} />\n"
+                f"                <ReferenceValue id={{item.{column}}} "
+                f"names={{{binding.state}}} />\n"
                 f"              </TableCell>"
             )
         elif field is not None and field.enum_values:
@@ -619,7 +663,8 @@ def _data_table(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
         '"use client";',
         'import { useEffect, useState } from "react";',
         'import { useRouter } from "next/navigation";',
-        'import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";',
+        "import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell }"
+        ' from "@/components/ui/table";',
     ]
     if any(by_name.get(c) is not None and by_name[c].enum_values for c in columns):
         imports.append('import { Badge } from "@/components/ui/badge";')
@@ -733,13 +778,14 @@ def _entity_form(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
                 [
                     f"    {binding.api}",
                     f"      .list({{ limit: {REFERENCE_LOOKUP_LIMIT} }})",
-                    f"      .then((page) =>",
+                    "      .then((page) =>",
                     f"        {binding.options_setter}(page.items as Record<string, unknown>[]),",
-                    f"      )",
-                    f"      .catch((cause) => {{",
+                    "      )",
+                    "      .catch((cause) => {",
                     f'        console.error("Could not load {binding.binding} options", cause);',
-                    f'        setLoadError("Some choices could not be loaded. Reload to try again.");',
-                    f"      }});",
+                    "        setLoadError("
+                    '"Some choices could not be loaded. Reload to try again.");',
+                    "      });",
                 ]
             )
         lines.append("  }, []);")
@@ -860,7 +906,8 @@ def _form_input(ctx: FrontendContext, entity: EntityIR, field: FieldIR) -> str:
                 f'          <option value="">Select...</option>\n'
                 f"          {{{binding}Options.map((option) => (\n"
                 f"            <option key={{String(option.id)}} value={{String(option.id)}}>\n"
-                f"              {{typeof option.{display} === \"string\" && option.{display} !== \"\"\n"
+                f'              {{typeof option.{display} === "string"\n'
+                f'                && option.{display} !== ""\n'
                 f"                ? String(option.{display})\n"
                 f"                : String(option.id)}}\n"
                 f"            </option>\n"
@@ -913,7 +960,11 @@ def _form_input(ctx: FrontendContext, entity: EntityIR, field: FieldIR) -> str:
     if field.type in _JSON_TYPES:
         control = (
             f'        <textarea id="{name}" name="{name}" '
-            f'defaultValue={{data?.{name} === undefined ? "" : JSON.stringify(data.{name}, null, 2)}}'
+            f'defaultValue={{data?.{name} === undefined
+'
+            f'            ? ""
+'
+            f'            : JSON.stringify(data.{name}, null, 2)}}'
             f"{required_attr}\n"
             f'          spellCheck={{false}}\n'
             f'          className="flex min-h-[100px] w-full rounded-md border '
@@ -1010,7 +1061,10 @@ def _detail_view(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
                 f"<ReferenceValue id={{data.{field.name}}} names={{{binding.state}}} />"
             )
         elif field.enum_values:
-            value = f'<Badge value={{data.{field.name} == null ? "" : String(data.{field.name})}} />'
+            value = (
+                f'<Badge value={{data.{field.name} == null '
+                f'? "" : String(data.{field.name})}} />'
+            )
         elif field.type == "datetime":
             value = f"{{formatDateTime(data.{field.name} as string | null | undefined)}}"
         elif field.type == "date":
@@ -1281,7 +1335,10 @@ def _app_sidebar(ctx: FrontendContext) -> GeneratedFile:
         <button
           type="button"
           onClick={signOut}
-          className="w-full rounded-md px-3 py-2 text-left text-sm font-medium text-gray-600 hover:bg-gray-50"
+          className={cn(
+            "w-full rounded-md px-3 py-2 text-left text-sm font-medium",
+            "text-gray-600 hover:bg-gray-50",
+          )}
         >
           Sign out
         </button>
@@ -1318,7 +1375,8 @@ export function AppSidebar() {{
               key={{item.href}}
               href={{item.href}}
               className={{cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                "flex items-center gap-3 rounded-md px-3 py-2",
+                "text-sm font-medium transition-colors",
                 active ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-50",
               )}}
             >

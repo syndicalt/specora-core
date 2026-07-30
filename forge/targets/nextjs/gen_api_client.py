@@ -399,13 +399,17 @@ def _endpoint_method(endpoint: EndpointIR, base: str, model: str) -> tuple[str, 
     if name == "remove":
         return (
             name,
-            f'remove: (id: string): Promise<void> => request<void>(`{url}`, {{ method: "DELETE" }}),',
+            "remove: (id: string): Promise<void> =>\n"
+            f'    request<void>(`{url}`, {{ method: "DELETE" }}),',
         )
     if name == "transition":
         return (
             name,
             f"transition: (id: string, state: string): Promise<{model}> =>\n"
-            f'    request<{model}>(`{url}`, {{ method: "{method}", body: JSON.stringify({{ state }}) }}),',
+            f"    request<{model}>(`{url}`, {{\n"
+            f'      method: "{method}",\n'
+            f"      body: JSON.stringify({{ state }}),\n"
+            f"    }}),",
         )
 
     # Anything the six canonical shapes do not cover still gets a real method,

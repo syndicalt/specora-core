@@ -1,29 +1,45 @@
-# forge/targets/nextjs/gen_layout.py
-"""Generate root layout, dashboard, and Docker files."""
+"""Generate the root layout, the dashboard, and the frontend container files.
+
+The dashboard used to open with `list(1, 0)` per entity and render
+`data.total` as a headline count. Keyset pagination has no total — a count is
+the full scan the new pagination exists to avoid (CODEGEN_CONTRACT §7) — so
+the cards link into each collection instead of asserting a number nothing can
+supply.
+"""
+
 from __future__ import annotations
 
-from forge.ir.model import DomainIR
 from forge.targets.base import GeneratedFile
+from forge.targets.nextjs.context import FrontendContext
 
 
-def _to_pascal(name: str) -> str:
-    return "".join(p.capitalize() for p in name.split("_"))
-
-
-def generate_layout(ir: DomainIR) -> list[GeneratedFile]:
+def generate_layout(ctx: FrontendContext) -> list[GeneratedFile]:
     return [
-        _generate_root_layout(ir),
-        _generate_dashboard(ir),
-        _generate_dockerfile(ir),
-        _generate_dockerignore(ir),
+        _root_layout(ctx),
+        _dashboard(ctx),
+        _dockerfile(ctx),
+        _dockerignore(ctx),
     ]
 
 
-def _generate_root_layout(ir: DomainIR) -> GeneratedFile:
-    domain_title = ir.domain.replace("_", " ").title()
+def _root_layout(ctx: FrontendContext) -> GeneratedFile:
+    domain_title = ctx.ir.domain.replace("_", " ").title()
+
+    if ctx.auth is not None:
+        # The shell is a client component: it needs the current path to leave
+        # the sign-in page outside the gate, and the gate itself has to run in
+        # the browser to hold the in-memory access token.
+        body = """        <AppShell>{children}</AppShell>"""
+        shell_import = 'import { AppShell } from "@/components/AppShell";'
+    else:
+        body = """        <div className="flex min-h-screen bg-gray-50">
+          <AppSidebar />
+          <main className="min-w-0 flex-1 p-8">{children}</main>
+        </div>"""
+        shell_import = 'import { AppSidebar } from "@/components/AppSidebar";'
 
     content = f'''import "./globals.css";
-import {{ AppSidebar }} from "@/components/AppSidebar";
+{shell_import}
 
 export const metadata = {{
   title: "{domain_title}",
@@ -34,79 +50,62 @@ export default function RootLayout({{ children }}: {{ children: React.ReactNode 
   return (
     <html lang="en">
       <body>
-        <div className="flex min-h-screen bg-gray-50">
-          <AppSidebar />
-          <main className="flex-1 min-w-0 p-8">
-            {{children}}
-          </main>
-        </div>
+{body}
       </body>
     </html>
   );
 }}
 '''
-    return GeneratedFile(path="frontend/src/app/layout.tsx", content=content, provenance=f"domain/{ir.domain}")
+    return GeneratedFile(
+        path="frontend/src/app/layout.tsx",
+        content=content,
+        provenance=f"domain/{ctx.ir.domain}",
+    )
 
 
-def _generate_dashboard(ir: DomainIR) -> GeneratedFile:
-    domain_title = ir.domain.replace("_", " ").title()
-    entity_map = {e.fqn: e for e in ir.entities}
+def _dashboard(ctx: FrontendContext) -> GeneratedFile:
+    domain_title = ctx.ir.domain.replace("_", " ").title()
 
-    cards = []
-    imports = ['"use client";', 'import { useEffect, useState } from "react";', 'import Link from "next/link";']
+    cards = "\n".join(
+        f'''        <Link
+          href="{view.url}"
+          className="block rounded-lg border bg-white p-6 shadow-sm hover:shadow-md"
+        >
+          <h3 className="text-lg font-semibold">{view.page.title or view.component}</h3>
+          <p className="mt-1 text-sm text-gray-500">{_card_description(view)}</p>
+        </Link>'''
+        for view in ctx.views
+    )
 
-    for page in ir.pages:
-        entity = entity_map.get(page.entity_fqn)
-        if not entity:
-            continue
-        cls = _to_pascal(entity.name)
-        route = page.route.strip("/")
-        imports.append(f'import {{ {page.name} }} from "@/lib/api";')
-        cards.append(f'''
-        <Link href="/{route}" className="block rounded-lg border bg-white p-6 shadow-sm hover:shadow-md transition-shadow">
-          <h3 className="text-lg font-semibold">{page.title or cls}</h3>
-          <p className="text-3xl font-bold mt-2">{{counts.{page.name} ?? "—"}}</p>
-          <p className="text-sm text-gray-500 mt-1">total records</p>
-        </Link>''')
-
-    count_fetches = []
-    for page in ir.pages:
-        count_fetches.append(f'      const {page.name}Data = await {page.name}.list(1, 0);')
-        count_fetches.append(f'      newCounts.{page.name} = {page.name}Data.total || 0;')
-
-    cards_str = "\n".join(cards)
-    fetches_str = "\n".join(count_fetches)
-    imports_str = "\n".join(imports)
-
-    content = f'''{imports_str}
+    content = f'''import Link from "next/link";
 
 export default function Dashboard() {{
-  const [counts, setCounts] = useState<any>({{}});
-
-  useEffect(() => {{
-    async function load() {{
-      const newCounts: any = {{}};
-{fetches_str}
-      setCounts(newCounts);
-    }}
-    load();
-  }}, []);
-
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-2">{domain_title}</h1>
-      <p className="text-gray-500 mb-6">Dashboard</p>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-{cards_str}
+      <h1 className="mb-2 text-2xl font-bold">{domain_title}</h1>
+      <p className="mb-6 text-gray-500">Dashboard</p>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+{cards}
       </div>
     </div>
   );
 }}
 '''
-    return GeneratedFile(path="frontend/src/app/page.tsx", content=content, provenance=f"domain/{ir.domain}")
+    return GeneratedFile(
+        path="frontend/src/app/page.tsx",
+        content=content,
+        provenance=f"domain/{ctx.ir.domain}",
+    )
 
 
-def _generate_dockerfile(ir: DomainIR) -> GeneratedFile:
+def _card_description(view) -> str:
+    """A one-line description for a dashboard card, escaped for JSX text."""
+    text = view.entity.description or f"Browse {view.page.name.replace('_', ' ')}"
+    # `{` and `}` open a JSX expression; `<` opens a tag.
+    return text.replace("{", "&#123;").replace("}", "&#125;").replace("<", "&lt;")
+
+
+def _dockerfile(ctx: FrontendContext) -> GeneratedFile:
     content = """FROM node:20-slim AS builder
 WORKDIR /app
 COPY package.json ./
@@ -117,18 +116,31 @@ RUN npm run build
 FROM node:20-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+# The build runs as root; the app does not need to.
+RUN useradd --system --uid 1001 nextjs
+COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
+USER nextjs
 EXPOSE 3000
 CMD ["node", "server.js"]
 """
-    return GeneratedFile(path="frontend/Dockerfile.frontend", content=content, provenance=f"domain/{ir.domain}")
+    return GeneratedFile(
+        path="frontend/Dockerfile.frontend",
+        content=content,
+        provenance=f"domain/{ctx.ir.domain}",
+    )
 
 
-def _generate_dockerignore(ir: DomainIR) -> GeneratedFile:
+def _dockerignore(ctx: FrontendContext) -> GeneratedFile:
     content = """node_modules/
 .next/
 .git/
 *.md
+.env
+.env.*
 """
-    return GeneratedFile(path="frontend/.dockerignore", content=content, provenance=f"domain/{ir.domain}")
+    return GeneratedFile(
+        path="frontend/.dockerignore",
+        content=content,
+        provenance=f"domain/{ctx.ir.domain}",
+    )
