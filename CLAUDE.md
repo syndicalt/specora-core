@@ -460,7 +460,19 @@ runtime/
 └── types.ts                   # TypeScript interfaces
 ```
 
-Routes call repository interfaces (not databases directly). Swap `DATABASE_BACKEND=postgres` to `memory` via env var. No code change needed.
+Routes call repository interfaces, not databases directly. Both adapters implement
+the same interface with the same observable semantics — including `filters`,
+which the Postgres adapter previously accepted and silently ignored while the
+memory one honoured it, so a filtered query returned unfiltered rows.
+
+`DATABASE_BACKEND=memory` is **dev and test only**. The store is process-local
+and unbounded; it is not a deployment mode. Generated test suites reset it
+between tests via `backend.repositories.memory.reset_stores()`.
+
+Lists are keyset-paginated (`?limit=&cursor=` → `{items, next_cursor}`). There is
+no `offset` and no total count: `OFFSET n` discards n rows server-side and
+`COUNT(*)` scans the whole table, so both degrade linearly with row count on the
+hottest endpoint, and Specora applications must support arbitrary size.
 
 ---
 
@@ -523,19 +535,53 @@ telemetry.register_gate(my_gate)   # my_gate.check(...) before each call;
 
 ### Generated App
 
+Three of these are **boot failures**, not defaults. A generated application is
+deployed as-is into a CI/CD-built container, so a misconfiguration that used to
+degrade quietly — a wildcard CORS policy, a placeholder signing secret, auth
+switched off — now refuses to start. That is deliberate: an app that will not
+boot is a deploy that fails loudly, and the alternative was an app that served
+traffic with forgeable tokens.
+
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `DATABASE_URL` | `postgresql://specora:specora@localhost:5432/specora` | Postgres connection |
-| `DATABASE_BACKEND` | `postgres` | `postgres` or `memory` |
+| `DATABASE_BACKEND` | `postgres` | `postgres` or `memory`. **`memory` is dev/test only** — the store is unbounded and process-local |
+| `DATABASE_POOL_MIN_SIZE` | `2` | asyncpg pool floor |
+| `DATABASE_POOL_MAX_SIZE` | `10` | asyncpg pool ceiling — the per-container concurrency limit |
+| `DATABASE_STATEMENT_TIMEOUT_MS` | `15000` | Postgres cancels a query past this, so one runaway cannot pin a connection |
 | `PORT` | `8000` | API port |
-| `CORS_ORIGINS` | `*` | Allowed origins |
-| `AUTH_ENABLED` | `false` | Enable auth middleware |
+| `CORS_ORIGINS` | *(empty)* | Comma-separated exact origins. **Empty means no CORS middleware.** `*` combined with credentials refuses to boot — it makes every site a trusted origin |
+| `AUTH_ENABLED` | derived | Not a switch. Whether auth exists is a property of the contracts; setting this to `false` on a build whose contracts declare auth **refuses to boot** |
 | `AUTH_PROVIDER` | `jwt` | `jwt` or `external` |
-| `AUTH_SECRET` | `change-me-in-production` | JWT signing secret |
-| `AUTH_TOKEN_EXPIRE_MINUTES` | `60` | Token TTL |
+| `AUTH_SECRET` | *(none)* | **Required, ≥32 chars, and must not be the `.env.example` placeholder** — below that the app refuses to boot (RFC 7518 §3.2). `openssl rand -hex 32` |
+| `AUTH_ISSUER` / `AUTH_AUDIENCE` | per-build | Bound into every token and required on every token verified, so a token minted for another deployment sharing the secret is rejected |
+| `AUTH_TOKEN_EXPIRE_MINUTES` | `15` | Access token TTL. Refresh tokens rotate and are single-use |
+| `AUTH_COOKIE_SECURE` | `true` | Sets `Secure` on the httpOnly refresh cookie |
 | `SPECORA_HEALER_URL` | — | Healer endpoint for error reporting |
-| `SPECORA_HEALER_PORT` | `8083` | Healer service port |
-| `SPECORA_HEALER_WEBHOOK_URL` | — | Optional webhook for notifications |
+| `SPECORA_HEALER_INGEST_TOKEN` | — | Required to report errors; the Healer data plane rejects unauthenticated ingest |
+
+### Healer
+
+The Healer rewrites the contracts that are the source of truth and triggers
+regeneration, so it authenticates on both planes. It has **no anonymous mode**:
+with no authenticator configured the control plane returns 503 rather than
+falling open.
+
+| Variable | Purpose |
+|----------|---------|
+| `SPECORA_HEALER_HOST` / `SPECORA_HEALER_PORT` | Bind address (loopback by default) and port `8083`. Do **not** publish this port; the app reaches it over the internal network |
+| `SPECORA_HEALER_INGEST_TOKEN` | Data plane (`/healer/ingest`, `/healer/status`). Required even internally — the app container shares this `.env`, so network position alone is not authentication |
+| `SPECORA_HEALER_APPROVAL_SECRET` | Signs single-use, expiring approval links. This is how approvals stay reachable from anywhere without a login page |
+| `SPECORA_HEALER_APPROVAL_TTL_SECONDS` | Approval-link lifetime |
+| `SPECORA_HEALER_PUBLIC_URL` | Base URL used to build approval links in notifications |
+| `SPECORA_HEALER_OPERATOR_TOKEN` | Static bearer, for operators fronting the control plane with their own IdP |
+| `SPECORA_HEALER_PROXY_IDENTITY_HEADER` | Trust an identity header from Cloudflare Access / oauth2-proxy. Off unless set |
+| `SPECORA_HEALER_INGEST_RATE_PER_MINUTE` | Per-`contract_fqn` rate limit, so one failing contract cannot fan out into unbounded LLM spend |
+| `SPECORA_HEALER_TOKEN_BUDGET` / `SPECORA_HEALER_SPEND_LIMIT_USD` | Rolling-window ceilings. A USD ceiling with no configured price for the model refuses to run rather than proceeding uncosted |
+| `SPECORA_HEALER_MODEL_PRICES` | JSON price map. Prices are never hardcoded — a stale constant misreports spend, which is worse than reporting none |
+| `SPECORA_HEALER_BREAKER_*` | Consecutive-failure circuit breaker |
+| `SPECORA_HEALER_AUTO_APPLY_MIN_CONFIDENCE` | Default `1.0`, so only deterministic normalization auto-applies; LLM proposals require a human |
+| `SPECORA_HEALER_WEBHOOK_URL` | Optional webhook for notifications |
 
 ---
 
