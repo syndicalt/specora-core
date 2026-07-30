@@ -556,8 +556,8 @@ def _emit_get(ctx: _Ctx, endpoint: EndpointIR) -> list[str]:
         lines.extend(
             [
                 ctx.signature(f"test_get_{ctx.slug}_malformed_id"),
-                '    """An id of the wrong shape is rejected at the boundary."""',
-                "",
+                '    """An id of the wrong shape is rejected at the boundary,',
+                '    not by the database driver further in."""',
                 *_request("resp = ", "get", _url(ctx.base, "/not-a-uuid"), headers),
                 "    assert resp.status_code == 422",
                 "",

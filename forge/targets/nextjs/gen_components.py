@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from forge.ir.model import EntityIR, FieldIR
 from forge.targets.base import GeneratedFile, GenerationError
+from forge.targets.fields import creatable_fields, disclosable_fields, updatable_fields
 from forge.targets.naming import camel_case
 from forge.targets.nextjs.context import EntityView, FrontendContext
 
@@ -76,26 +77,8 @@ def generate_components(ctx: FrontendContext) -> list[GeneratedFile]:
 
 
 def _is_sensitive(field: FieldIR) -> bool:
-    """Whether a field is write-only.
-
-    Read with `getattr` so this generator keeps working against an IR built
-    before `sensitive` existed, where the answer is uniformly "no".
-    """
-    return bool(getattr(field, "sensitive", False))
-
-
-def _readable_fields(entity: EntityIR) -> list[FieldIR]:
-    """Fields the API actually returns — everything except write-only ones."""
-    return [f for f in entity.fields if not _is_sensitive(f)]
-
-
-def _writable_fields(entity: EntityIR) -> list[FieldIR]:
-    """Fields a form may submit.
-
-    Computed and immutable fields are set by the server; offering an input for
-    one produces a control whose value is silently discarded.
-    """
-    return [f for f in entity.fields if not f.computed and not f.immutable]
+    """Whether a field is write-only: accepted on write, never disclosed."""
+    return field.sensitive
 
 
 def _field_kind(field: FieldIR) -> str:
@@ -118,7 +101,7 @@ def _table_columns(view: EntityView) -> list[str]:
     table_view = next((v for v in view.page.views if v.get("type") == "table"), None)
     declared = table_view.get("columns") if table_view else None
     if not declared:
-        return [f.name for f in _readable_fields(view.entity)[:6]]
+        return [f.name for f in disclosable_fields(view.entity)[:6]]
 
     for column in declared:
         _require_readable(view, column, "spec.views[].columns")
@@ -136,7 +119,7 @@ def _require_readable(view: EntityView, name: str, where: str) -> None:
     field = next((f for f in view.entity.fields if f.name == name), None)
 
     if field is None:
-        available = sorted(f.name for f in _readable_fields(view.entity))
+        available = sorted(f.name for f in disclosable_fields(view.entity))
         raise GenerationError(
             f"{view.page.fqn}: {where} names {name!r}, but {view.entity.fqn} has "
             f"no such field, so the column can never show anything. "
@@ -788,21 +771,38 @@ export function {cls}Table({{ items, basePath, onDelete }}: {cls}TableProps) {{
 def _entity_form(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
     entity = view.entity
     cls = view.component
-    fields = _writable_fields(entity)
+    # `immutable` means "cannot change after creation", so an immutable field
+    # belongs on the create form and must be absent from the edit form. Folding
+    # the two into one set dropped it from both, which for an all-immutable
+    # entity like entity/financial_ledger/audit_event produced a create form
+    # with no inputs at all.
+    fields = creatable_fields(entity)
+    editable = {f.name for f in updatable_fields(entity)}
     bindings = _unique_bindings(_reference_bindings(ctx, entity, fields))
 
-    specs = []
+    always, create_only = [], []
     for field in fields:
         required = "true" if field.required else "false"
-        if _is_sensitive(field) and field.required:
+        if field.sensitive and field.required:
             # On an edit the stored value is never returned, so demanding it
             # again would make every edit require re-entering the secret.
             required = "!isEdit"
-        specs.append(
-            f'    {field.name}: {{ kind: "{_field_kind(field)}", '
+        spec = (
+            f'{field.name}: {{ kind: "{_field_kind(field)}", '
             f'required: {required}, label: "{_label(field.name)}" }},'
         )
-    specs_src = "\n".join(specs)
+        (always if field.name in editable else create_only).append(spec)
+
+    specs_src = "\n".join(f"    {spec}" for spec in always)
+    if create_only:
+        # Omitted on edit so a field the form does not render cannot be
+        # reported as a missing required value.
+        nested = "\n".join(f"          {spec}" for spec in create_only)
+        specs_src += (
+            "\n    ...(isEdit\n      ? {}\n      : {\n"
+            f"{nested}\n"
+            "        }),"
+        )
 
     option_state = "\n".join(
         f"  const [{b.options}, {b.options_setter}] = useState<{b.model}[]>([]);"
@@ -827,7 +827,17 @@ def _entity_form(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
         lines.append("  }, []);")
         option_effect = "\n".join(lines)
 
-    inputs = "\n".join(_form_input(ctx, entity, field) for field in fields)
+    rendered = []
+    for field in fields:
+        control = _form_input(ctx, entity, field)
+        if field.name not in editable:
+            control = (
+                "      {!isEdit && (\n"
+                + "\n".join("  " + line for line in control.splitlines())
+                + "\n      )}"
+            )
+        rendered.append(control)
+    inputs = "\n".join(rendered)
 
     imports = ['"use client";', 'import { useState } from "react";']
     if bindings:
@@ -1083,7 +1093,7 @@ def _input_constraints(field: FieldIR) -> str:
 def _detail_view(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
     entity = view.entity
     cls = view.component
-    fields = _readable_fields(entity)
+    fields = disclosable_fields(entity)
     bindings = _reference_bindings(ctx, entity, fields)
 
     rows = []
@@ -1221,7 +1231,7 @@ def _kanban_board(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
     machine = entity.state_machine
     kanban_view = next((v for v in view.page.views if v.get("type") == "kanban"), None)
     card_fields = (kanban_view or {}).get("card_fields") or [
-        f.name for f in _readable_fields(entity)[:1]
+        f.name for f in disclosable_fields(entity)[:1]
     ]
 
     for name in card_fields:
@@ -1376,22 +1386,47 @@ def _app_sidebar(ctx: FrontendContext) -> GeneratedFile:
     title = ctx.ir.domain.replace("_", " ").title()
 
     sign_out_import = ""
+    sign_out_state = ""
+    sign_out_handler = ""
     sign_out_block = ""
     if ctx.auth is not None:
-        sign_out_import = 'import { signOut } from "@/lib/session";'
+        sign_out_import = (
+            'import { useState } from "react";\n'
+            'import { signOut } from "@/lib/session";'
+        )
+        sign_out_state = """  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+"""
+        sign_out_handler = """
+  async function handleSignOut() {
+    setSigningOut(true);
+    setSignOutError(null);
+    // Only /auth/logout can clear the httpOnly cookie. If it did not succeed
+    // the session is still live, so showing the sign-in page would be a lie —
+    // the next navigation would refresh straight off that cookie.
+    if (!(await signOut())) {
+      setSigningOut(false);
+      setSignOutError("Sign-out did not complete. Check your connection and try again.");
+    }
+  }
+"""
         sign_out_block = '''
       <div className="border-t p-2">
+        {signOutError !== null && (
+          <p role="alert" className="px-3 pb-2 text-xs text-red-600">
+            {signOutError}
+          </p>
+        )}
         <button
           type="button"
-          onClick={() => {
-            void signOut();
-          }}
+          onClick={handleSignOut}
+          disabled={signingOut}
           className={cn(
             "w-full rounded-md px-3 py-2 text-left text-sm font-medium",
-            "text-gray-600 hover:bg-gray-50",
+            "text-gray-600 hover:bg-gray-50 disabled:opacity-50",
           )}
         >
-          Sign out
+          {signingOut ? "Signing out..." : "Sign out"}
         </button>
       </div>'''
 
@@ -1408,7 +1443,7 @@ const NAV_ITEMS = [
 
 export function AppSidebar() {{
   const pathname = usePathname();
-
+{sign_out_state}{sign_out_handler}
   return (
     <aside className="sticky top-0 flex h-screen w-64 flex-col border-r bg-white">
       <div className="border-b p-4">

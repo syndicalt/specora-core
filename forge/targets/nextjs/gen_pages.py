@@ -17,7 +17,18 @@ api client only has `remove` when one does.
 from __future__ import annotations
 
 from forge.targets.base import GeneratedFile, provenance_header
+from forge.targets.fields import updatable_fields
 from forge.targets.nextjs.context import EntityView, FrontendContext
+
+
+def _is_editable(view: EntityView) -> bool:
+    """Whether an edit screen would have anything on it.
+
+    An append-only entity — every field `immutable` — has a PATCH endpoint that
+    accepts nothing, so an edit form for it is an empty form and an Edit button
+    leads nowhere.
+    """
+    return "update" in view.methods and bool(updatable_fields(view.entity))
 
 
 def generate_pages(ctx: FrontendContext) -> list[GeneratedFile]:
@@ -27,7 +38,7 @@ def generate_pages(ctx: FrontendContext) -> list[GeneratedFile]:
         files.append(_list_page(view))
         if "get" in view.methods:
             files.append(_detail_page(view))
-            if "update" in view.methods:
+            if _is_editable(view):
                 files.append(_edit_page(view))
         if "create" in view.methods:
             files.append(_create_page(view))
@@ -219,7 +230,7 @@ def _detail_page(view: EntityView) -> GeneratedFile:
     cls = view.component
     api = view.api
     can_delete = "remove" in view.methods
-    can_edit = "update" in view.methods
+    can_edit = _is_editable(view)
 
     heading_field = next(
         (

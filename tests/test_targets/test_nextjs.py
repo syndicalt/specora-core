@@ -330,6 +330,31 @@ class TestAuth:
         assert "frontend/src/app/login/page.tsx" in paths
         assert "frontend/src/components/AppShell.tsx" in paths
 
+    def test_sign_out_goes_through_the_logout_endpoint(self, authed_ir: DomainIR) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        session = _file(
+            NextJSGenerator().generate(authed_ir), "frontend/src/lib/session.ts"
+        )
+        assert "/auth/logout" in session.content
+        assert 'credentials: "include"' in session.content
+        # The tab-scoped signed-out marker existed only because nothing could
+        # clear the httpOnly cookie. /auth/logout can, so it is gone.
+        assert "signedout" not in session.content
+        assert "SIGNED_OUT_KEY" not in session.content
+
+    def test_failed_sign_out_does_not_claim_success(self, authed_ir: DomainIR) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        files = NextJSGenerator().generate(authed_ir)
+        session = _file(files, "frontend/src/lib/session.ts")
+        sidebar = _file(files, "frontend/src/components/AppSidebar.tsx")
+        # Local state is cleared and the user redirected only after the server
+        # confirms; otherwise the cookie is still live and the next navigation
+        # would silently sign them back in.
+        assert "export async function signOut(): Promise<boolean>" in session.content
+        assert "Sign-out did not complete" in sidebar.content
+
     def test_open_redirect_is_rejected(self, authed_ir: DomainIR) -> None:
         from forge.targets.nextjs.generator import NextJSGenerator
 
@@ -337,6 +362,60 @@ class TestAuth:
             NextJSGenerator().generate(authed_ir), "frontend/src/lib/session.ts"
         )
         assert 'raw.startsWith("//")' in session.content
+
+
+class TestImmutableFields:
+    """`immutable` means unchangeable after creation, not unsettable."""
+
+    @pytest.fixture
+    def append_only_ir(self, helpdesk_ir: DomainIR) -> DomainIR:
+        entity = helpdesk_ir.entities[0]
+        entity.fields = [
+            FieldIR(name="id", type="uuid", computed="uuid"),
+            FieldIR(name="subject", type="string", required=True, immutable=True),
+            FieldIR(name="actor", type="string", required=True, immutable=True),
+        ]
+        helpdesk_ir.pages[0].views = [{"type": "table", "columns": ["subject"]}]
+        return helpdesk_ir
+
+    def test_immutable_fields_appear_on_the_create_form(
+        self, append_only_ir: DomainIR
+    ) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        form = _file(
+            NextJSGenerator().generate(append_only_ir),
+            "frontend/src/components/TicketForm.tsx",
+        )
+        # An all-immutable entity used to produce a form with no inputs at all.
+        assert 'name="subject"' in form.content
+        assert 'name="actor"' in form.content
+        # ...and each is gated off the edit form, where it cannot be changed.
+        assert form.content.count("{!isEdit && (") == 2
+
+    def test_no_edit_page_when_nothing_is_updatable(
+        self, append_only_ir: DomainIR
+    ) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        files = NextJSGenerator().generate(append_only_ir)
+        paths = {f.path for f in files}
+        assert "frontend/src/app/tickets/new/page.tsx" in paths
+        assert "frontend/src/app/tickets/[id]/edit/page.tsx" not in paths
+        # ...and the detail page must not offer an Edit button leading nowhere.
+        detail = _file(files, "frontend/src/app/tickets/[id]/page.tsx")
+        assert "/edit`" not in detail.content
+
+    def test_mutable_field_stays_on_both_forms(self, helpdesk_ir: DomainIR) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        files = NextJSGenerator().generate(helpdesk_ir)
+        form = _file(files, "frontend/src/components/TicketForm.tsx")
+        assert 'name="subject"' in form.content
+        assert "{!isEdit && (" not in form.content
+        assert "frontend/src/app/tickets/[id]/edit/page.tsx" in {
+            f.path for f in files
+        }
 
 
 class TestContractDefectsFailLoudly:

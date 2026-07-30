@@ -82,6 +82,14 @@ class _EntityPlan:
     has_updated_at: bool
     sort_fields: tuple[str, ...]
     sort_casts: tuple[str, ...]
+    # Contract-declared defaults, applied on create when the client omits the
+    # key. Applying them here rather than on the Pydantic model is what makes
+    # the two adapters agree: `exclude_unset` drops an omitted field before it
+    # reaches the repository, so a model-level default is never sent, and a
+    # DDL-level DEFAULT would fill the column in Postgres while leaving it null
+    # in memory. `is_active: true` on entity/saas_platform/api_key came back
+    # null from both.
+    field_defaults: tuple[tuple[str, object], ...]
     state_machine: StateMachineIR | None = None
     guards: dict = field(default_factory=dict)
 
@@ -203,6 +211,14 @@ def _plan(entity: EntityIR, ir: DomainIR) -> _EntityPlan:
         has_updated_at=has_updated_at,
         sort_fields=sort_fields,
         sort_casts=sort_casts,
+        # `state` is excluded: its default is the workflow's initial state,
+        # already applied separately, and sourcing it from two places invites
+        # them to disagree.
+        field_defaults=tuple(
+            (f.name, f.default)
+            for f in entity.fields
+            if f.default is not None and not f.computed and f.name != "state"
+        ),
         state_machine=entity.state_machine,
         guards=_guard_map(entity.state_machine),
     )
@@ -697,6 +713,8 @@ def _memory_class(plan: _EntityPlan) -> list[str]:
         lines.append('        record["updated_at"] = now')
     if plan.initial_state:
         lines.append(f'        record.setdefault("state", "{plan.initial_state}")')
+    for field_name, value in plan.field_defaults:
+        lines.append(f"        record.setdefault({field_name!r}, {value!r})")
 
     lines.extend([
         '        self._store[record["id"]] = record',
@@ -983,6 +1001,8 @@ def _postgres_create(plan: _EntityPlan) -> list[str]:
         lines.append('        record["updated_at"] = now')
     if plan.initial_state:
         lines.append(f'        record.setdefault("state", "{plan.initial_state}")')
+    for field_name, value in plan.field_defaults:
+        lines.append(f"        record.setdefault({field_name!r}, {value!r})")
     lines.extend([
         "        keys = list(record)",
         '        columns = ", ".join(self._COLUMN_IDENTS[k] for k in keys)',

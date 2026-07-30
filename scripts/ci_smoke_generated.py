@@ -35,6 +35,13 @@ def smoke_one(app_root: Path) -> None:
     """Boot one generated app in-process and probe its invariants."""
     sys.path.insert(0, str(app_root))
     os.environ["DATABASE_BACKEND"] = "memory"
+    # A generated app whose contracts declare auth refuses to boot without a
+    # real signing secret and an explicit CORS origin — both deliberate, and
+    # both of which this script has to satisfy rather than work around. Only
+    # set what the operator has not: an env var already present belongs to the
+    # caller.
+    os.environ.setdefault("AUTH_SECRET", "ci-smoke-" + "0" * 40)
+    os.environ.setdefault("CORS_ORIGINS", "https://ci.smoke.invalid")
 
     for mod in [m for m in list(sys.modules) if m.startswith("backend")]:
         del sys.modules[mod]

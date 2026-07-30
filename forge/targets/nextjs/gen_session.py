@@ -81,7 +81,6 @@ interface TokenPair {{
 export type SignInResult = {{ ok: true }} | {{ ok: false; message: string }};
 
 const REFRESH_KEY = "specora.{ir.domain}.refresh";
-const SIGNED_OUT_KEY = "specora.{ir.domain}.signedout";
 
 let accessToken: string | null = null;
 let refreshInFlight: Promise<boolean> | null = null;
@@ -139,33 +138,6 @@ export function hasAccessToken(): boolean {{
   return accessToken !== null;
 }}
 
-/**
- * Whether the user signed out in this tab.
- *
- * In cookie mode there is no client-side way to delete an httpOnly cookie, and
- * the API exposes no logout endpoint to delete it server-side. Without this
- * marker the next page load would probe the still-valid cookie and sign the
- * user straight back in. It is a flag, not a credential.
- */
-function signedOutHere(): boolean {{
-  if (typeof window === "undefined") return false;
-  try {{
-    return window.sessionStorage.getItem(SIGNED_OUT_KEY) === "1";
-  }} catch {{
-    return false;
-  }}
-}}
-
-function markSignedOut(signedOut: boolean): void {{
-  if (typeof window === "undefined") return;
-  try {{
-    if (signedOut) window.sessionStorage.setItem(SIGNED_OUT_KEY, "1");
-    else window.sessionStorage.removeItem(SIGNED_OUT_KEY);
-  }} catch {{
-    // See readRefreshToken: blocked storage is survivable.
-  }}
-}}
-
 /** Drop every credential without navigating. */
 export function clearSession(): void {{
   accessToken = null;
@@ -204,7 +176,7 @@ export function refreshSession(): Promise<boolean> {{
   if (refreshInFlight !== null) return refreshInFlight;
 
   const stored = readRefreshToken();
-  const probeCookie = cookieRefresh !== false && !signedOutHere();
+  const probeCookie = cookieRefresh !== false;
   if (!probeCookie && stored === null) return Promise.resolve(false);
 
   refreshInFlight = (async () => {{
@@ -271,7 +243,6 @@ export async function signIn(
   if (res.ok) {{
     const pair = (await res.json()) as TokenPair;
     accessToken = pair.access_token;
-    markSignedOut(false);
 
     // Decide the refresh token's home before persisting anything. If the API
     // set an httpOnly cookie this bodyless refresh succeeds and the token
@@ -336,22 +307,25 @@ export function endSession(): void {{
 /**
  * End the session because the user asked to.
  *
- * The local credentials are dropped first, so nothing can be rendered with
- * them while the request is in flight. `POST /auth/logout` then revokes the
- * refresh family server-side and clears the httpOnly cookie — the only party
- * that can, since script cannot delete one.
+ * `POST /auth/logout` is the only party that can end it: it revokes the refresh
+ * family server-side and clears the httpOnly cookie, and script cannot delete
+ * an httpOnly cookie itself. So the request has to succeed before this can
+ * claim the user is signed out.
  *
- * The signed-out marker is set regardless. If the endpoint is missing or the
- * request fails, it is the only thing stopping the next page load from
- * probing a cookie that is still valid and signing the user straight back in.
+ * On failure it returns false and does NOT navigate. Clearing local state and
+ * showing the sign-in page while the cookie is still live would be a lie: the
+ * very next visit to any page would refresh straight off that cookie and sign
+ * the user back in. Reporting the failure is the honest outcome.
+ *
+ * Note the endpoint is subject-wide — it ends every session for this user, on
+ * every device, not just this browser.
  */
-export async function signOut(): Promise<void> {{
+export async function signOut(): Promise<boolean> {{
   const token = readRefreshToken();
-  clearSession();
-  markSignedOut(true);
 
+  let res: Response;
   try {{
-    await fetch(`${{API_BASE}}/auth/logout`, {{
+    res = await fetch(`${{API_BASE}}/auth/logout`, {{
       method: "POST",
       credentials: "include",
       headers: {{ "Content-Type": "application/json" }},
@@ -359,10 +333,17 @@ export async function signOut(): Promise<void> {{
     }});
   }} catch (cause) {{
     console.error("Sign-out could not be sent", cause);
+    return false;
   }}
 
-  if (typeof window === "undefined") return;
-  window.location.assign(LOGIN_ROUTE);
+  if (!res.ok) {{
+    console.error("Sign-out was rejected", res.status);
+    return false;
+  }}
+
+  clearSession();
+  if (typeof window !== "undefined") window.location.assign(LOGIN_ROUTE);
+  return true;
 }}
 '''
     return GeneratedFile(

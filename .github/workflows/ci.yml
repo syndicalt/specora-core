@@ -29,11 +29,15 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e '.[dev]'
+      # Pinned rather than floating. ruff 0.16 began formatting Python inside
+      # fenced code blocks in Markdown, which reports every doc in this repo
+      # that shows a code sample — a lint gate that fails on prose is a gate
+      # people learn to ignore. Bump this deliberately, not by drift.
+      - run: pip install -e '.[dev]' 'ruff>=0.14,<0.16'
       - name: ruff check
         run: ruff check .
       - name: ruff format --check
-        run: ruff format --check .
+        run: ruff format --check . --exclude '*.md'
 
   test:
     name: pytest (py${{ matrix.python }}, extras=${{ matrix.extras }})
