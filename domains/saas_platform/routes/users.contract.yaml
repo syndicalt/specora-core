@@ -1,0 +1,42 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: users
+  domain: saas_platform
+  description: "CRUD API for platform users"
+  tags: [saas, auth]
+requires:
+  - entity/saas_platform/user
+spec:
+  entity: entity/saas_platform/user
+  base_path: /users
+  endpoints:
+    # Every mutating endpoint is admin-only: these records carry the
+    # credentials the whole platform authenticates against, so a member or
+    # viewer must not be able to create one, change a role, or reset a hash.
+    - method: GET
+      path: /
+      summary: List users
+      roles: [admin, owner]
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create user
+      roles: [admin]
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get user
+      roles: [admin, owner]
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update user
+      roles: [admin]
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete user
+      roles: [admin]
+      response: {status: 204}

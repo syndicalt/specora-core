@@ -118,6 +118,15 @@ properties:
               type: boolean
               default: false
               description: "If true, field cannot be changed after creation."
+            sensitive:
+              type: boolean
+              default: false
+              description: >
+                Write-only. The field is accepted on create/update and stored,
+                but never serialised into an API response and never logged.
+                Required for password hashes, API key secrets, and tokens:
+                response models are built from the entity's full field list,
+                so a credential column without this flag is published by the API.
             default:
               description: "Default value if not provided."
             format:
@@ -159,6 +168,19 @@ properties:
                 pattern:
                   type: string
                   description: "Regex pattern the value must match."
+                precision:
+                  type: integer
+                  minimum: 1
+                  maximum: 1000
+                  description: >
+                    Total significant digits for a `decimal` field, sizing its
+                    NUMERIC(precision, scale) column. Defaults to 18.
+                scale:
+                  type: integer
+                  minimum: 0
+                  description: >
+                    Fractional digits for a `decimal` field. Defaults to 2.
+                    Must not exceed `precision`.
             references:
               type: object
               description: >

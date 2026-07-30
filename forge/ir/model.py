@@ -39,7 +39,6 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-
 # =============================================================================
 # Field-Level IR
 # =============================================================================
@@ -102,6 +101,12 @@ class FieldIR(BaseModel):
         computed: Auto-computation expression (e.g., "now", "uuid", "sequence(...)").
         constraints: Validation constraints (min, max, maxLength, pattern, etc.).
         reference: Reference to another entity (if this is a FK field).
+        sensitive: If true, the field is write-only: accepted on create/update
+            and stored, but never serialised into an API response and never
+            logged. Password hashes, API key secrets, and access tokens must
+            set this. Without it, wiring `response_model` to the entity's full
+            field list would publish every stored column — the moment a domain
+            grows a credential column, the API starts handing it out.
     """
 
     name: str
@@ -116,6 +121,7 @@ class FieldIR(BaseModel):
     computed: Optional[str] = None
     constraints: dict = Field(default_factory=dict)
     reference: Optional[ReferenceIR] = None
+    sensitive: bool = False
 
 
 # =============================================================================
@@ -201,11 +207,24 @@ class EntityIR(BaseModel):
         description: Human-readable description.
         table_name: PostgreSQL table name (inferred or explicit).
         fields: All fields (including expanded mixin fields).
+        mixin_refs: Mixin FQNs as *declared* by the contract, before expansion.
+            Kept distinct from `mixins_applied` because that only lists mixins
+            that were found: comparing the two is how a reference to a mixin
+            that does not exist gets caught.
         mixins_applied: FQNs of mixins that were expanded into this entity.
+        workflow_ref: Workflow FQN as declared by the contract, before binding.
         state_machine: Bound state machine (from workflow contract).
         ai_hooks: AI integration hooks (event -> list of agent FQNs).
         number_prefix: Prefix for sequential IDs (e.g., "INC").
         icon: Lucide icon name.
+
+    `mixin_refs` and `workflow_ref` are declared fields rather than attributes
+    stapled onto the instance after construction. As undeclared attributes they
+    survived `model_copy()` but were dropped by `model_dump()`, so any pass or
+    generator that round-tripped an entity through a dump silently produced an
+    entity with no mixin and no workflow declaration — which the validators read
+    with `getattr(..., default)` and so reported as "nothing to check" rather
+    than as an error.
     """
 
     fqn: str
@@ -214,7 +233,9 @@ class EntityIR(BaseModel):
     description: str = ""
     table_name: str = ""
     fields: list[FieldIR] = Field(default_factory=list)
+    mixin_refs: list[str] = Field(default_factory=list)
     mixins_applied: list[str] = Field(default_factory=list)
+    workflow_ref: Optional[str] = None
     state_machine: Optional[StateMachineIR] = None
     ai_hooks: dict[str, list[str]] = Field(default_factory=dict)
     number_prefix: Optional[str] = None
