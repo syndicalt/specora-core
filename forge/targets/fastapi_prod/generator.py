@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from forge.ir.model import DomainIR
-from forge.targets.base import BaseGenerator, GeneratedFile
+from forge.targets.base import BaseGenerator, GeneratedFile, validate_generated_files
 from forge.targets.fastapi_prod.gen_app import generate_app
 from forge.targets.fastapi_prod.gen_auth import generate_auth
 from forge.targets.fastapi_prod.gen_config import generate_config
@@ -42,7 +42,9 @@ class FastAPIProductionGenerator(BaseGenerator):
         # App
         files.append(generate_app(ir))
 
-        return files
+        # Refuse to hand back output that cannot be valid: duplicate paths
+        # (one file silently overwriting another) or Python that does not parse.
+        return validate_generated_files(files)
 
 
 class DockerGenerator(BaseGenerator):
@@ -62,4 +64,4 @@ class TestSuiteGenerator(BaseGenerator):
         return "tests"
 
     def generate(self, ir: DomainIR) -> list[GeneratedFile]:
-        return generate_tests(ir)
+        return validate_generated_files(generate_tests(ir))

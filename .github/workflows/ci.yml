@@ -1,0 +1,136 @@
+name: CI
+
+# The repository previously had no CI at all — only dependabot and issue
+# templates. Its own configured ruff ruleset reported 522 violations and the
+# test suite failed 8 tests on the documented `[dev]` install, because the
+# engine tests import optional extras unconditionally. Both went unnoticed
+# for two releases. Everything below exists to make that impossible again.
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e '.[dev]'
+      - name: ruff check
+        run: ruff check .
+      - name: ruff format --check
+        run: ruff format --check .
+
+  test:
+    name: pytest (py${{ matrix.python }}, extras=${{ matrix.extras }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12", "3.13"]
+        extras: ["dev"]
+        include:
+          # The full-extras run is what exercises the engine and healer API
+          # suites. The bare `[dev]` runs above prove the suite is hermetic:
+          # optional dependencies must be skipped, never failed.
+          - python: "3.12"
+            extras: "dev,llm,healer"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: pip install -e ".[${{ matrix.extras }}]"
+      - name: pytest
+        run: pytest -q --durations=10
+
+  generated-app:
+    name: generated app must build, parse, and boot
+    runs-on: ubuntu-latest
+    # The product ships generated applications, not this repo's source. A
+    # green unit suite told us nothing about whether the generated app was
+    # valid Python, had a parseable schema, or could even import — and it was
+    # none of those things.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: specora
+          POSTGRES_USER: specora
+          POSTGRES_DB: specora
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports: ["5432:5432"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e '.[dev,llm,healer]' sqlglot
+      - name: Generate every shipped domain
+        run: python scripts/ci_generate_all.py --out build/
+      - name: Generated Python must parse
+        run: |
+          python - <<'PY'
+          import ast, pathlib, sys
+          bad = []
+          for p in pathlib.Path("build").rglob("*.py"):
+              try:
+                  ast.parse(p.read_text(), filename=str(p))
+              except SyntaxError as e:
+                  bad.append(f"{p}:{e.lineno}: {e.msg}")
+          if bad:
+              print("\n".join(bad)); sys.exit(1)
+          print("all generated Python parses")
+          PY
+      - name: Generated schema must apply to a real PostgreSQL
+        env:
+          PGPASSWORD: specora
+        run: |
+          for f in build/*/database/schema.sql; do
+            echo "applying $f"
+            psql -h localhost -U specora -d specora -v ON_ERROR_STOP=1 -f "$f"
+            psql -h localhost -U specora -d specora -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+          done
+      - name: Generated app must import and serve
+        run: python scripts/ci_smoke_generated.py --root build/
+
+  security:
+    name: dependency + secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e '.[dev,llm,healer]' pip-audit
+      - name: Audit this project's dependencies
+        run: pip-audit --strict --progress-spinner off
+      - name: Audit the dependency set we generate for users
+        # Generated apps inherit whatever requirements.txt the Docker generator
+        # emits. Shipping a CVE-bearing auth stack to every generated app is a
+        # supply-chain problem even though it is not this repo's own dependency.
+        run: |
+          python scripts/ci_emit_requirements.py --out /tmp/generated-requirements.txt
+          cat /tmp/generated-requirements.txt
+          pip-audit --strict --progress-spinner off -r /tmp/generated-requirements.txt
