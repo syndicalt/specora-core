@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from forge.ir.model import DomainIR, EntityIR, StateMachineIR
+from forge.targets.naming import class_name, module_slug
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,8 @@ def validate_semantics(ir: DomainIR) -> list[SemanticValidationError]:
                 )
             )
 
+    errors.extend(_validate_identifier_uniqueness(ir))
+
     for route in ir.routes:
         entity = entity_map.get(route.entity_fqn)
         if route.entity_fqn and entity is None:
@@ -80,6 +83,62 @@ def validate_semantics(ir: DomainIR) -> list[SemanticValidationError]:
                                 ),
                             )
                         )
+
+    return errors
+
+
+def _validate_identifier_uniqueness(ir: DomainIR) -> list[SemanticValidationError]:
+    """Reject builds where two entities would generate the same identifier.
+
+    Every generator derives its output names from the entity — the Python
+    class, the SQL table, the route module filename. If two entities produce
+    the same one, the result is not an error anywhere downstream; it is a
+    silent overwrite:
+
+      * duplicate class in `models.py` -> Python keeps the last definition,
+        so one entity's request validation is replaced by the other's;
+      * duplicate `CREATE TABLE IF NOT EXISTS` -> the second is a no-op, so one
+        entity reads and writes a table that lacks its columns;
+      * duplicate module path -> one entity's entire API disappears.
+
+    Catching this here means a colliding build fails to compile with a message
+    naming both entities, instead of deploying and corrupting data.
+    """
+    errors: list[SemanticValidationError] = []
+    multi = ir.multi_domain
+
+    def _check(kind: str, path: str, derive) -> None:
+        claims: dict[str, str] = {}
+        for entity in ir.entities:
+            value = derive(entity)
+            if value in claims:
+                errors.append(
+                    SemanticValidationError(
+                        contract_fqn=entity.fqn,
+                        path=path,
+                        message=(
+                            f"{kind} '{value}' is claimed by both "
+                            f"'{claims[value]}' and '{entity.fqn}'. Generated "
+                            f"output would silently overwrite one with the "
+                            f"other. Rename one entity, or set an explicit "
+                            f"distinct 'table' in its spec."
+                        ),
+                    )
+                )
+            else:
+                claims[value] = entity.fqn
+
+    _check("Table name", "spec.table", lambda e: e.table_name)
+    _check(
+        "Generated class name",
+        "metadata.name",
+        lambda e: class_name(e.name, e.domain, multi_domain=multi),
+    )
+    _check(
+        "Generated module name",
+        "metadata.name",
+        lambda e: module_slug(e.name, e.domain, multi_domain=multi),
+    )
 
     return errors
 

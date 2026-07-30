@@ -124,8 +124,8 @@ class Compiler:
         order = graph.topological_order()
         logger.info("Compilation order: %s", " -> ".join(order))
 
-        domain = self._detect_domain(contracts)
-        ir = DomainIR(domain=domain)
+        domains = self._collect_domains(contracts)
+        ir = DomainIR(domain=domains[0] if domains else "unknown", domains=domains)
 
         for fqn in order:
             node = graph.nodes[fqn]
@@ -141,21 +141,28 @@ class Compiler:
         logger.info("Compilation complete:\n%s", ir.summary())
         return ir
 
-    def _detect_domain(self, contracts: dict[str, dict]) -> str:
-        """Detect the primary domain from the loaded contracts.
+    def _collect_domains(self, contracts: dict[str, dict]) -> list[str]:
+        """Collect every non-stdlib domain in the build, sorted.
 
-        Looks for the most common non-stdlib domain. Falls back to
-        the first domain found.
+        This replaces an earlier `_detect_domain` that returned only the modal
+        domain via `max(domains, key=domains.get)`, discarding the rest. That
+        was lossy in a way nothing downstream could detect: a build spanning
+        two domains produced a `DomainIR` labelled with one of them (chosen by
+        insertion order on a tie) while carrying entities from both, so every
+        generator derived colliding identifiers from bare entity names.
+
+        Returning the full set lets `DomainIR.multi_domain` drive namespacing
+        in `forge.targets.naming`, and lets `validate_semantics` reject genuine
+        collisions rather than letting generators overwrite each other.
         """
-        domains: dict[str, int] = {}
-        for contract in contracts.values():
-            d = contract.get("metadata", {}).get("domain", "")
-            if d and d != "stdlib":
-                domains[d] = domains.get(d, 0) + 1
-
-        if domains:
-            return max(domains, key=domains.get)
-        return "unknown"
+        return sorted(
+            {
+                d
+                for contract in contracts.values()
+                if (d := contract.get("metadata", {}).get("domain", ""))
+                and d != "stdlib"
+            }
+        )
 
     def _compile_node(self, node, ir: DomainIR) -> None:
         """Compile a single contract node into its IR representation.

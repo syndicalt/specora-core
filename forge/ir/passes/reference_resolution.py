@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 
 from forge.ir.model import DomainIR
-from forge.ir.passes.table_name_inference import _pluralize
+from forge.targets.naming import pluralize
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ def resolve_references(ir: DomainIR) -> DomainIR:
         # Infer base_path from entity name if not set
         if not route.base_path and route.entity_fqn:
             entity_name = route.entity_fqn.split("/")[-1]
-            route.base_path = "/" + _pluralize(entity_name)
+            route.base_path = "/" + pluralize(entity_name)
             logger.debug("Inferred base_path '%s' for route '%s'", route.base_path, route.fqn)
 
     return ir

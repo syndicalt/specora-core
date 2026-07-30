@@ -85,21 +85,28 @@ properties:
           properties:
             type:
               type: string
-              enum: [string, integer, number, boolean, text, array, object, datetime, date, uuid, email]
+              enum: [string, integer, number, decimal, boolean, text, array, object, datetime, date, uuid, email]
               description: >
                 The field's data type. Normalized types that map to
                 language-specific types in each generator target:
                   string   -> str / string / TEXT
                   integer  -> int / number / INTEGER
-                  number   -> float / number / NUMERIC
+                  number   -> float / number / DOUBLE PRECISION
+                  decimal  -> Decimal / string / NUMERIC(p, s)
                   boolean  -> bool / boolean / BOOLEAN
                   text     -> str / string / TEXT (long content)
                   array    -> list / Array / JSONB
                   object   -> dict / Record / JSONB
                   datetime -> datetime / string / TIMESTAMPTZ
                   date     -> date / string / DATE
-                  uuid     -> str / string / UUID
-                  email    -> str / string / TEXT (with email validation)
+                  uuid     -> UUID / string / UUID
+                  email    -> EmailStr / string / TEXT
+                Use `decimal` for money and any other exact quantity; it maps
+                to NUMERIC and serialises as a JSON string so no precision is
+                lost. Use `number` only where inexact floating point is
+                acceptable (measurements, coordinates, ratings). Set
+                constraints.precision and constraints.scale on a decimal field
+                to size its NUMERIC column; the defaults are (18, 2).
             description:
               type: string
               description: "Human-readable field description. Used in docs and JSDoc."

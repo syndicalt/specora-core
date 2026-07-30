@@ -425,7 +425,17 @@ class DomainIR(BaseModel):
       - OpenAPI generator reads routes (for spec)
 
     Attributes:
-        domain: Domain namespace.
+        domain: Primary domain namespace. In a multi-domain build this is the
+            first domain alphabetically and is used only for cosmetic labels
+            (the app title, the provenance line). Never derive an identifier
+            from it — use `domains` and the helpers in `forge.targets.naming`.
+        domains: Every non-stdlib domain present in this build, sorted. A build
+            spanning more than one domain must namespace every generated
+            identifier by domain, or entities sharing a name across domains
+            collide: `entity/billing/account` and `entity/support/account`
+            otherwise both produce class `Account`, table `accounts`, and
+            module `routes_account.py`, and the second silently overwrites the
+            first.
         entities: All entity definitions (with mixins expanded).
         workflows: Standalone workflow definitions.
         pages: All page specifications.
@@ -436,6 +446,7 @@ class DomainIR(BaseModel):
     """
 
     domain: str
+    domains: list[str] = Field(default_factory=list)
     entities: list[EntityIR] = Field(default_factory=list)
     workflows: list[StateMachineIR] = Field(default_factory=list)
     pages: list[PageIR] = Field(default_factory=list)
@@ -444,9 +455,19 @@ class DomainIR(BaseModel):
     mixins: list[MixinIR] = Field(default_factory=list)
     infra: list[InfraIR] = Field(default_factory=list)
 
+    @property
+    def multi_domain(self) -> bool:
+        """Whether this build spans more than one domain.
+
+        Generators pass this to `forge.targets.naming` so single-domain output
+        stays byte-identical while multi-domain output gets namespaced.
+        """
+        return len(self.domains) > 1
+
     def summary(self) -> str:
         """Return a human-readable summary of the compiled IR."""
-        parts = [f"Domain: {self.domain}"]
+        label = ", ".join(self.domains) if self.multi_domain else self.domain
+        parts = [f"Domain: {label}"]
         if self.entities:
             parts.append(f"  Entities:  {len(self.entities)}")
             for e in self.entities:

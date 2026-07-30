@@ -68,7 +68,7 @@ properties:
           properties:
             type:
               type: string
-              enum: [string, integer, number, boolean, text, array, object, datetime, date, uuid, email]
+              enum: [string, integer, number, decimal, boolean, text, array, object, datetime, date, uuid, email]
             description:
               type: string
             required:
