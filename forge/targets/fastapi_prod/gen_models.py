@@ -14,58 +14,18 @@ from __future__ import annotations
 
 from forge.ir.model import DomainIR, EntityIR, FieldIR
 from forge.targets.base import GeneratedFile, provenance_header
+from forge.targets.fields import (
+    creatable_fields,
+    disclosable_fields,
+    updatable_fields,
+)
 from forge.targets.naming import class_name
 from forge.targets.typemap import py_type, required_imports
-
-# The lifecycle field that `bind_state_machines` projects onto any entity with
-# a bound workflow. It is excluded from every request model. The field is
-# neither `computed` nor `immutable` in the IR, so the ordinary filters let it
-# through — and a state machine whose state can be assigned directly by a
-# create or update body is not a state machine at all: every transition rule
-# and guard in the contract becomes advisory, and a record can be created
-# straight into a terminal state. It moves only through the transition
-# endpoint, which is the single path that consults the machine.
-STATE_FIELD = "state"
 
 # Request models reject unknown keys rather than dropping them. Silently
 # ignoring `{"state": "churned"}` would leave a caller believing the write
 # landed; a 422 says which key was refused.
 STRICT_REQUEST_CONFIG = '    model_config = {"extra": "forbid"}'
-
-
-def _lifecycle_managed(entity: EntityIR, field: FieldIR) -> bool:
-    """Whether this field is the workflow's state and therefore server-owned.
-
-    Matching on the name alone would also catch an entity that legitimately
-    has a `state` field (a postal address, say), so the entity must actually
-    bind a state machine for the field to be treated as lifecycle-managed.
-    """
-    return entity.state_machine is not None and field.name == STATE_FIELD
-
-
-def _writable_fields(entity: EntityIR) -> list[FieldIR]:
-    """Fields a client is permitted to set.
-
-    `sensitive` fields stay here: write-only means write-*able*. A password
-    hash that could not be set would leave the account with no credential.
-    """
-    return [
-        f
-        for f in entity.fields
-        if not f.computed and not f.immutable and not _lifecycle_managed(entity, f)
-    ]
-
-
-def _disclosable_fields(entity: EntityIR) -> list[FieldIR]:
-    """Fields the server is willing to serialise back to a client.
-
-    `sensitive` fields are omitted from the response model outright rather than
-    defaulted to None or marked `exclude=True`. An excluded-but-declared field
-    is one `response_model_exclude` override, one `.model_dump()` in a future
-    handler, or one `by_alias` flag away from being emitted again; a field the
-    class does not have cannot be serialised by any of them.
-    """
-    return [f for f in entity.fields if not f.sensitive]
 
 
 def _annotation(field: FieldIR, *, optional: bool) -> str:
@@ -110,7 +70,7 @@ def _create_model(entity: EntityIR, cls: str) -> list[str]:
         f'    """Create request for {entity.name}."""',
         "",
     ]
-    for field in _writable_fields(entity):
+    for field in creatable_fields(entity):
         annotation = _annotation(field, optional=not field.required)
         default = "" if field.required else " = None"
         lines.append(f"    {field.name}: {annotation}{default}")
@@ -128,9 +88,7 @@ def _update_model(entity: EntityIR, cls: str) -> list[str]:
     # `exclude_unset` rather than `exclude_none` to tell "omitted" from
     # "explicitly null" — without that distinction a nullable field could
     # never be cleared.
-    for field in _writable_fields(entity):
-        if field.name == "id":
-            continue
+    for field in updatable_fields(entity):
         lines.append(f"    {field.name}: {_annotation(field, optional=True)} = None")
     lines.extend(["", STRICT_REQUEST_CONFIG, "", ""])
     return lines
@@ -142,7 +100,7 @@ def _response_model(entity: EntityIR, cls: str) -> list[str]:
         f'    """Response model for {entity.name}."""',
         "",
     ]
-    for field in _disclosable_fields(entity):
+    for field in disclosable_fields(entity):
         annotation = _annotation(field, optional=not field.required)
         default = "" if field.required else " = None"
         lines.append(f"    {field.name}: {annotation}{default}")

@@ -207,16 +207,44 @@ class TestGenTests:
     def test_generates_auth_helpers(
         self, task_entity: EntityIR, task_route: RouteIR, auth_infra: InfraIR
     ) -> None:
-        from forge.targets.fastapi_prod.gen_tests import generate_tests
+        """Tokens come from the application's own issuer, not from the fixture.
+
+        A hand-assembled token cannot satisfy the provider's required
+        typ/iat/iss/aud claims, so a conftest that mints its own gets a 401 on
+        every request and the generated suite tests nothing at all.
+        """
+        from forge.targets.fastapi_prod.gen_config import MIN_SECRET_LENGTH
+        from forge.targets.fastapi_prod.gen_tests import TEST_AUTH_SECRET, generate_tests
 
         ir = DomainIR(
             domain="test", entities=[task_entity], routes=[task_route], infra=[auth_infra]
         )
         files = generate_tests(ir)
         conftest = next(f for f in files if "conftest.py" in f.path)
-        assert "make_auth_headers" in conftest.content
-        assert "jose" in conftest.content
-        assert "admin_headers" in conftest.content
+        assert "from backend.auth.interface import AuthUser" in conftest.content
+        assert "from backend.auth.jwt_provider import JWTAuthProvider" in conftest.content
+        assert "JWTAuthProvider().issue_tokens(" in conftest.content
+        assert "def make_auth_headers(role: str) -> dict:" in conftest.content
+        assert "def admin_headers():" in conftest.content
+        # python-jose is no longer a generated dependency, so nothing may import it.
+        assert "jose" not in conftest.content
+        # backend.config refuses to boot on a shorter secret than this.
+        assert len(TEST_AUTH_SECRET) >= MIN_SECRET_LENGTH
+        assert f'os.environ.setdefault("AUTH_SECRET", "{TEST_AUTH_SECRET}")' in conftest.content
+
+    def test_conftest_isolates_the_memory_store(self, task_route_ir: DomainIR) -> None:
+        """Without an autouse reset the generated suite is order-dependent.
+
+        The in-memory stores are process-global, so rows accumulate across test
+        functions and a count assertion passes alone and fails in the suite.
+        """
+        from forge.targets.fastapi_prod.gen_tests import generate_tests
+
+        files = generate_tests(task_route_ir)
+        conftest = next(f for f in files if "conftest.py" in f.path)
+        assert "from backend.repositories.memory import reset_stores" in conftest.content
+        assert "@pytest.fixture(autouse=True)" in conftest.content
+        assert "    reset_stores()" in conftest.content
 
     def test_generates_auth_tests(
         self, task_entity: EntityIR, task_route: RouteIR, auth_infra: InfraIR
@@ -228,9 +256,13 @@ class TestGenTests:
         )
         files = generate_tests(ir)
         test_file = next(f for f in files if "test_task.py" in f.path)
-        assert "unauthenticated" in test_file.content
-        assert "wrong_role" in test_file.content
-        assert "make_auth_headers" in test_file.content
+        assert "def test_create_task_unauthenticated(client):" in test_file.content
+        assert "def test_create_task_wrong_role(client, auth_headers):" in test_file.content
+        assert "    assert resp.status_code == 401" in test_file.content
+        assert "    assert resp.status_code == 403" in test_file.content
+        # The headers come from the conftest fixture, so a test module never
+        # imports conftest and never loads the app a second time.
+        assert 'headers=auth_headers("admin")' in test_file.content
 
     def test_generates_state_machine_tests(self, task_with_state_machine: EntityIR) -> None:
         from forge.targets.fastapi_prod.gen_tests import generate_tests
@@ -256,7 +288,75 @@ class TestGenTests:
         assert "def test_transition_task_missing_state" in test_file.content
         assert "def test_transition_task_new_to_in_progress_guard" in test_file.content
         assert "xfail" not in test_file.content
-        assert '"assigned_to": "test"' in test_file.content
+        # The guard is provoked by creating without the field it requires.
+        assert 'omitted = ("assigned_to",)' in test_file.content
+        # The three refusal causes must be asserted apart, not as "some 4xx".
+        assert "def test_transition_task_not_found" in test_file.content
+        assert (
+            '    assert resp.json()["detail"]["error"] == "invalid_transition"' in test_file.content
+        )
+        assert '    assert resp.json()["detail"]["error"] == "guard_failed"' in test_file.content
+        assert '    assert resp.json()["detail"]["error"] == "not_found"' in test_file.content
+        assert "    assert resp.status_code == 409" in test_file.content
+
+    def test_state_is_not_client_writable(self, task_with_state_machine: EntityIR) -> None:
+        """A create or update carrying `state` must be refused, and asserted to be.
+
+        Writing `state` through the ordinary endpoints bypassed every transition
+        and guard in the workflow contract.
+        """
+        from forge.targets.fastapi_prod.gen_tests import generate_tests
+
+        route = RouteIR(
+            fqn="route/test/tasks",
+            name="tasks",
+            domain="test",
+            entity_fqn="entity/test/task",
+            base_path="/tasks",
+            endpoints=[
+                EndpointIR(
+                    method="POST", path="/", response_status=201, auto_fields={"id": "uuid"}
+                ),
+                EndpointIR(method="PATCH", path="/{id}", response_status=200),
+                EndpointIR(method="PUT", path="/{id}/state", response_status=200),
+            ],
+        )
+        ir = DomainIR(domain="test", entities=[task_with_state_machine], routes=[route])
+        files = generate_tests(ir)
+        test_file = next(f for f in files if "test_task.py" in f.path)
+        assert '"state"' not in test_file.content.split("def _create_task")[0]
+        assert "def test_create_task_cannot_set_state" in test_file.content
+        assert "def test_update_task_cannot_set_state" in test_file.content
+
+    def test_sensitive_fields_asserted_absent_from_responses(
+        self, task_entity: EntityIR, task_route: RouteIR
+    ) -> None:
+        """A write-only value must be proven never to appear in a response body."""
+        from forge.targets.fastapi_prod.gen_tests import SENSITIVE_SENTINEL, generate_tests
+
+        secret = FieldIR(name="secret_token", type="string", required=True, sensitive=True)
+        entity = task_entity.model_copy(update={"fields": [*task_entity.fields, secret]})
+        ir = DomainIR(domain="test", entities=[entity], routes=[task_route])
+        files = generate_tests(ir)
+        test_file = next(f for f in files if "test_task.py" in f.path)
+        assert "def test_task_write_only_fields_never_disclosed" in test_file.content
+        assert f'SENSITIVE_SENTINEL = "{SENSITIVE_SENTINEL}"' in test_file.content
+        assert '"secret_token": SENSITIVE_SENTINEL' in test_file.content
+        assert "    assert SENSITIVE_SENTINEL not in created.text" in test_file.content
+        assert "    assert SENSITIVE_SENTINEL not in page.text" in test_file.content
+
+    def test_list_tests_assert_keyset_page_not_total(self, task_route_ir: DomainIR) -> None:
+        """The list response is {items, next_cursor}; there is no `total`."""
+        from forge.targets.fastapi_prod.gen_tests import generate_tests
+
+        files = generate_tests(task_route_ir)
+        test_file = next(f for f in files if "test_task.py" in f.path)
+        assert '"total"' not in test_file.content
+        assert '    assert body["next_cursor"] is None' in test_file.content
+        assert "def test_list_tasks_paginates" in test_file.content
+        # `limit` is bounded, so the old unbounded-page request is now a 422.
+        assert 'params={"limit": 999999999}' in test_file.content
+        assert "    assert huge.status_code == 422" in test_file.content
 
     def test_state_machine_guards_generated_in_repositories(
         self, task_with_state_machine: EntityIR
@@ -317,9 +417,17 @@ class TestGenTests:
         ir = DomainIR(domain="test", entities=[task_entity], routes=[route], infra=[auth_infra])
         files = generate_tests(ir)
         test_file = next(f for f in files if "test_task.py" in f.path)
-        # POST is admin-only, so 403 test should use a non-admin role
-        assert 'make_auth_headers("admin")' in test_file.content
-        assert "wrong_role" in test_file.content
+        assert 'headers=auth_headers("admin")' in test_file.content
+        # POST is admin-only, so its 403 test presents 'agent'; GET permits
+        # admin and agent, so its 403 test has to reach past both.
+        assert (
+            '    resp = client.post("/tasks/", json={}, headers=auth_headers("agent"))'
+            in test_file.content
+        )
+        assert (
+            '    resp = client.get("/tasks/", headers=auth_headers("customer"))'
+            in test_file.content
+        )
 
 
 class TestGenRoutes:

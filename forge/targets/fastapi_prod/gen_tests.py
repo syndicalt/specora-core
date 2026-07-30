@@ -33,6 +33,7 @@ What is deliberately *not* emitted, and why:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from forge.ir.model import (
@@ -47,11 +48,10 @@ from forge.ir.model import (
 )
 from forge.targets.base import GeneratedFile, GenerationError, provenance_header
 
-# The exact filter gen_models applies when it builds <Cls>Create. A payload
-# assembled from a different rule is a payload the model rejects, so this is
-# imported rather than restated: a rename over there must break generation
-# here, loudly, instead of emitting a suite that 422s on every create.
-from forge.targets.fastapi_prod.gen_models import _writable_fields
+# The same partition gen_models builds <Cls>Create and <Cls>Update from. A
+# payload assembled from a different rule is a payload those models reject, so
+# it is shared rather than restated here.
+from forge.targets.fields import creatable_fields, updatable_fields
 from forge.targets.naming import module_slug, pluralize, py_identifier
 
 # Generated test modules are read by humans debugging a failing deployment and
@@ -103,10 +103,19 @@ _ROUND_TRIP_TYPES = frozenset({"string", "text", "integer", "number", "boolean"}
 # =============================================================================
 
 
+def _literal(value: object) -> str:
+    """A Python literal, as source text, for a contract-declared value.
+
+    `repr` alone would emit single-quoted strings into a file whose every other
+    string is double-quoted.
+    """
+    return json.dumps(value) if isinstance(value, str) else repr(value)
+
+
 def _default_value(field: FieldIR) -> str:
     """A Python literal, as source text, that satisfies this field."""
     if field.enum_values:
-        return repr(field.enum_values[0])
+        return _literal(field.enum_values[0])
     if field.type == "integer":
         minimum = field.constraints.get("min")
         return str(minimum) if minimum is not None else "1"
@@ -123,7 +132,7 @@ def _alternate_value(field: FieldIR) -> str | None:
     nothing, so a field with no distinguishable second value is not used.
     """
     if field.enum_values:
-        return repr(field.enum_values[1]) if len(field.enum_values) > 1 else None
+        return _literal(field.enum_values[1]) if len(field.enum_values) > 1 else None
     if field.type in ("integer", "number"):
         maximum = field.constraints.get("max")
         base = float(_default_value(field))
@@ -136,10 +145,16 @@ def _alternate_value(field: FieldIR) -> str | None:
 def _payload_fields(entity: EntityIR) -> list[FieldIR]:
     """Fields the generated create payload sets.
 
-    `id` is dropped even where it is writable: the route contract's
-    `auto_fields` assigns it, and a client-supplied id would fight with that.
+    `id` is dropped even where the create model accepts it: the route
+    contract's `auto_fields` assigns it, and a client-supplied id would make
+    every record in a test share one key.
     """
-    return [f for f in _writable_fields(entity) if f.name != "id"]
+    return [f for f in creatable_fields(entity) if f.name != "id"]
+
+
+def _patchable_fields(entity: EntityIR) -> list[FieldIR]:
+    """Fields the update model accepts. Narrower than the create model's."""
+    return updatable_fields(entity)
 
 
 def _valid_payload_code(entity: EntityIR) -> str:
@@ -155,9 +170,17 @@ def _required_payload_fields(entity: EntityIR) -> list[FieldIR]:
     return [f for f in _payload_fields(entity) if f.required]
 
 
+def _creatable_field(entity: EntityIR) -> FieldIR | None:
+    """A create-settable field whose stored value can be asserted on the way back."""
+    return next(
+        (f for f in _payload_fields(entity) if f.type in _ROUND_TRIP_TYPES or f.enum_values),
+        None,
+    )
+
+
 def _updatable_field(entity: EntityIR) -> FieldIR | None:
     """A field whose update can be asserted by comparing the response back."""
-    for candidate in _payload_fields(entity):
+    for candidate in _patchable_fields(entity):
         if candidate.type not in _ROUND_TRIP_TYPES and not candidate.enum_values:
             continue
         if _alternate_value(candidate) is not None:
@@ -361,7 +384,7 @@ def _create_helper(ctx: _Ctx, endpoint: EndpointIR) -> list[str]:
 
 
 def _emit_create(ctx: _Ctx, endpoint: EndpointIR) -> list[str]:
-    scalar = _updatable_field(ctx.entity)
+    scalar = _creatable_field(ctx.entity)
     lines = [
         ctx.signature(f"test_create_{ctx.slug}"),
         f'    """POST {ctx.base}/ stores the record and returns it with an id."""',
@@ -373,42 +396,46 @@ def _emit_create(ctx: _Ctx, endpoint: EndpointIR) -> list[str]:
     lines.extend(["", ""])
 
     if _required_payload_fields(ctx.entity):
-        lines.extend([
-            ctx.signature(f"test_create_{ctx.slug}_missing_fields"),
-            f'    """POST {ctx.base}/ with no body is refused by the create model."""',
-            *_request(
-                "resp = ", "post", _url(ctx.base, "/"), ["json={}", *ctx.auth.headers(endpoint)]
-            ),
-            "    assert resp.status_code == 422",
-            "",
-            "",
-        ])
+        lines.extend(
+            [
+                ctx.signature(f"test_create_{ctx.slug}_missing_fields"),
+                f'    """POST {ctx.base}/ with no body is refused by the create model."""',
+                *_request(
+                    "resp = ", "post", _url(ctx.base, "/"), ["json={}", *ctx.auth.headers(endpoint)]
+                ),
+                "    assert resp.status_code == 422",
+                "",
+                "",
+            ]
+        )
 
     if ctx.entity.state_machine is not None:
         initial = ctx.entity.state_machine.initial
         forbidden = _terminal_or_other_state(ctx.entity.state_machine)
-        lines.extend([
-            ctx.signature(f"test_create_{ctx.slug}_cannot_set_state"),
-            '    """`state` is server-owned: a create that names it is refused.',
-            "",
-            "    Accepting it would let a caller start a record in any state at all,",
-            "    which makes every transition and guard in the workflow advisory.",
-            '    """',
-            *_request(
-                "resp = ",
-                "post",
-                _url(ctx.base, "/"),
-                [
-                    f'json={{**VALID_PAYLOAD, "state": "{forbidden}"}}',
-                    *ctx.auth.headers(endpoint),
-                ],
-            ),
-            "    assert resp.status_code == 422",
-            ctx.create_call(),
-            f'    assert created["state"] == "{initial}"',
-            "",
-            "",
-        ])
+        lines.extend(
+            [
+                ctx.signature(f"test_create_{ctx.slug}_cannot_set_state"),
+                '    """`state` is server-owned: a create that names it is refused.',
+                "",
+                "    Accepting it would let a caller start a record in any state at all,",
+                "    which makes every transition and guard in the workflow advisory.",
+                '    """',
+                *_request(
+                    "resp = ",
+                    "post",
+                    _url(ctx.base, "/"),
+                    [
+                        f'json={{**VALID_PAYLOAD, "state": "{forbidden}"}}',
+                        *ctx.auth.headers(endpoint),
+                    ],
+                ),
+                "    assert resp.status_code == 422",
+                ctx.create_call(),
+                f'    assert created["state"] == "{initial}"',
+                "",
+                "",
+            ]
+        )
 
     lines.extend(_emit_auth_tests(ctx, endpoint, "create", _url(ctx.base, "/"), body="json={}"))
     return lines
@@ -420,64 +447,77 @@ def _emit_list(ctx: _Ctx, endpoint: EndpointIR) -> list[str]:
     lines: list[str] = []
 
     if ctx.can_create:
-        lines.extend([
-            ctx.signature(f"test_list_{plural}"),
-            f'    """GET {ctx.base}/ returns a keyset page of the records that exist."""',
-            ctx.create_call(),
-            *_request("resp = ", "get", _url(ctx.base, "/"), headers),
-            "    assert resp.status_code == 200",
-            "    body = resp.json()",
-            '    assert [item["id"] for item in body["items"]] == [created["id"]]',
-            '    assert body["next_cursor"] is None',
-            "",
-            "",
-            ctx.signature(f"test_list_{plural}_paginates"),
-            '    """A full page carries a cursor; following it yields the rest, once each.',
-            "",
-            "    There is no `total` and no `offset`: the page is a keyset window, so",
-            "    the only way to reach the next records is the cursor it hands back.",
-            '    """',
-            "    created_ids = set()",
-            "    for _ in range(3):",
-            ctx.create_call(assign="record = ", indent="        "),
-            '        created_ids.add(record["id"])',
-            *_request("first = ", "get", _url(ctx.base, "/"), ['params={"limit": 2}', *headers]),
-            "    assert first.status_code == 200",
-            '    assert len(first.json()["items"]) == 2',
-            '    assert first.json()["next_cursor"] is not None',
+        lines.extend(
+            [
+                ctx.signature(f"test_list_{plural}"),
+                f'    """GET {ctx.base}/ returns a keyset page of the records that exist."""',
+                ctx.create_call(),
+                *_request("resp = ", "get", _url(ctx.base, "/"), headers),
+                "    assert resp.status_code == 200",
+                "    body = resp.json()",
+                '    assert [item["id"] for item in body["items"]] == [created["id"]]',
+                '    assert body["next_cursor"] is None',
+                "",
+                "",
+                ctx.signature(f"test_list_{plural}_paginates"),
+                '    """A full page carries a cursor; following it yields the rest, once each.',
+                "",
+                "    There is no `total` and no `offset`: the page is a keyset window, so",
+                "    the only way to reach the next records is the cursor it hands back.",
+                '    """',
+                "    created_ids = set()",
+                "    for _ in range(3):",
+                ctx.create_call(assign="record = ", indent="        "),
+                '        created_ids.add(record["id"])',
+                *_request(
+                    "first = ", "get", _url(ctx.base, "/"), ['params={"limit": 2}', *headers]
+                ),
+                "    assert first.status_code == 200",
+                '    assert len(first.json()["items"]) == 2',
+                '    assert first.json()["next_cursor"] is not None',
+                *_request(
+                    "second = ",
+                    "get",
+                    _url(ctx.base, "/"),
+                    ['params={"limit": 2, "cursor": first.json()["next_cursor"]}', *headers],
+                ),
+                "    assert second.status_code == 200",
+                '    assert len(second.json()["items"]) == 1',
+                '    assert second.json()["next_cursor"] is None',
+                "    seen = {",
+                '        item["id"] for item in first.json()["items"] + second.json()["items"]',
+                "    }",
+                "    assert seen == created_ids",
+                "",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            ctx.signature(f"test_list_{plural}_bounds_limit"),
+            '    """`limit` is bounded, so one request cannot ask for the whole table."""',
             *_request(
-                "second = ",
+                "huge = ", "get", _url(ctx.base, "/"), ['params={"limit": 999999999}', *headers]
+            ),
+            "    assert huge.status_code == 422",
+            *_request("zero = ", "get", _url(ctx.base, "/"), ['params={"limit": 0}', *headers]),
+            "    assert zero.status_code == 422",
+            "",
+            "",
+            ctx.signature(f"test_list_{plural}_rejects_forged_cursor"),
+            '    """A truncated or hand-edited cursor is client error, not a 500."""',
+            *_request(
+                "resp = ",
                 "get",
                 _url(ctx.base, "/"),
-                ['params={"limit": 2, "cursor": first.json()["next_cursor"]}', *headers],
+                ['params={"cursor": "not-a-cursor"}', *headers],
             ),
-            "    assert second.status_code == 200",
-            '    assert len(second.json()["items"]) == 1',
-            '    assert second.json()["next_cursor"] is None',
-            '    seen = {item["id"] for item in first.json()["items"] + second.json()["items"]}',
-            "    assert seen == created_ids",
+            "    assert resp.status_code == 400",
             "",
             "",
-        ])
-
-    lines.extend([
-        ctx.signature(f"test_list_{plural}_bounds_limit"),
-        '    """`limit` is bounded, so one request cannot ask for the whole table."""',
-        *_request("huge = ", "get", _url(ctx.base, "/"), ['params={"limit": 999999999}', *headers]),
-        "    assert huge.status_code == 422",
-        *_request("zero = ", "get", _url(ctx.base, "/"), ['params={"limit": 0}', *headers]),
-        "    assert zero.status_code == 422",
-        "",
-        "",
-        ctx.signature(f"test_list_{plural}_rejects_forged_cursor"),
-        '    """A truncated or hand-edited cursor is client error, not a 500."""',
-        *_request(
-            "resp = ", "get", _url(ctx.base, "/"), ['params={"cursor": "not-a-cursor"}', *headers]
-        ),
-        "    assert resp.status_code == 400",
-        "",
-        "",
-    ])
+        ]
+    )
 
     lines.extend(_emit_auth_tests(ctx, endpoint, "list", _url(ctx.base, "/")))
     return lines
@@ -488,39 +528,44 @@ def _emit_get(ctx: _Ctx, endpoint: EndpointIR) -> list[str]:
     lines: list[str] = []
 
     if ctx.can_create:
-        lines.extend([
-            ctx.signature(f"test_get_{ctx.slug}"),
-            f'    """GET {ctx.base}/{{id}} returns the record that was created."""',
-            ctx.create_call(),
-            *_request("resp = ", "get", _record_url(ctx.base), headers),
-            "    assert resp.status_code == 200",
-            '    assert resp.json()["id"] == created["id"]',
-            "",
-            "",
-        ])
-
-    lines.extend([
-        ctx.signature(f"test_get_{ctx.slug}_not_found"),
-        f'    """GET {ctx.base}/{{id}} for an absent record is a 404."""',
-        *_request("resp = ", "get", _url(ctx.base, f"/{ctx.missing_id}"), headers),
-        "    assert resp.status_code == 404",
-        "",
-        "",
-    ])
-
-    if _id_is_uuid(ctx.entity):
-        lines.extend([
-            ctx.signature(f"test_get_{ctx.slug}_malformed_id"),
-            '    """An id of the wrong shape is rejected at the boundary, not by the driver."""',
-            *_request("resp = ", "get", _url(ctx.base, "/not-a-uuid"), headers),
-            "    assert resp.status_code == 422",
-            "",
-            "",
-        ])
+        lines.extend(
+            [
+                ctx.signature(f"test_get_{ctx.slug}"),
+                f'    """GET {ctx.base}/{{id}} returns the record that was created."""',
+                ctx.create_call(),
+                *_request("resp = ", "get", _record_url(ctx.base), headers),
+                "    assert resp.status_code == 200",
+                '    assert resp.json()["id"] == created["id"]',
+                "",
+                "",
+            ]
+        )
 
     lines.extend(
-        _emit_auth_tests(ctx, endpoint, "get", _url(ctx.base, f"/{ctx.missing_id}"))
+        [
+            ctx.signature(f"test_get_{ctx.slug}_not_found"),
+            f'    """GET {ctx.base}/{{id}} for an absent record is a 404."""',
+            *_request("resp = ", "get", _url(ctx.base, f"/{ctx.missing_id}"), headers),
+            "    assert resp.status_code == 404",
+            "",
+            "",
+        ]
     )
+
+    if _id_is_uuid(ctx.entity):
+        lines.extend(
+            [
+                ctx.signature(f"test_get_{ctx.slug}_malformed_id"),
+                '    """An id of the wrong shape is rejected at the boundary."""',
+                "",
+                *_request("resp = ", "get", _url(ctx.base, "/not-a-uuid"), headers),
+                "    assert resp.status_code == 422",
+                "",
+                "",
+            ]
+        )
+
+    lines.extend(_emit_auth_tests(ctx, endpoint, "get", _url(ctx.base, f"/{ctx.missing_id}")))
     return lines
 
 
@@ -528,60 +573,62 @@ def _emit_update(ctx: _Ctx, endpoint: EndpointIR) -> list[str]:
     headers = ctx.auth.headers(endpoint)
     field = _updatable_field(ctx.entity)
     patch = (
-        f'json={{"{field.name}": {_alternate_value(field)}}}'
-        if field is not None
-        else "json={}"
+        f'json={{"{field.name}": {_alternate_value(field)}}}' if field is not None else "json={}"
     )
     lines: list[str] = []
 
     if ctx.can_create and field is not None:
-        lines.extend([
-            ctx.signature(f"test_update_{ctx.slug}"),
-            f'    """PATCH {ctx.base}/{{id}} applies the change and returns the new value."""',
-            ctx.create_call(),
-            *_request("resp = ", "patch", _record_url(ctx.base), [patch, *headers]),
-            "    assert resp.status_code == 200",
-            f'    assert resp.json()["{field.name}"] == {_alternate_value(field)}',
-            "",
-            "",
-        ])
+        lines.extend(
+            [
+                ctx.signature(f"test_update_{ctx.slug}"),
+                f'    """PATCH {ctx.base}/{{id}} applies the change and returns the new value."""',
+                ctx.create_call(),
+                *_request("resp = ", "patch", _record_url(ctx.base), [patch, *headers]),
+                "    assert resp.status_code == 200",
+                f'    assert resp.json()["{field.name}"] == {_alternate_value(field)}',
+                "",
+                "",
+            ]
+        )
 
-    lines.extend([
-        ctx.signature(f"test_update_{ctx.slug}_not_found"),
-        f'    """PATCH {ctx.base}/{{id}} for an absent record is a 404."""',
-        *_request(
-            "resp = ", "patch", _url(ctx.base, f"/{ctx.missing_id}"), [patch, *headers]
-        ),
-        "    assert resp.status_code == 404",
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            ctx.signature(f"test_update_{ctx.slug}_not_found"),
+            f'    """PATCH {ctx.base}/{{id}} for an absent record is a 404."""',
+            *_request("resp = ", "patch", _url(ctx.base, f"/{ctx.missing_id}"), [patch, *headers]),
+            "    assert resp.status_code == 404",
+            "",
+            "",
+        ]
+    )
 
     if ctx.can_create and ctx.entity.state_machine is not None:
         sm = ctx.entity.state_machine
         target = _terminal_or_other_state(sm)
-        lines.extend([
-            ctx.signature(f"test_update_{ctx.slug}_cannot_set_state"),
-            '    """`state` is not writable through the update endpoint.',
-            "",
-            f"    The only writer is PUT {ctx.base}/{{id}}/state, which is the only path",
-            "    that consults the machine's transitions and guards.",
-            '    """',
-            ctx.create_call(),
-            *_request(
-                "resp = ",
-                "patch",
-                _record_url(ctx.base),
-                [f'json={{"state": "{target}"}}', *headers],
-            ),
-            "    assert resp.status_code == 422",
-            *_request("after = ", "get", _record_url(ctx.base), _detail_headers(ctx, headers)),
-            f'    assert after.json()["state"] == "{sm.initial}"'
-            if ctx.endpoint("get", "/{id}")
-            else f'    assert created["state"] == "{sm.initial}"',
-            "",
-            "",
-        ])
+        lines.extend(
+            [
+                ctx.signature(f"test_update_{ctx.slug}_cannot_set_state"),
+                '    """`state` is not writable through the update endpoint.',
+                "",
+                f"    The only writer is PUT {ctx.base}/{{id}}/state, which is the only path",
+                "    that consults the machine's transitions and guards.",
+                '    """',
+                ctx.create_call(),
+                *_request(
+                    "resp = ",
+                    "patch",
+                    _record_url(ctx.base),
+                    [f'json={{"state": "{target}"}}', *headers],
+                ),
+                "    assert resp.status_code == 422",
+                *_request("after = ", "get", _record_url(ctx.base), _detail_headers(ctx, headers)),
+                f'    assert after.json()["state"] == "{sm.initial}"'
+                if ctx.endpoint("get", "/{id}")
+                else f'    assert created["state"] == "{sm.initial}"',
+                "",
+                "",
+            ]
+        )
 
     lines.extend(
         _emit_auth_tests(
@@ -612,24 +659,26 @@ def _emit_delete(ctx: _Ctx, endpoint: EndpointIR) -> list[str]:
         ]
         detail = ctx.endpoint("get", "/{id}")
         if detail is not None:
-            body.extend([
-                *_request("gone = ", "get", _record_url(ctx.base), ctx.auth.headers(detail)),
-                "    assert gone.status_code == 404",
-            ])
+            body.extend(
+                [
+                    *_request("gone = ", "get", _record_url(ctx.base), ctx.auth.headers(detail)),
+                    "    assert gone.status_code == 404",
+                ]
+            )
         lines.extend([*body, "", ""])
 
-    lines.extend([
-        ctx.signature(f"test_delete_{ctx.slug}_not_found"),
-        f'    """DELETE {ctx.base}/{{id}} for an absent record is a 404."""',
-        *_request("resp = ", "delete", _url(ctx.base, f"/{ctx.missing_id}"), headers),
-        "    assert resp.status_code == 404",
-        "",
-        "",
-    ])
-
     lines.extend(
-        _emit_auth_tests(ctx, endpoint, "delete", _url(ctx.base, f"/{ctx.missing_id}"))
+        [
+            ctx.signature(f"test_delete_{ctx.slug}_not_found"),
+            f'    """DELETE {ctx.base}/{{id}} for an absent record is a 404."""',
+            *_request("resp = ", "delete", _url(ctx.base, f"/{ctx.missing_id}"), headers),
+            "    assert resp.status_code == 404",
+            "",
+            "",
+        ]
     )
+
+    lines.extend(_emit_auth_tests(ctx, endpoint, "delete", _url(ctx.base, f"/{ctx.missing_id}")))
     return lines
 
 
@@ -743,79 +792,85 @@ def _emit_transition(ctx: _Ctx, endpoint: EndpointIR) -> list[str]:
                 f"    # VALID_PAYLOAD sets {', '.join(guard.require_fields)}, which this "
                 f"edge's guard requires."
             )
-        lines.extend([
-            ctx.signature(f"test_transition_{ctx.slug}"),
-            f'    """PUT {ctx.base}/{{id}}/state moves {sm.initial} -> {target}."""',
-            ctx.create_call(),
-            *([satisfied] if satisfied else []),
-            *_request(
-                "resp = ",
-                "put",
-                _record_url(ctx.base, "/state"),
-                [f'json={{"state": "{target}"}}', *headers],
-            ),
-            "    assert resp.status_code == 200",
-            f'    assert resp.json()["state"] == "{target}"',
-            "",
-            "",
-        ])
+        lines.extend(
+            [
+                ctx.signature(f"test_transition_{ctx.slug}"),
+                f'    """PUT {ctx.base}/{{id}}/state moves {sm.initial} -> {target}."""',
+                ctx.create_call(),
+                *([satisfied] if satisfied else []),
+                *_request(
+                    "resp = ",
+                    "put",
+                    _record_url(ctx.base, "/state"),
+                    [f'json={{"state": "{target}"}}', *headers],
+                ),
+                "    assert resp.status_code == 200",
+                f'    assert resp.json()["state"] == "{target}"',
+                "",
+                "",
+            ]
+        )
 
     unreachable = _unreachable_state(sm)
     if unreachable is not None:
-        lines.extend([
-            ctx.signature(f"test_transition_{ctx.slug}_invalid"),
-            '    """A move the machine has no edge for is a 409, not a 404 and not a 422.',
-            "",
-            "    The three refusal causes are distinguishable on purpose: the caller",
-            "    has to tell a missing record from an illegal move from a failed guard.",
-            '    """',
+        lines.extend(
+            [
+                ctx.signature(f"test_transition_{ctx.slug}_invalid"),
+                '    """A move the machine has no edge for is a 409, not a 404 and not a 422.',
+                "",
+                "    The three refusal causes are distinguishable on purpose: the caller",
+                "    has to tell a missing record from an illegal move from a failed guard.",
+                '    """',
+                ctx.create_call(),
+                *_request(
+                    "resp = ",
+                    "put",
+                    _record_url(ctx.base, "/state"),
+                    [f'json={{"state": "{unreachable}"}}', *headers],
+                ),
+                "    assert resp.status_code == 409",
+                '    assert resp.json()["detail"]["error"] == "invalid_transition"',
+                "",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            ctx.signature(f"test_transition_{ctx.slug}_unknown_state"),
+            '    """A state the machine does not declare is refused, not stored."""',
             ctx.create_call(),
             *_request(
                 "resp = ",
                 "put",
                 _record_url(ctx.base, "/state"),
-                [f'json={{"state": "{unreachable}"}}', *headers],
+                [f'json={{"state": "{UNKNOWN_STATE}"}}', *headers],
             ),
             "    assert resp.status_code == 409",
             '    assert resp.json()["detail"]["error"] == "invalid_transition"',
             "",
             "",
-        ])
-
-    lines.extend([
-        ctx.signature(f"test_transition_{ctx.slug}_unknown_state"),
-        '    """A state the machine does not declare is refused, not stored."""',
-        ctx.create_call(),
-        *_request(
-            "resp = ",
-            "put",
-            _record_url(ctx.base, "/state"),
-            [f'json={{"state": "{UNKNOWN_STATE}"}}', *headers],
-        ),
-        "    assert resp.status_code == 409",
-        '    assert resp.json()["detail"]["error"] == "invalid_transition"',
-        "",
-        "",
-        ctx.signature(f"test_transition_{ctx.slug}_not_found"),
-        '    """Transitioning an absent record is a 404, distinct from an illegal move."""',
-        *_request(
-            "resp = ",
-            "put",
-            _url(ctx.base, f"/{ctx.missing_id}/state"),
-            ['json={"state": "' + (targets[0] if targets else UNKNOWN_STATE) + '"}', *headers],
-        ),
-        "    assert resp.status_code == 404",
-        '    assert resp.json()["detail"]["error"] == "not_found"',
-        "",
-        "",
-        ctx.signature(f"test_transition_{ctx.slug}_missing_state"),
-        '    """A body with no target state is rejected by the request model."""',
-        ctx.create_call(),
-        *_request("resp = ", "put", _record_url(ctx.base, "/state"), ["json={}", *headers]),
-        "    assert resp.status_code == 422",
-        "",
-        "",
-    ])
+            ctx.signature(f"test_transition_{ctx.slug}_not_found"),
+            '    """Transitioning an absent record is a 404, distinct from an illegal move."""',
+            *_request(
+                "resp = ",
+                "put",
+                _url(ctx.base, f"/{ctx.missing_id}/state"),
+                ['json={"state": "' + (targets[0] if targets else UNKNOWN_STATE) + '"}', *headers],
+            ),
+            "    assert resp.status_code == 404",
+            '    assert resp.json()["detail"]["error"] == "not_found"',
+            "",
+            "",
+            ctx.signature(f"test_transition_{ctx.slug}_missing_state"),
+            '    """A body with no target state is rejected by the request model."""',
+            ctx.create_call(),
+            *_request("resp = ", "put", _record_url(ctx.base, "/state"), ["json={}", *headers]),
+            "    assert resp.status_code == 422",
+            "",
+            "",
+        ]
+    )
 
     for guard in sm.guards:
         if guard.require_fields:
@@ -856,49 +911,57 @@ def _emit_guard_test(
         ctx.create_call(payload="payload"),
     ]
     for step in path:
-        lines.extend([
-            *_request(
-                "step = ",
-                "put",
-                _record_url(ctx.base, "/state"),
-                [f'json={{"state": "{step}"}}', *headers],
-            ),
-            "    assert step.status_code == 200, step.text",
-        ])
-    lines.extend([
-        *_request(
-            "resp = ",
-            "put",
-            _record_url(ctx.base, "/state"),
-            [f'json={{"state": "{guard.to_state}"}}', *headers],
-        ),
-        "    assert resp.status_code == 422",
-        '    assert resp.json()["detail"]["error"] == "guard_failed"',
-    ])
-
-    update = ctx.endpoint("patch", "/{id}")
-    if update is not None:
-        fields = ", ".join(
-            f'"{n}": {_default_value(_field(ctx.entity, n))}' for n in omitted
+        lines.extend(
+            [
+                *_request(
+                    "step = ",
+                    "put",
+                    _record_url(ctx.base, "/state"),
+                    [f'json={{"state": "{step}"}}', *headers],
+                ),
+                "    assert step.status_code == 200, step.text",
+            ]
         )
-        lines.extend([
-            "",
+    lines.extend(
+        [
             *_request(
-                "filled = ",
-                "patch",
-                _record_url(ctx.base),
-                [f"json={{{fields}}}", *ctx.auth.headers(update)],
-            ),
-            "    assert filled.status_code == 200, filled.text",
-            *_request(
-                "allowed = ",
+                "resp = ",
                 "put",
                 _record_url(ctx.base, "/state"),
                 [f'json={{"state": "{guard.to_state}"}}', *headers],
             ),
-            "    assert allowed.status_code == 200, allowed.text",
-            f'    assert allowed.json()["state"] == "{guard.to_state}"',
-        ])
+            "    assert resp.status_code == 422",
+            '    assert resp.json()["detail"]["error"] == "guard_failed"',
+        ]
+    )
+
+    # The second half of the test — that filling the field in unblocks the
+    # transition — needs an endpoint that can set it. An immutable guard field
+    # has no such endpoint, so only the refusal is asserted.
+    update = ctx.endpoint("patch", "/{id}")
+    patchable = {f.name for f in _patchable_fields(ctx.entity)}
+    if update is not None and set(omitted) <= patchable:
+        fields = ", ".join(f'"{n}": {_default_value(_field(ctx.entity, n))}' for n in omitted)
+        lines.extend(
+            [
+                "",
+                *_request(
+                    "filled = ",
+                    "patch",
+                    _record_url(ctx.base),
+                    [f"json={{{fields}}}", *ctx.auth.headers(update)],
+                ),
+                "    assert filled.status_code == 200, filled.text",
+                *_request(
+                    "allowed = ",
+                    "put",
+                    _record_url(ctx.base, "/state"),
+                    [f'json={{"state": "{guard.to_state}"}}', *headers],
+                ),
+                "    assert allowed.status_code == 200, allowed.text",
+                f'    assert allowed.json()["state"] == "{guard.to_state}"',
+            ]
+        )
 
     lines.extend(["", ""])
     return lines
@@ -959,48 +1022,55 @@ def _emit_sensitive_tests(ctx: _Ctx) -> list[str]:
 
     detail = ctx.endpoint("get", "/{id}")
     if detail is not None:
-        lines.extend([
-            '    record_id = created.json()["id"]',
-            *_request(
-                "fetched = ",
-                "get",
-                f'f"{ctx.base}/{{record_id}}"',
-                ctx.auth.headers(detail),
-            ),
-            "    assert fetched.status_code == 200",
-            f"    for name in ({names},):",
-            "        assert name not in fetched.json()",
-        ])
+        lines.extend(
+            [
+                '    record_id = created.json()["id"]',
+                *_request(
+                    "fetched = ",
+                    "get",
+                    f'f"{ctx.base}/{{record_id}}"',
+                    ctx.auth.headers(detail),
+                ),
+                "    assert fetched.status_code == 200",
+                f"    for name in ({names},):",
+                "        assert name not in fetched.json()",
+            ]
+        )
         if textual is not None:
             lines.append("    assert SENSITIVE_SENTINEL not in fetched.text")
 
     listing = ctx.endpoint("get", "/")
     if listing is not None:
-        lines.extend([
-            *_request("page = ", "get", _url(ctx.base, "/"), ctx.auth.headers(listing)),
-            "    assert page.status_code == 200",
-            f"    for name in ({names},):",
-            '        assert all(name not in item for item in page.json()["items"])',
-        ])
+        lines.extend(
+            [
+                *_request("page = ", "get", _url(ctx.base, "/"), ctx.auth.headers(listing)),
+                "    assert page.status_code == 200",
+                f"    for name in ({names},):",
+                '        assert all(name not in item for item in page.json()["items"])',
+            ]
+        )
         if textual is not None:
             lines.append("    assert SENSITIVE_SENTINEL not in page.text")
 
     update = ctx.endpoint("patch", "/{id}")
-    if update is not None and textual is not None:
-        lines.extend([
-            '    record_id = created.json()["id"]',
-            *_request(
-                "patched = ",
-                "patch",
-                f'f"{ctx.base}/{{record_id}}"',
-                [
-                    f'json={{"{textual.name}": SENSITIVE_SENTINEL + "-rotated"}}',
-                    *ctx.auth.headers(update),
-                ],
-            ),
-            "    assert patched.status_code == 200, patched.text",
-            "    assert SENSITIVE_SENTINEL not in patched.text",
-        ])
+    patchable = {f.name for f in _patchable_fields(ctx.entity)}
+    if update is not None and textual is not None and textual.name in patchable:
+        lines.extend(
+            [
+                '    record_id = created.json()["id"]',
+                *_request(
+                    "patched = ",
+                    "patch",
+                    f'f"{ctx.base}/{{record_id}}"',
+                    [
+                        f'json={{"{textual.name}": SENSITIVE_SENTINEL + "-rotated"}}',
+                        *ctx.auth.headers(update),
+                    ],
+                ),
+                "    assert patched.status_code == 200, patched.text",
+                "    assert SENSITIVE_SENTINEL not in patched.text",
+            ]
+        )
 
     lines.extend(["", ""])
     return lines
@@ -1035,15 +1105,19 @@ def _emit_auth_tests(
 
     refused = ctx.auth.refused_role(endpoint)
     if refused:
-        lines.extend([
-            ctx.signature(f"test_{action}_{ctx.slug}_wrong_role"),
-            f'    """{endpoint.method.upper()} as {refused!r} is a 403: the contract '
-            f'does not permit it."""',
-            *_request("resp = ", method, path_expr, [*args, *ctx.auth.headers_for_role(refused)]),
-            "    assert resp.status_code == 403",
-            "",
-            "",
-        ])
+        lines.extend(
+            [
+                ctx.signature(f"test_{action}_{ctx.slug}_wrong_role"),
+                f'    """{endpoint.method.upper()} as {refused!r} is a 403: the contract '
+                f'does not permit it."""',
+                *_request(
+                    "resp = ", method, path_expr, [*args, *ctx.auth.headers_for_role(refused)]
+                ),
+                "    assert resp.status_code == 403",
+                "",
+                "",
+            ]
+        )
 
     return lines
 
@@ -1130,9 +1204,7 @@ def _generate_entity_tests(
 
 def _generate_conftest(ir: DomainIR) -> GeneratedFile:
     auth_infra = next((i for i in ir.infra if i.category == "auth"), None)
-    header = provenance_header(
-        "python", f"domain/{ir.domain}", "Test configuration and fixtures"
-    )
+    header = provenance_header("python", f"domain/{ir.domain}", "Test configuration and fixtures")
 
     lines = [
         header,
@@ -1153,104 +1225,115 @@ def _generate_conftest(ir: DomainIR) -> GeneratedFile:
         'os.environ["DATABASE_BACKEND"] = "memory"',
     ]
     if auth_infra:
-        lines.extend([
-            f'os.environ.setdefault("AUTH_SECRET", "{TEST_AUTH_SECRET}")',
-            'os.environ.setdefault("AUTH_ENABLED", "true")',
-        ])
-    lines.extend([
-        "",
-        "import pytest  # noqa: E402",
-        "from starlette.testclient import TestClient  # noqa: E402",
-        "",
-        "from backend.app import app  # noqa: E402",
-        "from backend.repositories.memory import reset_stores  # noqa: E402",
-    ])
+        lines.extend(
+            [
+                f'os.environ.setdefault("AUTH_SECRET", "{TEST_AUTH_SECRET}")',
+                'os.environ.setdefault("AUTH_ENABLED", "true")',
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "import pytest  # noqa: E402",
+            "from starlette.testclient import TestClient  # noqa: E402",
+            "",
+            "from backend.app import app  # noqa: E402",
+            "from backend.repositories.memory import reset_stores  # noqa: E402",
+        ]
+    )
     if auth_infra:
-        lines.extend([
-            "",
-            "import asyncio  # noqa: E402",
-            "",
-            "from backend.auth.interface import AuthUser  # noqa: E402",
-            "from backend.auth.jwt_provider import JWTAuthProvider  # noqa: E402",
-        ])
+        lines.extend(
+            [
+                "",
+                "import asyncio  # noqa: E402",
+                "",
+                "from backend.auth.interface import AuthUser  # noqa: E402",
+                "from backend.auth.jwt_provider import JWTAuthProvider  # noqa: E402",
+            ]
+        )
 
-    lines.extend([
-        "",
-        "",
-        "def pytest_configure(config):",
-        "    config.addinivalue_line(",
-        '        "markers",',
-        '        "requires_pipeline: requires ML pipeline (skipped unless SPECORA_TEST_FULL=1)",',
-        "    )",
-        "",
-        "",
-        "def pytest_collection_modifyitems(config, items):",
-        '    if os.environ.get("SPECORA_TEST_FULL"):',
-        "        return",
-        '    skip = pytest.mark.skip(reason="requires ML pipeline (set SPECORA_TEST_FULL=1)")',
-        "    for item in items:",
-        '        if "requires_pipeline" in item.keywords:',
-        "            item.add_marker(skip)",
-        "",
-        "",
-        "@pytest.fixture(autouse=True)",
-        "def _empty_stores():",
-        '    """Start and finish every test with an empty database.',
-        "",
-        "    The in-memory adapter's stores are process-global, as they must be for",
-        "    every request in a process to see the same rows. Without this fixture a",
-        "    row created by one test is visible to the next, and a count assertion",
-        "    passes on its own and fails in the suite.",
-        '    """',
-        "    reset_stores()",
-        "    yield",
-        "    reset_stores()",
-        "",
-        "",
-        "@pytest.fixture",
-        "def client():",
-        '    """TestClient backed by the in-memory repository."""',
-        "    with TestClient(app) as test_client:",
-        "        yield test_client",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "",
+            "def pytest_configure(config):",
+            "    config.addinivalue_line(",
+            '        "markers",',
+            '        "requires_pipeline: requires ML pipeline "',
+            '        "(skipped unless SPECORA_TEST_FULL=1)",',
+            "    )",
+            "",
+            "",
+            "def pytest_collection_modifyitems(config, items):",
+            '    if os.environ.get("SPECORA_TEST_FULL"):',
+            "        return",
+            '    skip = pytest.mark.skip(reason="requires ML pipeline (set SPECORA_TEST_FULL=1)")',
+            "    for item in items:",
+            '        if "requires_pipeline" in item.keywords:',
+            "            item.add_marker(skip)",
+            "",
+            "",
+            "@pytest.fixture(autouse=True)",
+            "def _empty_stores():",
+            '    """Start and finish every test with an empty database.',
+            "",
+            "    The in-memory adapter's stores are process-global, as they must be for",
+            "    every request in a process to see the same rows. Without this fixture a",
+            "    row created by one test is visible to the next, and a count assertion",
+            "    passes on its own and fails in the suite.",
+            '    """',
+            "    reset_stores()",
+            "    yield",
+            "    reset_stores()",
+            "",
+            "",
+            "@pytest.fixture",
+            "def client():",
+            '    """TestClient backed by the in-memory repository."""',
+            "    with TestClient(app) as test_client:",
+            "        yield test_client",
+            "",
+        ]
+    )
 
     if auth_infra:
         roles = [str(r) for r in (auth_infra.config.get("roles") or [])] or ["admin"]
-        lines.extend([
-            "",
-            "def make_auth_headers(role: str) -> dict:",
-            '    """Bearer headers for `role`, minted by the application\'s own issuer.',
-            "",
-            "    Deliberately not hand-assembled. The verifier requires typ/iat/iss/aud",
-            "    and checks the issuer and audience, so a fixture that builds its own",
-            "    claim set drifts out of step the moment the provider changes — and then",
-            "    every test in the suite fails with 401 instead of testing anything.",
-            '    """',
-            "    pair = asyncio.run(",
-            "        JWTAuthProvider().issue_tokens(",
-            "            AuthUser(",
-            '                id="00000000-0000-0000-0000-0000000000aa",',
-            '                email="tests@specora.invalid",',
-            "                role=role,",
-            "            )",
-            "        )",
-            "    )",
-            '    return {"Authorization": f"Bearer {pair.access_token}"}',
-            "",
-            "",
-            "@pytest.fixture",
-            "def auth_headers():",
-            '    """Factory: `auth_headers("admin")` -> headers carrying that role."""',
-            "    return make_auth_headers",
-            "",
-            "",
-            "@pytest.fixture",
-            "def admin_headers():",
-            f'    """Auth headers for the {roles[0]!r} role."""',
-            f'    return make_auth_headers("{roles[0]}")',
-            "",
-        ])
+        lines.extend(
+            [
+                "",
+                "def make_auth_headers(role: str) -> dict:",
+                '    """Bearer headers for `role`, minted by the application\'s own issuer.',
+                "",
+                "    Deliberately not hand-assembled. The verifier requires typ/iat/iss/aud",
+                "    and checks the issuer and audience, so a fixture that builds its own",
+                "    claim set drifts out of step the moment the provider changes — and then",
+                "    every test in the suite fails with 401 instead of testing anything.",
+                '    """',
+                "    pair = asyncio.run(",
+                "        JWTAuthProvider().issue_tokens(",
+                "            AuthUser(",
+                '                id="00000000-0000-0000-0000-0000000000aa",',
+                '                email="tests@specora.invalid",',
+                "                role=role,",
+                "            )",
+                "        )",
+                "    )",
+                '    return {"Authorization": f"Bearer {pair.access_token}"}',
+                "",
+                "",
+                "@pytest.fixture",
+                "def auth_headers():",
+                '    """Factory: `auth_headers("admin")` -> headers carrying that role."""',
+                "    return make_auth_headers",
+                "",
+                "",
+                "@pytest.fixture",
+                "def admin_headers():",
+                f'    """Auth headers for the {roles[0]!r} role."""',
+                f'    return make_auth_headers("{roles[0]}")',
+                "",
+            ]
+        )
 
     return GeneratedFile(
         path="backend/tests/conftest.py",
