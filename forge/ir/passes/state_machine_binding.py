@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 def bind_state_machines(ir: DomainIR) -> DomainIR:
     """Bind workflow contracts to entities that reference them.
 
-    For each entity with a _workflow_ref, find the matching
-    StateMachineIR and attach it. Also ensure the entity has
-    a `state` field with the valid states as enum values.
+    For each entity with a `workflow_ref`, find the matching
+    StateMachineIR and attach a private copy of it. Also ensure the entity
+    has a `state` field with the valid states as enum values.
 
     Args:
         ir: The DomainIR to process.
@@ -34,20 +34,28 @@ def bind_state_machines(ir: DomainIR) -> DomainIR:
     workflow_map = {w.fqn: w for w in ir.workflows}
 
     for entity in ir.entities:
-        workflow_ref = getattr(entity, "_workflow_ref", None)
+        workflow_ref = entity.workflow_ref
         if not workflow_ref:
             continue
 
         workflow = workflow_map.get(workflow_ref)
         if workflow is None:
-            logger.warning(
+            # Reported as a hard error by validate_semantics; the pass just has
+            # nothing to bind.
+            logger.debug(
                 "Entity '%s' references workflow '%s' which was not found",
                 entity.fqn, workflow_ref,
             )
             continue
 
-        # Bind the state machine
-        entity.state_machine = workflow
+        # Deep copy, not the shared instance. One workflow is routinely bound to
+        # several entities and also stays in `ir.workflows`, so assigning the
+        # same object made every one of them the same object: a generator that
+        # appended an entity-specific state, or a pass that rewrote a guard,
+        # would silently rewrite the workflow for every other entity too. This
+        # matches mixin_expansion, which already copies each field it grafts on;
+        # the two passes previously disagreed on whether the IR was shared.
+        entity.state_machine = workflow.model_copy(deep=True)
         logger.debug("Bound workflow '%s' to entity '%s'", workflow_ref, entity.fqn)
 
         # Ensure entity has a state field with correct enum values

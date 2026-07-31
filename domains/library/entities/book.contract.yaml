@@ -52,7 +52,7 @@ spec:
         maxLength: 17
 
     author_id:
-      type: string
+      type: uuid
       description: "The author of this book"
       references:
         entity: entity/library/author
@@ -78,7 +78,7 @@ spec:
       description: "Number of pages"
 
     checked_out_to:
-      type: string
+      type: uuid
       description: "Patron who currently has this book"
       references:
         entity: entity/library/patron
@@ -87,7 +87,7 @@ spec:
         graph_direction: forward
 
     reserved_for:
-      type: string
+      type: uuid
       description: "Patron who has reserved this book"
       references:
         entity: entity/library/patron

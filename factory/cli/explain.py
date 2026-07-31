@@ -1,4 +1,5 @@
 """specora factory explain — LLM explains a contract in plain English."""
+
 from __future__ import annotations
 
 import sys
@@ -30,13 +31,17 @@ def factory_explain(path: str) -> None:
     try:
         content = contract_path.read_text(encoding="utf-8")
         contract = yaml.safe_load(content)
-    except Exception as e:
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
         console.print(f"[red]Failed to load:[/red] {e}")
         sys.exit(1)
 
+    if not isinstance(contract, dict):
+        console.print(f"[red]Not a contract:[/red] {contract_path} does not parse to a mapping")
+        sys.exit(1)
+
     kind = contract.get("kind", "?")
-    metadata = contract.get("metadata", {})
-    fqn = f"{kind.lower()}/{metadata.get('domain', '?')}/{metadata.get('name', '?')}"
+    metadata = contract.get("metadata") or {}
+    fqn = f"{str(kind).lower()}/{metadata.get('domain', '?')}/{metadata.get('name', '?')}"
 
     console.print(f"[bold]Explaining:[/bold] {fqn}\n")
 

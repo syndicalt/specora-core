@@ -20,6 +20,7 @@ Typical flow::
 When the interview is complete, call ``session.cleanup()`` to remove the
 persisted state file.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,6 +29,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from factory.paths import write_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -139,12 +142,13 @@ class Session:
         Initializes session state with the given domain and description,
         sets the phase to ``"domain_discovery"``, and records timestamps.
 
+        Any in-memory state is discarded. A session file already on disk is
+        left alone until the next :meth:`save`, so callers that want to protect
+        an in-progress interview must check :meth:`can_resume` first.
+
         Args:
             domain: Name of the domain being modelled.
             description: Human-readable description of the domain.
-
-        Raises:
-            SessionError: If a session is already in progress (session file exists).
         """
         now = datetime.now(timezone.utc).isoformat()
         self.state = SessionState(
@@ -181,10 +185,17 @@ class Session:
         try:
             raw = self._session_path.read_text(encoding="utf-8")
             data = json.loads(raw)
-            self.state = SessionState.from_dict(data)
-            logger.info("Resumed session for domain '%s'", self.state.domain)
-        except (json.JSONDecodeError, KeyError) as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise SessionError(f"Failed to parse session file: {exc}") from exc
+
+        if not isinstance(data, dict):
+            raise SessionError(
+                f"Session file {self._session_path} holds a "
+                f"{type(data).__name__}, not an object."
+            )
+
+        self.state = SessionState.from_dict(data)
+        logger.info("Resumed session for domain '%s'", self.state.domain)
 
     def save(self) -> None:
         """Persist the current session state to disk as JSON.
@@ -198,9 +209,11 @@ class Session:
         self.state.updated_at = datetime.now(timezone.utc).isoformat()
 
         try:
-            self._session_path.parent.mkdir(parents=True, exist_ok=True)
             payload = json.dumps(self.state.to_dict(), indent=2)
-            self._session_path.write_text(payload, encoding="utf-8")
+            # `factory new` saves after every interview answer, including on
+            # Ctrl-C. A partial write here would make the session unresumable
+            # and lose the whole conversation, so the swap has to be atomic.
+            write_atomic(self._session_path, payload)
             logger.debug("Session saved to %s", self._session_path)
         except OSError as exc:
             raise SessionError(f"Failed to save session: {exc}") from exc
@@ -213,9 +226,7 @@ class Session:
         try:
             self._session_path.unlink(missing_ok=True)
             # Remove the .factory directory if it is now empty.
-            if self._session_path.parent.exists() and not any(
-                self._session_path.parent.iterdir()
-            ):
+            if self._session_path.parent.exists() and not any(self._session_path.parent.iterdir()):
                 self._session_path.parent.rmdir()
             logger.info("Session cleaned up")
         except OSError as exc:

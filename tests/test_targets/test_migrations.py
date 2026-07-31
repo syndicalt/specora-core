@@ -1,5 +1,5 @@
 """Tests for database migration system."""
-import json
+
 from pathlib import Path
 
 import pytest
@@ -30,9 +30,8 @@ def sample_ir() -> DomainIR:
 
 
 class TestIRCache:
-
     def test_save_and_load(self, tmp_path: Path, sample_ir: DomainIR) -> None:
-        from forge.targets.migrations.ir_cache import save_ir_cache, load_ir_cache
+        from forge.targets.migrations.ir_cache import load_ir_cache, save_ir_cache
 
         cache_path = tmp_path / "ir_cache"
         save_ir_cache(sample_ir, cache_path)
@@ -51,7 +50,7 @@ class TestIRCache:
         assert loaded is None
 
     def test_round_trips_field_details(self, tmp_path: Path, sample_ir: DomainIR) -> None:
-        from forge.targets.migrations.ir_cache import save_ir_cache, load_ir_cache
+        from forge.targets.migrations.ir_cache import load_ir_cache, save_ir_cache
 
         cache_path = tmp_path / "ir_cache"
         save_ir_cache(sample_ir, cache_path)
@@ -66,20 +65,32 @@ class TestIRCache:
         assert priority.enum_values == ["high", "low"]
 
 
-from forge.ir.model import ReferenceIR, StateMachineIR, StateIR
-
-
 class TestSchemaDiffer:
-
     def test_no_changes(self) -> None:
-        from forge.targets.migrations.differ import diff_entities, SchemaChange
+        from forge.targets.migrations.differ import diff_entities
 
-        old = [EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[
-            FieldIR(name="title", type="string", required=True),
-        ])]
-        new = [EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[
-            FieldIR(name="title", type="string", required=True),
-        ])]
+        old = [
+            EntityIR(
+                fqn="entity/t/task",
+                name="task",
+                domain="t",
+                table_name="tasks",
+                fields=[
+                    FieldIR(name="title", type="string", required=True),
+                ],
+            )
+        ]
+        new = [
+            EntityIR(
+                fqn="entity/t/task",
+                name="task",
+                domain="t",
+                table_name="tasks",
+                fields=[
+                    FieldIR(name="title", type="string", required=True),
+                ],
+            )
+        ]
         changes = diff_entities(old, new)
         assert changes == []
 
@@ -87,9 +98,17 @@ class TestSchemaDiffer:
         from forge.targets.migrations.differ import diff_entities
 
         old = []
-        new = [EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[
-            FieldIR(name="title", type="string", required=True),
-        ])]
+        new = [
+            EntityIR(
+                fqn="entity/t/task",
+                name="task",
+                domain="t",
+                table_name="tasks",
+                fields=[
+                    FieldIR(name="title", type="string", required=True),
+                ],
+            )
+        ]
         changes = diff_entities(old, new)
         assert len(changes) == 1
         assert changes[0].change_type == "create_table"
@@ -98,7 +117,9 @@ class TestSchemaDiffer:
     def test_removed_entity(self) -> None:
         from forge.targets.migrations.differ import diff_entities
 
-        old = [EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[])]
+        old = [
+            EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[])
+        ]
         new = []
         changes = diff_entities(old, new)
         assert len(changes) == 1
@@ -108,13 +129,29 @@ class TestSchemaDiffer:
     def test_field_added(self) -> None:
         from forge.targets.migrations.differ import diff_entities
 
-        old = [EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[
-            FieldIR(name="title", type="string", required=True),
-        ])]
-        new = [EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[
-            FieldIR(name="title", type="string", required=True),
-            FieldIR(name="priority", type="string"),
-        ])]
+        old = [
+            EntityIR(
+                fqn="entity/t/task",
+                name="task",
+                domain="t",
+                table_name="tasks",
+                fields=[
+                    FieldIR(name="title", type="string", required=True),
+                ],
+            )
+        ]
+        new = [
+            EntityIR(
+                fqn="entity/t/task",
+                name="task",
+                domain="t",
+                table_name="tasks",
+                fields=[
+                    FieldIR(name="title", type="string", required=True),
+                    FieldIR(name="priority", type="string"),
+                ],
+            )
+        ]
         changes = diff_entities(old, new)
         assert len(changes) == 1
         assert changes[0].change_type == "add_column"
@@ -123,13 +160,29 @@ class TestSchemaDiffer:
     def test_field_removed(self) -> None:
         from forge.targets.migrations.differ import diff_entities
 
-        old = [EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[
-            FieldIR(name="title", type="string", required=True),
-            FieldIR(name="priority", type="string"),
-        ])]
-        new = [EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[
-            FieldIR(name="title", type="string", required=True),
-        ])]
+        old = [
+            EntityIR(
+                fqn="entity/t/task",
+                name="task",
+                domain="t",
+                table_name="tasks",
+                fields=[
+                    FieldIR(name="title", type="string", required=True),
+                    FieldIR(name="priority", type="string"),
+                ],
+            )
+        ]
+        new = [
+            EntityIR(
+                fqn="entity/t/task",
+                name="task",
+                domain="t",
+                table_name="tasks",
+                fields=[
+                    FieldIR(name="title", type="string", required=True),
+                ],
+            )
+        ]
         changes = diff_entities(old, new)
         assert len(changes) == 1
         assert changes[0].change_type == "drop_column"
@@ -138,32 +191,108 @@ class TestSchemaDiffer:
     def test_field_type_changed(self) -> None:
         from forge.targets.migrations.differ import diff_entities
 
-        old = [EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[
-            FieldIR(name="count", type="string"),
-        ])]
-        new = [EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[
-            FieldIR(name="count", type="integer"),
-        ])]
+        old = [
+            EntityIR(
+                fqn="entity/t/task",
+                name="task",
+                domain="t",
+                table_name="tasks",
+                fields=[
+                    FieldIR(name="count", type="string"),
+                ],
+            )
+        ]
+        new = [
+            EntityIR(
+                fqn="entity/t/task",
+                name="task",
+                domain="t",
+                table_name="tasks",
+                fields=[
+                    FieldIR(name="count", type="integer"),
+                ],
+            )
+        ]
         changes = diff_entities(old, new)
         assert len(changes) == 1
         assert changes[0].change_type == "alter_type"
 
+    def test_field_becoming_server_computed_is_detected(self) -> None:
+        # The raw `required`/`default` attributes are untouched here, but the
+        # rendered column gains DEFAULT now() and NOT NULL. Comparing only the
+        # raw attributes emitted no migration and let the database diverge.
+        from forge.targets.migrations.differ import diff_entities
+
+        old = [
+            EntityIR(
+                fqn="entity/t/task",
+                name="task",
+                domain="t",
+                table_name="tasks",
+                fields=[
+                    FieldIR(name="seen_at", type="datetime"),
+                ],
+            )
+        ]
+        new = [
+            EntityIR(
+                fqn="entity/t/task",
+                name="task",
+                domain="t",
+                table_name="tasks",
+                fields=[
+                    FieldIR(name="seen_at", type="datetime", computed="now"),
+                ],
+            )
+        ]
+        kinds = [c.change_type for c in diff_entities(old, new)]
+        assert kinds == ["set_default", "set_not_null"]
+
+    def test_server_default_is_an_expression_not_a_literal(self) -> None:
+        from forge.targets.migrations.differ import SchemaChange
+        from forge.targets.migrations.sql_writer import schema_change_to_sql
+
+        change = SchemaChange(
+            change_type="set_default",
+            table_name="tasks",
+            field_name="seen_at",
+            field_ir=FieldIR(name="seen_at", type="datetime", computed="now"),
+        )
+        sql = schema_change_to_sql(change)
+        assert "SET DEFAULT now();" in sql
+        assert "'now()'" not in sql
+
     def test_field_became_required(self) -> None:
         from forge.targets.migrations.differ import diff_entities
 
-        old = [EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[
-            FieldIR(name="title", type="string", required=False),
-        ])]
-        new = [EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[
-            FieldIR(name="title", type="string", required=True),
-        ])]
+        old = [
+            EntityIR(
+                fqn="entity/t/task",
+                name="task",
+                domain="t",
+                table_name="tasks",
+                fields=[
+                    FieldIR(name="title", type="string", required=False),
+                ],
+            )
+        ]
+        new = [
+            EntityIR(
+                fqn="entity/t/task",
+                name="task",
+                domain="t",
+                table_name="tasks",
+                fields=[
+                    FieldIR(name="title", type="string", required=True),
+                ],
+            )
+        ]
         changes = diff_entities(old, new)
         assert len(changes) == 1
         assert changes[0].change_type == "set_not_null"
 
 
 class TestSQLWriter:
-
     def test_add_column(self) -> None:
         from forge.targets.migrations.differ import SchemaChange
         from forge.targets.migrations.sql_writer import schema_change_to_sql
@@ -175,7 +304,7 @@ class TestSQLWriter:
             field_ir=FieldIR(name="priority", type="string"),
         )
         sql = schema_change_to_sql(change)
-        assert "ALTER TABLE tasks ADD COLUMN priority TEXT" in sql
+        assert 'ALTER TABLE "tasks" ADD COLUMN IF NOT EXISTS "priority" TEXT' in sql
 
     def test_add_required_column(self) -> None:
         from forge.targets.migrations.differ import SchemaChange
@@ -217,7 +346,7 @@ class TestSQLWriter:
             field_ir=FieldIR(name="count", type="integer"),
         )
         sql = schema_change_to_sql(change)
-        assert "ALTER COLUMN count TYPE INTEGER" in sql
+        assert 'ALTER COLUMN "count" TYPE INTEGER' in sql
 
     def test_set_not_null(self) -> None:
         from forge.targets.migrations.differ import SchemaChange
@@ -235,10 +364,16 @@ class TestSQLWriter:
         from forge.targets.migrations.differ import SchemaChange
         from forge.targets.migrations.sql_writer import schema_change_to_sql
 
-        entity = EntityIR(fqn="entity/t/task", name="task", domain="t", table_name="tasks", fields=[
-            FieldIR(name="title", type="string", required=True),
-            FieldIR(name="id", type="uuid", computed="uuid"),
-        ])
+        entity = EntityIR(
+            fqn="entity/t/task",
+            name="task",
+            domain="t",
+            table_name="tasks",
+            fields=[
+                FieldIR(name="title", type="string", required=True),
+                FieldIR(name="id", type="uuid", computed="uuid"),
+            ],
+        )
         change = SchemaChange(change_type="create_table", table_name="tasks", entity=entity)
         sql = schema_change_to_sql(change)
         assert "CREATE TABLE" in sql
@@ -246,11 +381,12 @@ class TestSQLWriter:
 
 
 class TestMigrationGenerator:
-
     def test_first_generation_creates_initial(self, tmp_path: Path, sample_ir: DomainIR) -> None:
         from forge.targets.migrations.generator import MigrationGenerator
 
-        gen = MigrationGenerator(ir_cache_path=tmp_path / "cache", migrations_dir=tmp_path / "migrations")
+        gen = MigrationGenerator(
+            ir_cache_path=tmp_path / "cache", migrations_dir=tmp_path / "migrations"
+        )
         files = gen.generate(sample_ir)
 
         assert len(files) == 1
@@ -260,15 +396,26 @@ class TestMigrationGenerator:
     def test_second_generation_with_change(self, tmp_path: Path) -> None:
         from forge.targets.migrations.generator import MigrationGenerator
 
-        gen = MigrationGenerator(ir_cache_path=tmp_path / "cache", migrations_dir=tmp_path / "migrations")
+        gen = MigrationGenerator(
+            ir_cache_path=tmp_path / "cache", migrations_dir=tmp_path / "migrations"
+        )
 
         # First generation
-        ir1 = DomainIR(domain="test", entities=[
-            EntityIR(fqn="entity/test/task", name="task", domain="test", table_name="tasks", fields=[
-                FieldIR(name="title", type="string", required=True),
-                FieldIR(name="id", type="uuid", computed="uuid"),
-            ]),
-        ])
+        ir1 = DomainIR(
+            domain="test",
+            entities=[
+                EntityIR(
+                    fqn="entity/test/task",
+                    name="task",
+                    domain="test",
+                    table_name="tasks",
+                    fields=[
+                        FieldIR(name="title", type="string", required=True),
+                        FieldIR(name="id", type="uuid", computed="uuid"),
+                    ],
+                ),
+            ],
+        )
         files1 = gen.generate(ir1)
         assert len(files1) == 1
         # Write to disk so next generation finds them
@@ -278,28 +425,48 @@ class TestMigrationGenerator:
             p.write_text(f.content)
 
         # Second generation — add a field
-        ir2 = DomainIR(domain="test", entities=[
-            EntityIR(fqn="entity/test/task", name="task", domain="test", table_name="tasks", fields=[
-                FieldIR(name="title", type="string", required=True),
-                FieldIR(name="priority", type="string"),
-                FieldIR(name="id", type="uuid", computed="uuid"),
-            ]),
-        ])
+        ir2 = DomainIR(
+            domain="test",
+            entities=[
+                EntityIR(
+                    fqn="entity/test/task",
+                    name="task",
+                    domain="test",
+                    table_name="tasks",
+                    fields=[
+                        FieldIR(name="title", type="string", required=True),
+                        FieldIR(name="priority", type="string"),
+                        FieldIR(name="id", type="uuid", computed="uuid"),
+                    ],
+                ),
+            ],
+        )
         files2 = gen.generate(ir2)
         assert len(files2) == 1
         assert "002_" in files2[0].path
-        assert "ADD COLUMN priority" in files2[0].content
+        assert 'ADD COLUMN IF NOT EXISTS "priority"' in files2[0].content
 
     def test_no_changes_produces_no_migration(self, tmp_path: Path) -> None:
         from forge.targets.migrations.generator import MigrationGenerator
 
-        gen = MigrationGenerator(ir_cache_path=tmp_path / "cache", migrations_dir=tmp_path / "migrations")
+        gen = MigrationGenerator(
+            ir_cache_path=tmp_path / "cache", migrations_dir=tmp_path / "migrations"
+        )
 
-        ir = DomainIR(domain="test", entities=[
-            EntityIR(fqn="entity/test/task", name="task", domain="test", table_name="tasks", fields=[
-                FieldIR(name="title", type="string", required=True),
-            ]),
-        ])
+        ir = DomainIR(
+            domain="test",
+            entities=[
+                EntityIR(
+                    fqn="entity/test/task",
+                    name="task",
+                    domain="test",
+                    table_name="tasks",
+                    fields=[
+                        FieldIR(name="title", type="string", required=True),
+                    ],
+                ),
+            ],
+        )
 
         # First gen
         files1 = gen.generate(ir)

@@ -6,7 +6,7 @@ without the caller needing to know provider-specific details.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -105,7 +105,18 @@ _BUILTIN_MODELS: dict[str, ModelCapabilities] = {
         supports_structured_output=True,
         max_context=1_000_000,
         tier="frontier",
-        notes="Uses OpenAI-compatible API.",
+        notes=(
+            "Google Gemini via the OpenAI-compatible endpoint at "
+            "generativelanguage.googleapis.com/v1beta/openai/. Set GOOGLE_API_KEY."
+        ),
+    ),
+    "gemini-2.5-flash": ModelCapabilities(
+        provider="openai",
+        supports_tools=True,
+        supports_structured_output=True,
+        max_context=1_000_000,
+        tier="mid",
+        notes="Google Gemini Flash via the OpenAI-compatible endpoint.",
     ),
     # --- Z.AI (GLM) — requires JWT-signed auth ---
     "glm-5.1": ModelCapabilities(
@@ -141,28 +152,47 @@ _BUILTIN_MODELS: dict[str, ModelCapabilities] = {
         notes="Z.AI free tier.",
     ),
     # --- Local (Ollama) ---
+    # supports_tools stays False across the board: Ollama's tool support is
+    # per-model and per-server-version, and claiming it here would make the
+    # engine send tool definitions that a given host silently ignores.
+    # Structured output is the JSON mode Ollama's /v1 endpoint does implement.
     "llama3.3:70b": ModelCapabilities(
-        provider="local",
+        provider="ollama",
         supports_tools=False,
         supports_structured_output=True,
         max_context=128_000,
         tier="local",
+        notes="Local via Ollama. Set OLLAMA_BASE_URL.",
     ),
     "qwen2.5:32b": ModelCapabilities(
-        provider="local",
+        provider="ollama",
         supports_tools=False,
         supports_structured_output=True,
         max_context=32_000,
         tier="local",
+        notes="Local via Ollama.",
     ),
     "mistral:7b": ModelCapabilities(
-        provider="local",
+        provider="ollama",
         supports_tools=False,
         supports_structured_output=False,
         max_context=32_000,
         tier="local",
+        notes="Local via Ollama.",
     ),
 }
+
+# Conservative capabilities for an Ollama tag the registry has never seen.
+# Users pull arbitrary models; refusing to run them would make the local
+# provider useless, but assuming tool support would make it lie.
+UNKNOWN_OLLAMA_MODEL = ModelCapabilities(
+    provider="ollama",
+    supports_tools=False,
+    supports_structured_output=False,
+    max_context=8_192,
+    tier="local",
+    notes="Unregistered Ollama tag; capabilities assumed minimal.",
+)
 
 
 class ModelRegistry:
@@ -177,6 +207,10 @@ class ModelRegistry:
     def get(self, model_id: str) -> ModelCapabilities | None:
         """Return capabilities for *model_id*, or ``None`` if unknown."""
         return self._models.get(model_id)
+
+    def register(self, model_id: str, capabilities: ModelCapabilities) -> None:
+        """Add or replace an entry, e.g. for a locally pulled Ollama tag."""
+        self._models[model_id] = capabilities
 
     def list_models(self, *, provider: str | None = None) -> list[str]:
         """Return model IDs, optionally filtered by provider."""

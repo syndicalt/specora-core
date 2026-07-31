@@ -1,160 +1,470 @@
-"""Generate FastAPI route handlers that call repositories."""
+"""Generate FastAPI route handlers that call repositories.
+
+Handlers are emitted from an exact (method, path) dispatch table rather than
+from substring tests on the path. Substring dispatch conflated every path
+containing `{id}`, so a contract declaring both `GET /{id}` and
+`GET /{id}/history` produced two identically-named handlers decorated with the
+same route: Python kept the second definition, FastAPI served the first, and
+the `/history` endpoint vanished from the application without a warning.
+
+Any (method, path) shape outside the table raises `GenerationError`. The
+previous fallback emitted a 200 stub whose function name was derived by
+`path.replace("/", "_")` — for `/{id}/archive` that is
+`post_order_{id}_archive`, not a legal identifier, so the module failed to
+import and took the whole application down at deploy time.
+"""
 from __future__ import annotations
 
 from forge.ir.model import DomainIR, EndpointIR, EntityIR, RouteIR
-from forge.targets.base import GeneratedFile, provenance_header
+from forge.targets.base import GeneratedFile, GenerationError, provenance_header
+from forge.targets.naming import (
+    class_name,
+    module_slug,
+    pluralize,
+    py_identifier,
+    repo_accessor,
+)
 
-PYTHON_TYPE_MAP = {
-    "string": "str", "integer": "int", "number": "float", "boolean": "bool",
-    "text": "str", "array": "list", "object": "dict", "datetime": "str",
-    "date": "str", "uuid": "str", "email": "str",
+# Keyset page bounds. `limit` was previously an unbounded `int` default, so
+# `?limit=999999999` was a single-request denial of service against the
+# hottest endpoint in every generated app. This ceiling must stay at or below
+# the repository's own MAX_PAGE_LIMIT so the route rejects first, with a 422
+# naming the parameter, rather than the adapter refusing further in.
+DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 200
+
+# The FastAPI path parameter name. Contracts write `{id}`; `id` shadows the
+# builtin inside the handler body, so it is renamed on the way out.
+PATH_PARAM = "record_id"
+
+# Repository transition failures carry a stable code so that "no such record",
+# "that transition is not in the machine", and "a guard rejected it" reach the
+# client as distinct statuses instead of one indistinguishable 422.
+TRANSITION_ERROR_STATUS = {
+    "not_found": 404,
+    "invalid_transition": 409,
+    "guard_failed": 422,
 }
 
+# Generated modules are linted by the app's own gate, which inherits this
+# repo's line length.
+MAX_LINE = 100
 
-def _to_class(name: str) -> str:
-    return "".join(p.capitalize() for p in name.split("_"))
+SUPPORTED_SHAPES = (
+    "GET /", "POST /", "GET /{id}", "PATCH /{id}", "DELETE /{id}", "PUT /{id}/state",
+)
 
 
 def generate_routes(ir: DomainIR) -> list[GeneratedFile]:
     """Generate one route module per Route contract."""
     entity_map = {e.fqn: e for e in ir.entities}
-    # Check for auth
     auth_infra = next((i for i in ir.infra if i.category == "auth"), None)
-    files = []
 
+    files = []
     for route in ir.routes:
         entity = entity_map.get(route.entity_fqn)
-        files.append(_generate_route(route, entity, auth_infra))
-
+        if entity is None:
+            raise GenerationError(
+                f"Route {route.fqn!r} manages entity {route.entity_fqn!r}, which is "
+                f"not in the compiled IR. The generated module would import models "
+                f"and a repository that do not exist."
+            )
+        files.append(_generate_route(ir, route, entity, auth_infra))
     return files
 
 
-def _generate_route(route: RouteIR, entity: EntityIR | None, auth_infra) -> GeneratedFile:
-    header = provenance_header("python", route.fqn, f"API routes for {route.name}")
+def _canonical_path(path: str) -> str:
+    """Normalize a declared endpoint path to its dispatch key.
 
-    entity_name = route.entity_fqn.split("/")[-1] if route.entity_fqn else route.name
-    cls = _to_class(entity_name)
-    base_path = route.base_path or f"/{entity_name}s"
+    `/{id}` and `/{id}/` are the same endpoint and must not produce two
+    handlers.
+    """
+    p = path.strip()
+    if not p.startswith("/"):
+        p = "/" + p
+    return p.rstrip("/") or "/"
 
-    lines = [
-        header,
-        "from __future__ import annotations",
-        "",
-        "import uuid",
-        "from datetime import datetime, timezone",
-        "from typing import Any",
-        "",
-        "from fastapi import APIRouter, Depends, HTTPException",
-        "",
-        f"from backend.models import {cls}Create, {cls}Update, {cls}Response",
-        f"from backend.repositories.base import {cls}Repository, get_{entity_name}_repo",
-    ]
 
-    if auth_infra:
-        lines.append("from backend.auth.middleware import require_auth, require_role")
+def _auth_dependency(endpoint: EndpointIR, auth_infra) -> tuple[str | None, str | None]:
+    """Return the handler's auth parameter and the middleware name it needs."""
+    if not auth_infra:
+        return None, None
+    if endpoint.roles:
+        roles = ", ".join(f'"{r}"' for r in endpoint.roles)
+        return f"user = Depends(require_role({roles}))", "require_role"
+    return "user = Depends(require_auth)", "require_auth"
 
-    lines.extend([
-        "",
-        f'router = APIRouter(prefix="{base_path}", tags=["{entity_name}"])',
-        "",
-        "",
-    ])
+
+def _def_lines(name: str, params: list[str]) -> list[str]:
+    """Render an `async def` with one parameter per line.
+
+    A repository dependency plus a role check plus a body model does not fit on
+    one line for any realistic entity name, and the generated app is linted.
+    """
+    return [f"async def {name}(", *(f"    {p}," for p in params), "):"]
+
+
+class _RouteModule:
+    """Accumulates one route module's handlers and the imports they require.
+
+    Imports are tracked as handlers are emitted so the module ends up with
+    exactly the names it uses — a fixed preamble fails the generated app's own
+    lint gate.
+    """
+
+    def __init__(self, ir: DomainIR, route: RouteIR, entity: EntityIR, auth_infra) -> None:
+        self.route = route
+        self.entity = entity
+        self.auth_infra = auth_infra
+        self.cls = class_name(entity.name, entity.domain, multi_domain=ir.multi_domain)
+        self.slug = module_slug(entity.name, entity.domain, multi_domain=ir.multi_domain)
+        self.repo_getter = repo_accessor(entity.name, entity.domain, multi_domain=ir.multi_domain)
+        self.base_path = route.base_path or f"/{pluralize(entity.name)}"
+
+        self.repo_dep = f"repo: {self.cls}Repository = Depends({self.repo_getter})"
+        self.sensitive = sorted(f.name for f in entity.fields if f.sensitive)
+
+        # The id column's declared type decides how the path parameter is
+        # validated. A UUID column means the Postgres adapter casts the value
+        # (`= $1::text::UUID`), and a non-UUID path segment makes the *server*
+        # raise — so `/tenants/not-a-uuid` answered 500. Typing the parameter
+        # pushes that to FastAPI, which rejects it at the boundary with a 422
+        # naming the parameter, before any adapter sees it.
+        id_field = next((f for f in entity.fields if f.name == "id"), None)
+        self.id_is_uuid = id_field is not None and id_field.type == "uuid"
+        # `uuid.UUID` rather than a `from uuid import UUID`: the create handler
+        # already imports the module for `uuid.uuid4()`, and one binding is
+        # better than two names for the same thing in one module.
+        self.id_annotation = "uuid.UUID" if self.id_is_uuid else "str"
+        self.id_arg = f"str({PATH_PARAM})" if self.id_is_uuid else PATH_PARAM
+        self.repo_imports: set[str] = {self.cls + "Repository", self.repo_getter}
+        self.model_imports: set[str] = set()
+        self.auth_imports: set[str] = set()
+        self.fastapi_imports: set[str] = {"APIRouter", "Depends", "HTTPException"}
+        self.stdlib_imports: set[str] = set()
+        self.handlers: dict[str, list[str]] = {}
+
+    def public(self, expr: str) -> str:
+        """Wrap a record expression in the module's write-only-column filter.
+
+        Entities with no `sensitive` field get the bare expression, so their
+        generated output is unchanged.
+        """
+        return f"_public({expr})" if self.sensitive else expr
+
+    def _public_helper(self) -> list[str]:
+        """Module preamble that strips write-only columns from a record.
+
+        The response models already omit these fields, so this is the second of
+        two independent controls on a credential column. It is here because the
+        handler hands the repository's row to FastAPI as a plain dict: the
+        moment a `response_model=` is dropped or a handler starts building its
+        own payload, the model's omission stops protecting anything, and the
+        column this guards is a password hash.
+        """
+        if not self.sensitive:
+            return []
+        names = ", ".join(f'"{n}"' for n in self.sensitive)
+        return [
+            f"_SENSITIVE_FIELDS = frozenset({{{names}}})",
+            "",
+            "",
+            "def _public(record: dict) -> dict:",
+            '    """Drop write-only columns before a record leaves the process."""',
+            "    return {k: v for k, v in record.items() if k not in _SENSITIVE_FIELDS}",
+            "",
+            "",
+        ]
+
+    def id_param(self) -> str:
+        """The path parameter declaration, typed from the id column."""
+        if self.id_is_uuid:
+            self.stdlib_imports.add("import uuid")
+        return f"{PATH_PARAM}: {self.id_annotation}"
+
+    def params(self, auth_param: str | None, *leading: str) -> list[str]:
+        """Handler parameters: the endpoint's own, then the repo, then auth."""
+        return [*leading, self.repo_dep, *([auth_param] if auth_param else [])]
+
+    def add(self, name: str, lines: list[str]) -> None:
+        if name in self.handlers:
+            raise GenerationError(
+                f"Route {self.route.fqn!r} declares two endpoints that both compile "
+                f"to the handler {name!r}. One would overwrite the other and the "
+                f"endpoint would disappear from the application."
+            )
+        self.handlers[name] = lines
+
+    def render(self) -> str:
+        lines = [
+            provenance_header("python", self.route.fqn, f"API routes for {self.route.name}"),
+            "from __future__ import annotations",
+            "",
+        ]
+        if self.stdlib_imports:
+            plain = sorted(i for i in self.stdlib_imports if i.startswith("import "))
+            frm = sorted(i for i in self.stdlib_imports if not i.startswith("import "))
+            lines.extend(plain + frm)
+            lines.append("")
+        lines.append(f"from fastapi import {', '.join(sorted(self.fastapi_imports))}")
+        lines.append("")
+        # A route set of only DELETE endpoints references no model at all, and
+        # `from backend.models import` with an empty name list is a SyntaxError.
+        if self.model_imports:
+            names = ", ".join(sorted(self.model_imports))
+            single = f"from backend.models import {names}"
+            if len(single) <= MAX_LINE:
+                lines.append(single)
+            else:
+                lines.append("from backend.models import (")
+                lines.extend(f"    {n}," for n in sorted(self.model_imports))
+                lines.append(")")
+        repo_names = ", ".join(sorted(self.repo_imports))
+        single = f"from backend.repositories.base import {repo_names}"
+        if len(single) <= MAX_LINE:
+            lines.append(single)
+        else:
+            lines.append("from backend.repositories.base import (")
+            lines.extend(f"    {n}," for n in sorted(self.repo_imports))
+            lines.append(")")
+        if self.auth_imports:
+            lines.append(
+                f"from backend.auth.middleware import {', '.join(sorted(self.auth_imports))}"
+            )
+        lines.extend([
+            "",
+            f'router = APIRouter(prefix="{self.base_path}", tags=["{self.entity.name}"])',
+            "",
+            "",
+        ])
+        lines.extend(self._public_helper())
+        for handler in self.handlers.values():
+            lines.extend(handler)
+            lines.append("")
+        return "\n".join(lines)
+
+
+def _generate_route(ir: DomainIR, route: RouteIR, entity: EntityIR, auth_infra) -> GeneratedFile:
+    module = _RouteModule(ir, route, entity, auth_infra)
 
     for endpoint in route.endpoints:
-        lines.extend(_generate_endpoint(endpoint, entity_name, cls, base_path, entity, auth_infra))
-        lines.append("")
+        _emit_endpoint(module, endpoint)
 
     return GeneratedFile(
-        path=f"backend/routes_{entity_name}.py",
-        content="\n".join(lines),
+        path=f"backend/routes_{module.slug}.py",
+        content=module.render(),
         provenance=route.fqn,
     )
 
 
-def _generate_endpoint(endpoint, entity_name, cls, base_path, entity, auth_infra) -> list[str]:
-    lines = []
-    method = endpoint.method.lower()
-    path = endpoint.path
-    repo_dep = f"repo: {cls}Repository = Depends(get_{entity_name}_repo)"
-    auth_dep = ""
-    if auth_infra:
-        if endpoint.roles:
-            roles_str = ", ".join(f'"{r}"' for r in endpoint.roles)
-            auth_dep = f", user = Depends(require_role({roles_str}))"
-        else:
-            auth_dep = ", user = Depends(require_auth)"
+def _emit_endpoint(module: _RouteModule, endpoint: EndpointIR) -> None:
+    key = (endpoint.method.lower(), _canonical_path(endpoint.path))
+    emitter = _EMITTERS.get(key)
+    if emitter is None:
+        raise GenerationError(
+            f"Route {module.route.fqn!r} declares {endpoint.method.upper()} "
+            f"{endpoint.path!r}, which this generator cannot turn into a handler. "
+            f"Supported shapes: {', '.join(SUPPORTED_SHAPES)}. Express the "
+            f"behaviour as one of those, or extend the fastapi_prod generator — "
+            f"emitting a stub here would ship an endpoint that answers 200 "
+            f"without doing anything."
+        )
+    emitter(module, endpoint)
 
-    if method == "get" and path == "/":
-        lines.append(f'@router.get("/")')
-        lines.append(f"async def list_{entity_name}s(limit: int = 100, offset: int = 0, {repo_dep}{auth_dep}):")
-        lines.append(f'    """List {entity_name}s."""')
-        lines.append(f"    items, total = await repo.list(limit=limit, offset=offset)")
-        lines.append(f"    return {{'items': items, 'total': total}}")
-        return lines
 
-    if method == "get" and "{id}" in path:
-        lines.append(f'@router.get("/{{record_id}}")')
-        lines.append(f"async def get_{entity_name}(record_id: str, {repo_dep}{auth_dep}):")
-        lines.append(f'    """Get {entity_name} by ID."""')
-        lines.append(f"    record = await repo.get(record_id)")
-        lines.append(f"    if not record:")
-        lines.append(f'        raise HTTPException(404, detail={{"error": "not_found"}})')
-        lines.append(f"    return record")
-        return lines
+# ── Handler emitters ────────────────────────────────────────────────────────
 
-    if method == "post" and path == "/":
-        status = endpoint.response_status or 201
-        lines.append(f'@router.post("/", status_code={status})')
-        lines.append(f"async def create_{entity_name}(body: {cls}Create, {repo_dep}{auth_dep}):")
-        lines.append(f'    """Create {entity_name}."""')
-        lines.append(f"    data = body.model_dump(exclude_none=True)")
-        for field_name, expr in endpoint.auto_fields.items():
-            if "uuid" in expr.lower():
-                lines.append(f'    data["{field_name}"] = str(uuid.uuid4())')
-            elif "now" in expr.lower():
-                lines.append(f'    data["{field_name}"] = datetime.now(timezone.utc).isoformat()')
-        lines.append(f"    record = await repo.create(data)")
-        lines.append(f'    record["_links"] = {{"self": f"{base_path}/{{record[\'id\']}}"}}')
-        lines.append(f"    return record")
-        return lines
 
-    if method == "patch" and "{id}" in path:
-        lines.append(f'@router.patch("/{{record_id}}")')
-        lines.append(f"async def update_{entity_name}(record_id: str, body: {cls}Update, {repo_dep}{auth_dep}):")
-        lines.append(f'    """Update {entity_name}."""')
-        lines.append(f"    data = body.model_dump(exclude_none=True)")
-        lines.append(f"    record = await repo.update(record_id, data)")
-        lines.append(f"    if not record:")
-        lines.append(f'        raise HTTPException(404, detail={{"error": "not_found"}})')
-        lines.append(f"    return record")
-        return lines
+def _emit_list(module: _RouteModule, endpoint: EndpointIR) -> None:
+    name = py_identifier(f"list_{pluralize(module.slug)}")
+    auth_param, auth_import = _auth_dependency(endpoint, module.auth_infra)
+    module.fastapi_imports.add("Query")
+    module.model_imports.update({f"{module.cls}Page", f"{module.cls}Response"})
+    # The base class, not the two leaf types: `cursor` and `filters` are the
+    # only caller-controlled inputs the repository validates, and every way it
+    # can reject them is a client error. Naming the leaves would let a sibling
+    # added later escape as a 500.
+    module.repo_imports.add("RepositoryError")
+    if auth_import:
+        module.auth_imports.add(auth_import)
 
-    if method == "delete" and "{id}" in path:
-        lines.append(f'@router.delete("/{{record_id}}", status_code=204)')
-        lines.append(f"async def delete_{entity_name}(record_id: str, {repo_dep}{auth_dep}):")
-        lines.append(f'    """Delete {entity_name}."""')
-        lines.append(f"    deleted = await repo.delete(record_id)")
-        lines.append(f"    if not deleted:")
-        lines.append(f'        raise HTTPException(404, detail={{"error": "not_found"}})')
-        lines.append(f"    return None")
-        return lines
+    params = module.params(
+        auth_param,
+        f"limit: int = Query({DEFAULT_PAGE_SIZE}, ge=1, le={MAX_PAGE_SIZE})",
+        "cursor: str | None = Query(None)",
+    )
+    module.add(name, [
+        f'@router.get("/", response_model={module.cls}Page)',
+        *_def_lines(name, params),
+        f'    """List {module.entity.name} records, newest first."""',
+        "    try:",
+        "        page = await repo.list(limit=limit, cursor=cursor)",
+        "    except RepositoryError as exc:",
+        # A cursor arrives in a query string, so a truncated or hand-edited one
+        # is ordinary bad input. Uncaught it is a 500 — the failure keyset
+        # pagination was introduced to avoid.
+        '        raise HTTPException(400, detail={"error": "invalid_query", '
+        '"message": str(exc)}) from None',
+        f'    return {{"items": [{module.public("i")} for i in page.items], '
+        '"next_cursor": page.next_cursor}'
+        if module.sensitive
+        else '    return {"items": page.items, "next_cursor": page.next_cursor}',
+    ])
 
-    if method == "put" and "state" in path:
-        lines.append(f'@router.put("/{{record_id}}/state")')
-        lines.append(f"async def transition_{entity_name}(record_id: str, body: dict[str, Any], {repo_dep}{auth_dep}):")
-        lines.append(f'    """Transition {entity_name} state."""')
-        lines.append(f'    new_state = body.get("state")')
-        lines.append(f"    if not new_state:")
-        lines.append(f'        raise HTTPException(422, detail={{"error": "state required"}})')
-        lines.append(f"    record = await repo.transition(record_id, new_state)")
-        lines.append(f"    if not record:")
-        lines.append(f'        raise HTTPException(422, detail={{"error": "invalid_transition"}})')
-        lines.append(f"    return record")
-        return lines
 
-    # Fallback
-    lines.append(f'@router.{method}("{path}")')
-    lines.append(f"async def {method}_{entity_name}_{path.replace('/', '_').strip('_')}():")
-    lines.append(f'    """{endpoint.summary}"""')
-    lines.append(f'    return {{"message": "not implemented"}}')
-    return lines
+def _emit_create(module: _RouteModule, endpoint: EndpointIR) -> None:
+    name = py_identifier(f"create_{module.slug}")
+    auth_param, auth_import = _auth_dependency(endpoint, module.auth_infra)
+    status = endpoint.response_status or 201
+    module.model_imports.update({f"{module.cls}Create", f"{module.cls}Response"})
+    if auth_import:
+        module.auth_imports.add(auth_import)
+
+    lines = [
+        f'@router.post("/", status_code={status}, response_model={module.cls}Response)',
+        *_def_lines(name, module.params(auth_param, f"body: {module.cls}Create")),
+        f'    """Create a {module.entity.name}."""',
+        # `exclude_unset`, not `exclude_none`: an explicit null is a value the
+        # caller chose and must reach the repository.
+        "    data = body.model_dump(exclude_unset=True)",
+    ]
+    for field_name, expr in endpoint.auto_fields.items():
+        lowered = expr.lower()
+        if "uuid" in lowered:
+            module.stdlib_imports.add("import uuid")
+            lines.append(f'    data["{field_name}"] = str(uuid.uuid4())')
+        elif "now" in lowered:
+            module.stdlib_imports.add("from datetime import datetime, timezone")
+            # A datetime object, not an ISO string: the column is TIMESTAMPTZ
+            # and asyncpg will not encode a str into it.
+            lines.append(f'    data["{field_name}"] = datetime.now(timezone.utc)')
+
+    self_link = '{"self": f"' + module.base_path + "/{record['id']}\"}"
+    lines.extend([
+        "    record = await repo.create(data)",
+        # The memory adapter returns the stored object itself, so mutating the
+        # return value writes the link back into the store, where it reappears
+        # on every later read.
+        "    return {**" + module.public("record") + ', "_links": ' + self_link + "}",
+    ])
+    module.add(name, lines)
+
+
+def _emit_get(module: _RouteModule, endpoint: EndpointIR) -> None:
+    name = py_identifier(f"get_{module.slug}")
+    auth_param, auth_import = _auth_dependency(endpoint, module.auth_infra)
+    module.model_imports.add(f"{module.cls}Response")
+    if auth_import:
+        module.auth_imports.add(auth_import)
+
+    module.add(name, [
+        f'@router.get("/{{{PATH_PARAM}}}", response_model={module.cls}Response)',
+        *_def_lines(name, module.params(auth_param, module.id_param())),
+        f'    """Fetch a {module.entity.name} by ID."""',
+        f"    record = await repo.get({module.id_arg})",
+        "    if record is None:",
+        '        raise HTTPException(404, detail={"error": "not_found"})',
+        f"    return {module.public('record')}",
+    ])
+
+
+def _emit_update(module: _RouteModule, endpoint: EndpointIR) -> None:
+    name = py_identifier(f"update_{module.slug}")
+    auth_param, auth_import = _auth_dependency(endpoint, module.auth_infra)
+    module.model_imports.update({f"{module.cls}Update", f"{module.cls}Response"})
+    if auth_import:
+        module.auth_imports.add(auth_import)
+
+    module.add(name, [
+        f'@router.patch("/{{{PATH_PARAM}}}", response_model={module.cls}Response)',
+        *_def_lines(
+            name,
+            module.params(auth_param, module.id_param(), f"body: {module.cls}Update"),
+        ),
+        f'    """Partially update a {module.entity.name}."""',
+        # `exclude_unset` is what makes PATCH a partial update: every field on
+        # the model defaults to None, so `exclude_none` would erase the
+        # difference between "not mentioned" and "set to null" and a nullable
+        # field could never be cleared.
+        "    data = body.model_dump(exclude_unset=True)",
+        "    if not data:",
+        # An empty patch changes nothing; it must still answer with the current
+        # representation rather than send an empty SET clause to the adapter.
+        f"        record = await repo.get({module.id_arg})",
+        "    else:",
+        f"        record = await repo.update({module.id_arg}, data)",
+        "    if record is None:",
+        '        raise HTTPException(404, detail={"error": "not_found"})',
+        f"    return {module.public('record')}",
+    ])
+
+
+def _emit_delete(module: _RouteModule, endpoint: EndpointIR) -> None:
+    name = py_identifier(f"delete_{module.slug}")
+    auth_param, auth_import = _auth_dependency(endpoint, module.auth_infra)
+    if auth_import:
+        module.auth_imports.add(auth_import)
+
+    module.add(name, [
+        f'@router.delete("/{{{PATH_PARAM}}}", status_code=204)',
+        *_def_lines(name, module.params(auth_param, module.id_param())),
+        f'    """Delete a {module.entity.name}."""',
+        f"    deleted = await repo.delete({module.id_arg})",
+        "    if not deleted:",
+        '        raise HTTPException(404, detail={"error": "not_found"})',
+        "    return None",
+    ])
+
+
+def _emit_transition(module: _RouteModule, endpoint: EndpointIR) -> None:
+    if module.entity.state_machine is None:
+        raise GenerationError(
+            f"Route {module.route.fqn!r} declares PUT {endpoint.path!r}, but entity "
+            f"{module.entity.fqn!r} binds no workflow. Its repository has no "
+            f"transition() method, so the handler would call something that does "
+            f"not exist. Bind a workflow contract or drop the endpoint."
+        )
+
+    name = py_identifier(f"transition_{module.slug}")
+    auth_param, auth_import = _auth_dependency(endpoint, module.auth_infra)
+    module.model_imports.update({f"{module.cls}StateChange", f"{module.cls}Response"})
+    if auth_import:
+        module.auth_imports.add(auth_import)
+
+    status_map = [
+        "# A refused transition has three distinct causes and the caller has to",
+        "# tell them apart: the record is gone, the machine has no such edge, or",
+        "# a guard rejected the move.",
+        "_TRANSITION_STATUS = {",
+        *(f'    "{code}": {status},' for code, status in TRANSITION_ERROR_STATUS.items()),
+        "}",
+        "",
+        "",
+    ]
+    lines = [
+        *status_map,
+        f'@router.put("/{{{PATH_PARAM}}}/state", response_model={module.cls}Response)',
+        *_def_lines(
+            name,
+            module.params(auth_param, module.id_param(), f"body: {module.cls}StateChange"),
+        ),
+        f'    """Move a {module.entity.name} to a new lifecycle state."""',
+        # The only write path to `state`. Create and update models exclude the
+        # field, so the machine's transitions and guards cannot be bypassed.
+        f"    result = await repo.transition({module.id_arg}, body.state)",
+        "    if result.error is not None:",
+        "        status = _TRANSITION_STATUS.get(result.error, 422)",
+        '        raise HTTPException(status, detail={"error": result.error})',
+        f"    return {module.public('result.record')}",
+    ]
+    module.add(name, lines)
+
+
+_EMITTERS = {
+    ("get", "/"): _emit_list,
+    ("post", "/"): _emit_create,
+    ("get", "/{id}"): _emit_get,
+    ("patch", "/{id}"): _emit_update,
+    ("delete", "/{id}"): _emit_delete,
+    ("put", "/{id}/state"): _emit_transition,
+}

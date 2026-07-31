@@ -34,12 +34,24 @@ Usage:
 
 from __future__ import annotations
 
+import ast
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from forge.ir.model import DomainIR
 from forge.provenance import provenance_source_line
+
+
+class GenerationError(Exception):
+    """Raised when a generator produces output that cannot be valid.
+
+    A generator emitting broken code must fail at generation time. The
+    alternative — writing it to disk and discovering it at deploy time — is
+    what let a contract declaring `POST /{id}/archive` produce a module
+    containing `async def post_order_{id}_archive():` and take down the whole
+    application on import.
+    """
 
 
 @dataclass
@@ -50,11 +62,66 @@ class GeneratedFile:
         path: Relative path for the output file (e.g., "backend/models.py").
         content: The full file content including provenance header.
         provenance: FQN(s) of the contract(s) that produced this file.
+        executable: Whether the written file should carry the execute bit. A
+            generator that emits an operator-facing script (`init-secrets.sh`)
+            otherwise produces something the instructions tell you to run and
+            the filesystem refuses to, and the only workaround is to document
+            `bash script.sh` — which quietly teaches operators to run scripts
+            through an interpreter rather than trusting the shebang.
     """
 
     path: str
     content: str
     provenance: str
+    executable: bool = False
+
+
+def validate_generated_files(files: list[GeneratedFile]) -> list[GeneratedFile]:
+    """Assert a generator's output is well-formed before it reaches disk.
+
+    Two checks, both of which close a class of silent failure rather than a
+    single bug:
+
+      1. **Path uniqueness.** Two `GeneratedFile`s claiming the same path means
+         one silently overwrites the other. This is how a multi-domain build
+         lost an entire route module: `entity/billing/account` and
+         `entity/support/account` both generated `backend/routes_account.py`.
+
+      2. **Python parses.** Every `.py` payload is fed to `ast.parse`. The
+         generators build source by appending strings to a list, so nothing
+         else establishes that the result is even syntactically valid Python.
+
+    Args:
+        files: The files a generator produced.
+
+    Returns:
+        The same list, unchanged, so this can wrap a `generate()` return value.
+
+    Raises:
+        GenerationError: On a duplicate path or unparseable Python.
+    """
+    seen: dict[str, str] = {}
+    for f in files:
+        if f.path in seen:
+            raise GenerationError(
+                f"Two generated files claim the path {f.path!r} "
+                f"(from {seen[f.path]!r} and {f.provenance!r}). One would "
+                f"silently overwrite the other. Namespace the identifier — "
+                f"see forge.targets.naming.module_slug."
+            )
+        seen[f.path] = f.provenance
+
+        if f.path.endswith(".py"):
+            try:
+                ast.parse(f.content, filename=f.path)
+            except SyntaxError as e:
+                raise GenerationError(
+                    f"Generated file {f.path!r} (from {f.provenance!r}) is not "
+                    f"valid Python: {e.msg} at line {e.lineno}.\n"
+                    f"  {(e.text or '').strip()}"
+                ) from e
+
+    return files
 
 
 class BaseGenerator(ABC):
@@ -107,6 +174,19 @@ def provenance_header(
     """
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
+    # A file derived from every entity in a large domain carries a provenance
+    # string hundreds of characters long. Emitted on one line it is the only
+    # thing standing between generated output and a clean lint run, and
+    # generated code is held to the same standard as the rest of the repo — so
+    # wrap it across continuation lines instead of shipping a lint exception.
+    sources = [s.strip() for s in provenance.split(",") if s.strip()]
+    if len(sources) > 1:
+        source_lines = [f"Source: {sources[0]},"] + [
+            f"        {s}," for s in sources[1:-1]
+        ] + [f"        {sources[-1]}"]
+    else:
+        source_lines = [f"Source: {provenance}"]
+
     comment_styles = {
         "python": ("#", "#", "#"),
         "typescript": ("//", "//", "//"),
@@ -123,7 +203,7 @@ def provenance_header(
         f"{mid} Any manual changes will be overwritten on the next generation.",
         f"{mid}",
         f"{mid} {provenance_source_line(provenance)}",
-        f"{mid} Source: {provenance}",
+        *(f"{mid} {line}" for line in source_lines),
         f"{mid} Generated: {timestamp}",
     ]
     if description:

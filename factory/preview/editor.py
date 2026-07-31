@@ -21,8 +21,9 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import logging
+import os
+import shlex
 import subprocess
 import tempfile
 from pathlib import Path
@@ -81,22 +82,38 @@ def _preview_in_editor(
         console.print()
         console.print(f"[dim]Opening in {editor}... Review and close the editor to continue.[/dim]")
 
-        # Open editor on the directory
+        # $EDITOR routinely carries flags ("code --wait", "subl -n -w").
+        # Splitting keeps those working; passing an argv list rather than a
+        # string keeps the shell out of it, so an $EDITOR containing shell
+        # syntax is a broken editor name, not an execution vector.
         try:
-            subprocess.run([editor, str(tmp)], check=True)
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            argv = shlex.split(editor, posix=os.name != "nt")
+            if not argv:
+                raise ValueError(f"$EDITOR is not a usable command: {editor!r}")
+            subprocess.run([*argv, str(tmp)], check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
             logger.warning("Editor failed: %s. Falling back to terminal preview.", e)
             return _preview_in_terminal(contracts)
 
         # Read back (possibly modified) content
         result = {}
+        dropped: list[str] = []
         for rel_path in contracts.keys():
             file_path = tmp / rel_path
             if file_path.exists():
                 result[rel_path] = file_path.read_text(encoding="utf-8")
             else:
-                # User deleted the file — skip it
+                dropped.append(rel_path)
                 logger.info("File removed during preview: %s", rel_path)
+
+        if dropped:
+            # Dropping a contract can leave a route or page pointing at an
+            # entity that no longer exists, so the confirmation below has to be
+            # given with this on screen rather than buried in a log record.
+            console.print()
+            console.print("[yellow]Removed in the editor and will NOT be written:[/yellow]")
+            for rel_path in dropped:
+                console.print(f"  [yellow]-[/yellow] {rel_path}")
 
         # Ask for confirmation
         console.print()

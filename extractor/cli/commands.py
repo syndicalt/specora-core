@@ -1,7 +1,7 @@
 """specora extract — reverse-engineer codebases into contracts."""
+
 from __future__ import annotations
 
-import sys
 import time
 from pathlib import Path
 
@@ -9,19 +9,34 @@ import click
 from rich.console import Console
 from rich.rule import Rule
 
-from extractor.emitter import emit_contracts
+from extractor.emitter import EmissionError, emit_contracts
+from extractor.models import safe_contract_name
 from extractor.reporter import display_report
+from extractor.scanner import ScanLimits
 from extractor.synthesizer import synthesize
-from forge.normalize import normalize_name
 
 console = Console()
 
 
 @click.command("extract")
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--domain", "-d", default="", help="Domain name (auto-inferred from directory name if omitted)")
+@click.option(
+    "--domain", "-d", default="", help="Domain name (auto-inferred from directory name if omitted)"
+)
 @click.option("--output", "-o", default="domains/", help="Output base directory")
-def extract(path: str, domain: str, output: str) -> None:
+@click.option(
+    "--max-file-kb",
+    default=ScanLimits().max_file_bytes // 1024,
+    show_default=True,
+    help="Skip source files larger than this.",
+)
+@click.option(
+    "--max-files",
+    default=ScanLimits().max_files,
+    show_default=True,
+    help="Stop scanning after this many source files.",
+)
+def extract(path: str, domain: str, output: str, max_file_kb: int, max_files: int) -> None:
     """Reverse-engineer a codebase into Specora contracts.
 
     Analyzes Python and TypeScript source files, extracts entities,
@@ -30,9 +45,8 @@ def extract(path: str, domain: str, output: str) -> None:
     source_path = Path(path)
 
     # Auto-infer domain name
-    if not domain:
-        domain = normalize_name(source_path.name)
-    domain = normalize_name(domain)
+    domain = safe_contract_name(domain or source_path.name, fallback="extracted")
+    limits = ScanLimits(max_file_bytes=max_file_kb * 1024, max_files=max_files)
 
     console.print()
     console.print(Rule(f"[bold magenta]Extracting: {source_path}[/bold magenta]", style="magenta"))
@@ -42,14 +56,20 @@ def extract(path: str, domain: str, output: str) -> None:
     # Run the 4-pass pipeline
     start = time.time()
     with console.status("[magenta]Scanning files…[/magenta]", spinner="dots"):
-        report = synthesize(source_path, domain)
+        report = synthesize(source_path, domain, limits=limits)
     elapsed = time.time() - start
 
-    console.print(f"  [dim]Scanned {report.files_scanned} files, analyzed {report.files_analyzed} ({elapsed:.1f}s)[/dim]")
+    console.print(
+        f"  [dim]Scanned {report.files_scanned} files, "
+        f"analyzed {report.files_analyzed} ({elapsed:.1f}s)[/dim]"
+    )
     console.print()
 
     if not report.entities:
-        console.print("  [yellow]No entities found. The codebase may not contain recognizable models.[/yellow]")
+        console.print(
+            "  [yellow]No entities found. "
+            "The codebase may not contain recognizable models.[/yellow]"
+        )
         return
 
     # Display report and get user approvals
@@ -61,7 +81,9 @@ def extract(path: str, domain: str, output: str) -> None:
 
     # Confirm write
     output_dir = Path(output) / domain
-    console.print(f"  Writing {len(accepted)} entities (+ routes + pages) to [cyan]{output_dir}[/cyan]")
+    console.print(
+        f"  Writing {len(accepted)} entities (+ routes + pages) to [cyan]{output_dir}[/cyan]"
+    )
     try:
         response = console.input("  [bold]Proceed? [Y/n] [/bold]").strip().lower()
     except (EOFError, KeyboardInterrupt):
@@ -73,7 +95,11 @@ def extract(path: str, domain: str, output: str) -> None:
         return
 
     # Emit
-    written = emit_contracts(report, output_dir, accepted_entities=accepted)
+    try:
+        written = emit_contracts(report, output_dir, accepted_entities=accepted)
+    except EmissionError as e:
+        console.print(f"  [bold red]Nothing written:[/bold red] {e}")
+        raise SystemExit(1) from e
 
     console.print()
     for p in written:

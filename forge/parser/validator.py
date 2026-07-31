@@ -27,22 +27,30 @@ Usage:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import yaml
-from jsonschema import Draft202012Validator, ValidationError as JSValidationError
+from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
 logger = logging.getLogger(__name__)
 
-# Cache for loaded meta-schemas
-_meta_schema_cache: dict[str, dict] = {}
-
-# Registry for resolving $ref between meta-schemas
+# Compiled validators, keyed by contract kind. A `Draft202012Validator` resolves
+# and compiles its schema on construction, so building one per contract made
+# validation cost scale with contract count for no benefit — one per kind is
+# enough. `None` is cached too, to avoid re-globbing spec/meta/ for a kind that
+# has no meta-schema.
+#
+# The whole cache sits behind one lock because the Healer is a long-lived
+# multi-threaded HTTP service: the previous unsynchronized double-check let two
+# threads build the registry concurrently and one of them discard its work.
+_validator_cache: dict[str, Optional[Draft202012Validator]] = {}
 _registry: Optional[Registry] = None
+_cache_lock = threading.Lock()
 
 # Valid contract kinds (must match envelope.meta.yaml)
 VALID_KINDS = {"Entity", "Workflow", "Page", "Route", "Agent", "Mixin", "Infra"}
@@ -79,12 +87,14 @@ def _find_meta_dir() -> Optional[Path]:
     return None
 
 
-def _build_registry() -> Registry:
+def _build_registry_locked() -> Registry:
     """Build a jsonschema Registry containing all meta-schemas.
 
     This allows $ref between meta-schemas (e.g., entity.meta.yaml
     referencing envelope.meta.yaml) to resolve locally without
     hitting the network.
+
+    Caller must hold `_cache_lock`.
 
     Returns:
         A Registry with all meta-schemas registered by their $id.
@@ -100,14 +110,14 @@ def _build_registry() -> Registry:
         return _registry
 
     resources: list[tuple[str, Resource]] = []
-    for meta_path in meta_dir.glob("*.meta.yaml"):
+    for meta_path in sorted(meta_dir.glob("*.meta.yaml")):
         try:
             schema = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
             schema_id = schema.get("$id", "")
             if schema_id:
                 resource = Resource.from_contents(schema, default_specification=DRAFT202012)
                 resources.append((schema_id, resource))
-        except Exception as e:
+        except (yaml.YAMLError, OSError) as e:
             logger.warning("Failed to load meta-schema %s: %s", meta_path, e)
 
     _registry = Registry().with_resources(resources)
@@ -115,39 +125,53 @@ def _build_registry() -> Registry:
     return _registry
 
 
-def _load_meta_schema(kind: str) -> Optional[dict]:
-    """Load the meta-schema for a given contract kind.
-
-    Meta-schemas are cached after first load for performance.
+def _get_validator(kind: str) -> Optional[Draft202012Validator]:
+    """Return the compiled validator for a contract kind, building it once.
 
     Args:
         kind: The contract kind (e.g., "Entity", "Workflow").
 
     Returns:
-        The meta-schema as a dict, or None if not found.
+        A compiled Draft202012Validator, or None if the kind has no
+        meta-schema on disk.
     """
-    if kind in _meta_schema_cache:
-        return _meta_schema_cache[kind]
+    with _cache_lock:
+        if kind in _validator_cache:
+            return _validator_cache[kind]
 
-    meta_dir = _find_meta_dir()
-    if not meta_dir:
-        logger.warning("Cannot find spec/meta/ directory")
-        return None
+        validator: Optional[Draft202012Validator] = None
+        meta_dir = _find_meta_dir()
 
-    filename = f"{kind.lower()}.meta.yaml"
-    meta_path = meta_dir / filename
+        if not meta_dir:
+            logger.warning("Cannot find spec/meta/ directory")
+        else:
+            meta_path = meta_dir / f"{kind.lower()}.meta.yaml"
+            if not meta_path.exists():
+                logger.warning("No meta-schema for kind '%s' at %s", kind, meta_path)
+            else:
+                try:
+                    schema = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
+                    validator = Draft202012Validator(schema, registry=_build_registry_locked())
+                except (yaml.YAMLError, OSError) as e:
+                    logger.error("Failed to load meta-schema %s: %s", meta_path, e)
 
-    if not meta_path.exists():
-        logger.warning("No meta-schema for kind '%s' at %s", kind, meta_path)
-        return None
+        _validator_cache[kind] = validator
+        return validator
 
-    try:
-        schema = yaml.safe_load(meta_path.read_text(encoding="utf-8"))
-        _meta_schema_cache[kind] = schema
-        return schema
-    except (yaml.YAMLError, OSError) as e:
-        logger.error("Failed to load meta-schema %s: %s", meta_path, e)
-        return None
+
+def reset_schema_cache() -> None:
+    """Drop the cached registry and validators so meta-schemas are re-read.
+
+    The cache is process-global and otherwise never invalidated. That is fine
+    for the CLI, which exits after one build, but the Healer is a long-lived
+    service: without this, a meta-schema edited on disk is never picked up for
+    the lifetime of the process. Call this after changing anything in
+    spec/meta/.
+    """
+    global _registry
+    with _cache_lock:
+        _validator_cache.clear()
+        _registry = None
 
 
 def _jsonschema_path_to_dot(path: list) -> str:
@@ -168,7 +192,11 @@ def _jsonschema_path_to_dot(path: list) -> str:
     return ".".join(parts) if parts else "<root>"
 
 
-def validate_contract(contract: dict) -> list[ContractValidationError]:
+def validate_contract(
+    contract: dict,
+    fqn: Optional[str] = None,
+    source_path: str = "<unknown>",
+) -> list[ContractValidationError]:
     """Validate a single contract against its meta-schema.
 
     Performs two levels of validation:
@@ -178,17 +206,22 @@ def validate_contract(contract: dict) -> list[ContractValidationError]:
 
     Args:
         contract: A loaded contract dict.
+        fqn: The contract's FQN, if the caller already knows it. Callers that
+            loaded the contract by FQN should pass it rather than let this
+            function re-derive it from metadata.
+        source_path: The file the contract came from, for error reporting.
+            Passed in rather than read out of the contract dict — the loader no
+            longer injects paths into contracts.
 
     Returns:
         List of validation errors. Empty list means the contract is valid.
     """
     errors: list[ContractValidationError] = []
-    source_path = contract.get("_source_path", "<unknown>")
 
-    # Compute FQN for error reporting
     kind = contract.get("kind", "")
-    metadata = contract.get("metadata", {})
-    fqn = f"{kind.lower()}/{metadata.get('domain', '?')}/{metadata.get('name', '?')}"
+    if fqn is None:
+        metadata = contract.get("metadata") or {}
+        fqn = f"{str(kind).lower()}/{metadata.get('domain', '?')}/{metadata.get('name', '?')}"
 
     # --- Envelope validation ---
 
@@ -216,8 +249,8 @@ def validate_contract(contract: dict) -> list[ContractValidationError]:
 
     # --- Kind-specific meta-schema validation ---
 
-    meta_schema = _load_meta_schema(kind)
-    if meta_schema is None:
+    validator = _get_validator(kind)
+    if validator is None:
         errors.append(
             ContractValidationError(
                 contract_fqn=fqn,
@@ -229,13 +262,7 @@ def validate_contract(contract: dict) -> list[ContractValidationError]:
         )
         return errors
 
-    # Strip internal fields before validation (e.g., _source_path)
-    clean_contract = {k: v for k, v in contract.items() if not k.startswith("_")}
-
-    # Use JSON Schema validation with registry for $ref resolution
-    registry = _build_registry()
-    validator = Draft202012Validator(meta_schema, registry=registry)
-    for error in sorted(validator.iter_errors(clean_contract), key=lambda e: list(e.absolute_path)):
+    for error in sorted(validator.iter_errors(contract), key=lambda e: list(e.absolute_path)):
         errors.append(
             ContractValidationError(
                 contract_fqn=fqn,
@@ -252,13 +279,20 @@ def validate_all(contracts: dict[str, dict]) -> list[ContractValidationError]:
     """Validate all contracts in a collection.
 
     Args:
-        contracts: Dict mapping FQN -> contract dict.
+        contracts: Dict mapping FQN -> contract dict. A `ContractSet` from
+            `load_all_contracts` also supplies each contract's source path.
 
     Returns:
         List of all validation errors across all contracts.
     """
+    source_paths = getattr(contracts, "source_paths", {}) or {}
     all_errors: list[ContractValidationError] = []
     for fqn, contract in contracts.items():
-        errors = validate_contract(contract)
-        all_errors.extend(errors)
+        all_errors.extend(
+            validate_contract(
+                contract,
+                fqn=fqn,
+                source_path=source_paths.get(fqn, "<unknown>"),
+            )
+        )
     return all_errors

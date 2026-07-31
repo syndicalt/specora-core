@@ -25,7 +25,11 @@ Usage:
             FieldChange(
                 path="spec.fields.assigned_to.references",
                 old_value={"entity": "entity/itsm/user", "display": "name"},
-                new_value={"entity": "entity/itsm/user", "display": "name", "on_deleted": "[deleted]"},
+                new_value={
+                    "entity": "entity/itsm/user",
+                    "display": "name",
+                    "on_deleted": "[deleted]",
+                },
                 change_type="modified",
             )
         ],

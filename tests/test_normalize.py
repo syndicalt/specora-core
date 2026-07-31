@@ -1,4 +1,5 @@
 """Tests for forge.normalize — deterministic contract normalization."""
+
 import copy
 
 import pytest
@@ -9,7 +10,6 @@ from forge.normalize import (
     normalize_graph_edge,
     normalize_name,
 )
-
 
 # ── normalize_name ──────────────────────────────────────────────────────
 
@@ -56,7 +56,9 @@ class TestNormalizeFqn:
         assert normalize_fqn("todo_list/User", "entity", "todo_list") == "entity/todo_list/user"
 
     def test_already_fqn_but_wrong_case(self) -> None:
-        assert normalize_fqn("entity/todo_list/User", "entity", "todo_list") == "entity/todo_list/user"
+        assert (
+            normalize_fqn("entity/todo_list/User", "entity", "todo_list") == "entity/todo_list/user"
+        )
 
     def test_workflow_fqn_with_mixed_case(self) -> None:
         assert (
@@ -68,7 +70,10 @@ class TestNormalizeFqn:
         assert normalize_fqn("User", "entity", "todo_list") == "entity/todo_list/user"
 
     def test_mixin_fqn_preserved(self) -> None:
-        assert normalize_fqn("mixin/stdlib/timestamped", "mixin", "todo_list") == "mixin/stdlib/timestamped"
+        assert (
+            normalize_fqn("mixin/stdlib/timestamped", "mixin", "todo_list")
+            == "mixin/stdlib/timestamped"
+        )
 
     def test_result_matches_requires_pattern(self) -> None:
         import re

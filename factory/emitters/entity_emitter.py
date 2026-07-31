@@ -1,9 +1,8 @@
 """Emit Entity contract YAML from interview data."""
+
 from __future__ import annotations
 
-import yaml
-
-from forge.normalize import normalize_contract
+from factory.emitters.base import EmitterError, render
 
 
 def emit_entity(name: str, domain: str, data: dict) -> str:
@@ -17,30 +16,59 @@ def emit_entity(name: str, domain: str, data: dict) -> str:
 
     Returns:
         Valid YAML string matching the Entity meta-schema envelope.
-    """
-    requires: list[str] = []
 
-    # Add mixin FQNs to requires
-    mixins = data.get("mixins", [])
+    Raises:
+        EmitterError: If the interview data cannot produce a contract that
+            passes the Entity meta-schema, or if the entity is provably empty
+            (no fields, no mixins, no state machine) and so could never
+            generate a repository.
+    """
+    fields = data.get("fields") or {}
+    if not isinstance(fields, dict):
+        raise EmitterError(
+            f"entity '{name}': spec.fields must be a mapping of field name to "
+            f"field definition, got {type(fields).__name__}"
+        )
+    # An LLM asked for `fields` routinely answers `name: string` instead of
+    # `name: {type: string}`. Caught here so the operator sees which field is
+    # malformed, rather than an AttributeError from the reference scan below.
+    malformed = sorted(k for k, v in fields.items() if not isinstance(v, dict))
+    if malformed:
+        raise EmitterError(
+            f"entity '{name}': field(s) {malformed} are not mappings. "
+            "Each field must be a mapping with at least a 'type' key."
+        )
+    mixins = data.get("mixins") or []
+    state_machine = data.get("state_machine")
+
+    # Mixins and a bound workflow contribute fields the compiler resolves
+    # later, so only the case with none of the three is provably empty. Such
+    # an entity passes the meta-schema and then fails generation with
+    # "declares no fields" — the interview's LLM-failure fallback used to
+    # produce exactly this and write it to disk without a word.
+    if not fields and not mixins and not state_machine:
+        raise EmitterError(
+            f"entity '{name}' has no fields, no mixins, and no state machine. "
+            "It would compile to a table with no columns and fail at generation "
+            "time. Capture its fields first."
+        )
+
+    requires: list[str] = []
     for m in mixins:
         if m not in requires:
             requires.append(m)
 
-    # Auto-detect references in fields and add entity FQNs to requires
-    fields = data.get("fields", {})
-    for _field_name, field_def in fields.items():
+    # A referenced entity is a dependency whether or not the interview said so.
+    for field_def in fields.values():
         ref = field_def.get("references")
-        if ref and "entity" in ref:
+        if isinstance(ref, dict) and "entity" in ref:
             entity_fqn = ref["entity"]
             if entity_fqn not in requires:
                 requires.append(entity_fqn)
 
-    # Add workflow FQN to requires if present
-    state_machine = data.get("state_machine")
     if state_machine and state_machine not in requires:
         requires.append(state_machine)
 
-    # Build spec
     spec: dict = {}
 
     if data.get("icon"):
@@ -69,6 +97,4 @@ def emit_entity(name: str, domain: str, data: dict) -> str:
         "spec": spec,
     }
 
-    normalize_contract(contract)
-
-    return yaml.dump(contract, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    return render(contract, what=f"entity/{domain}/{name}")

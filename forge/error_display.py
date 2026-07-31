@@ -4,12 +4,13 @@ Transforms cryptic regex-mismatch errors into actionable messages
 with suggested fixes. Shared by the CLI validate command, Factory
 inline errors, and Healer reports.
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
-from forge.normalize import normalize_graph_edge, normalize_name, normalize_fqn
+from forge.normalize import normalize_fqn, normalize_graph_edge, normalize_name
 from forge.parser.validator import ContractValidationError
 
 
@@ -33,7 +34,8 @@ _PATTERN_HINTS: list[tuple[re.Pattern, str, str]] = [
     ),
     (
         re.compile(
-            r"does not match '\^\(entity\|workflow\|page\|route\|agent\|mixin\|infra\)/\[a-z\]\[a-z0-9_/\]\*\$'"
+            r"does not match '\^\(entity\|workflow\|page\|route\|agent\|mixin\|infra\)"
+            r"/\[a-z\]\[a-z0-9_/\]\*\$'"
         ),
         "must be a fully qualified name (kind/domain/name, all lowercase)",
         "fqn",

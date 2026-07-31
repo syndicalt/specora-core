@@ -18,6 +18,7 @@ import logging
 from engine.context import build_system_prompt
 from engine.engine import LLMEngine
 from factory.interviews.base import Interview, InterviewLLMError, InterviewParseError
+from factory.paths import UnsafeNameError, safe_name
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,8 @@ def run_entity_interview(
     if not description:
         description = interview.ask_user(
             f"Describe what a '{entity_name}' is in one sentence\n"
-            f"  [dim]Example: \"A task that can be assigned to a user with a due date and priority\"[/dim]"
+            '  [dim]Example: "A task that can be assigned to a user '
+            'with a due date and priority"[/dim]'
         )
 
     fields_input = interview.ask_user(
@@ -71,7 +73,8 @@ Generate a YAML mapping of field definitions. For each field, include:
 - description (brief)
 - required: true if it seems essential
 - enum: [...] if the field has a fixed set of values
-- references: if the field points to another entity (check existing entities: {existing_entities or []})
+- references: if the field points to another entity
+  (check existing entities: {existing_entities or []})
 
 Also include:
 - mixins: list of mixin FQNs to include
@@ -92,21 +95,32 @@ description: "..."
 """
     try:
         structured = interview.ask_llm_structured(fields_input, instruction)
-    except InterviewLLMError as e:
-        interview.show(f"[red]AI provider error:[/red] {e}")
-        interview.show("[yellow]Using basic field defaults. You can edit the contracts later.[/yellow]")
+    except (InterviewLLMError, InterviewParseError) as e:
+        if isinstance(e, InterviewLLMError):
+            interview.show(f"[red]AI provider error:[/red] {e}")
+        else:
+            interview.show(f"[yellow]Couldn't parse the field structure:[/yellow] {e}")
+        logger.warning("Entity interview for '%s' fell back to literal fields: %s", entity_name, e)
+        interview.show(
+            "[yellow]Falling back to the fields you typed, all as text. "
+            "Refine their types in the contract, or with 'specora factory refine'.[/yellow]"
+        )
+        # Discarding fields_input here (the old behaviour) produced an entity
+        # with no fields at all — a contract that validates and then fails
+        # generation, with nothing on screen to say the answer was dropped.
         structured = {
-            "fields": {},
-            "mixins": ["mixin/stdlib/timestamped", "mixin/stdlib/identifiable"],
-        }
-    except InterviewParseError:
-        interview.show("[yellow]Couldn't parse the field structure. Let me try again...[/yellow]")
-        structured = {
-            "fields": {},
+            "fields": _fields_from_raw_input(fields_input),
             "mixins": ["mixin/stdlib/timestamped", "mixin/stdlib/identifiable"],
         }
 
-    fields = structured.get("fields", {})
+    fields = structured.get("fields") or {}
+    if not isinstance(fields, dict):
+        interview.show(
+            f"[yellow]The model returned {type(fields).__name__} for 'fields', not a mapping. "
+            "Falling back to the fields you typed.[/yellow]"
+        )
+        fields = _fields_from_raw_input(fields_input)
+
     mixins = structured.get("mixins", ["mixin/stdlib/timestamped", "mixin/stdlib/identifiable"])
     needs_workflow = structured.get("state_machine_needed", False)
     entity_desc = structured.get("description", description)
@@ -130,3 +144,25 @@ description: "..."
         result["state_machine"] = workflow_fqn
 
     return result
+
+
+def _fields_from_raw_input(raw: str) -> dict:
+    """Turn a comma-separated field list into typed-as-string field definitions.
+
+    Used only when the LLM is unavailable or unparseable. Every field becomes
+    `string`, which is wrong for some of them but is a contract the user can
+    see and correct — unlike an empty field set, which looks like success.
+    """
+    fields: dict = {}
+    for chunk in raw.split(","):
+        label = chunk.strip()
+        if not label:
+            continue
+        try:
+            name = safe_name(label.replace(" ", "_"), what="field name")
+        except UnsafeNameError as exc:
+            logger.warning("Dropping unusable field label %r: %s", label, exc)
+            continue
+        if name not in fields:
+            fields[name] = {"type": "string", "description": label}
+    return fields

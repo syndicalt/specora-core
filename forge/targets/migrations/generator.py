@@ -1,4 +1,19 @@
-"""Migration generator — orchestrates IR caching, diffing, and SQL generation."""
+"""Migration generator — orchestrates IR caching, diffing, and SQL generation.
+
+`database/schema.sql` (from `forge.targets.postgres.gen_ddl`) and the files this
+generator emits are two views of one schema, and they are kept coherent by
+construction:
+
+  * both render their DDL through the same emitters in `gen_ddl`, so a column
+    definition cannot differ between them;
+  * schema.sql is unguarded and bootstrap-only, while migrations are guarded and
+    re-appliable, so a database created from either path can be advanced by the
+    migration series without a special case;
+  * which migrations have run is recorded in `_specora_migrations` by the
+    generated entrypoint, which is also what stamps the whole series as applied
+    after a schema.sql bootstrap. Nothing here writes a second ledger for that
+    same fact.
+"""
 from __future__ import annotations
 
 import re
@@ -6,9 +21,14 @@ from pathlib import Path
 
 from forge.ir.model import DomainIR
 from forge.targets.base import BaseGenerator, GeneratedFile, provenance_header
-from forge.targets.migrations.differ import diff_entities
+from forge.targets.migrations.differ import SchemaChange, diff_entities
 from forge.targets.migrations.ir_cache import load_ir_cache, save_ir_cache
-from forge.targets.migrations.sql_writer import changes_to_sql, schema_change_to_sql
+from forge.targets.migrations.sql_writer import build_context, changes_to_sql
+
+APPLY_NOTICE = """-- Apply migrations in ascending version order, each as a single transaction.
+-- Every statement below is guarded, so re-applying this file is a no-op rather
+-- than an error — which is what lets a database bootstrapped from
+-- database/schema.sql be brought under migration control."""
 
 
 class MigrationGenerator(BaseGenerator):
@@ -50,36 +70,33 @@ class MigrationGenerator(BaseGenerator):
         if not changes:
             return []
 
-        # Generate migration
-        sql = changes_to_sql(changes)
         description = self._describe_changes(changes)
         version_str = f"{next_version:03d}"
         slug = re.sub(r"[^a-z0-9]+", "_", description.lower())[:40].strip("_")
-        filename = f"{version_str}_{slug}.sql"
+        stem = f"{version_str}_{slug}"
 
+        body = changes_to_sql(changes, build_context(ir))
         header = provenance_header("sql", f"domain/{ir.domain}", f"Migration: {description}")
 
         return [GeneratedFile(
-            path=f"database/migrations/{filename}",
-            content=header + sql,
+            path=f"database/migrations/{stem}.sql",
+            content=f"{header}{APPLY_NOTICE}\n\n{body.rstrip()}\n",
             provenance=f"domain/{ir.domain}",
         )]
 
     def _generate_initial(self, ir: DomainIR, version: int) -> list[GeneratedFile]:
         """Generate the initial migration (CREATE TABLE for all entities)."""
-        from forge.targets.migrations.differ import SchemaChange
+        changes = [
+            SchemaChange(change_type="create_table", table_name=entity.table_name, entity=entity)
+            for entity in ir.entities
+        ]
 
-        statements = ['CREATE EXTENSION IF NOT EXISTS "pgcrypto";\n']
-        for entity in ir.entities:
-            change = SchemaChange(change_type="create_table", table_name=entity.table_name, entity=entity)
-            statements.append(schema_change_to_sql(change))
-
+        body = changes_to_sql(changes, build_context(ir))
         header = provenance_header("sql", f"domain/{ir.domain}", "Initial schema")
-        content = header + "\n\n".join(statements) + "\n"
 
         return [GeneratedFile(
             path=f"database/migrations/{version:03d}_initial.sql",
-            content=content,
+            content=f"{header}{APPLY_NOTICE}\n\n{body.rstrip()}\n",
             provenance=f"domain/{ir.domain}",
         )]
 

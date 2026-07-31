@@ -17,6 +17,12 @@ Contract FQN format: kind/domain/name
 File convention: All contract files MUST use the .contract.yaml extension.
 The loader ignores all other YAML files.
 
+A loaded contract dict contains *only* what the file contains. The loader used
+to inject `_source_path` into the dict for error reporting; because the Healer
+round-trips contract dicts back through `yaml.dump`, that wrote an absolute
+filesystem path from the healing machine into the user's contract file. Source
+paths now travel in a sidecar map on `ContractSet` instead.
+
 Usage:
     from forge.parser.loader import discover_contracts, load_contract, compute_fqn
 
@@ -24,6 +30,11 @@ Usage:
     for path in paths:
         contract = load_contract(path)
         fqn = compute_fqn(contract)
+
+    # Or load everything, with source paths available alongside:
+    contracts = load_all_contracts(Path("domains/library"))
+    contracts["entity/library/book"]          # the contract dict
+    contracts.path_for("entity/library/book") # str | None
 """
 
 from __future__ import annotations
@@ -127,7 +138,9 @@ def load_contract(path: Path) -> dict:
         raise ContractLoadError(f"Invalid YAML in {path}: {e}") from e
 
     if not isinstance(data, dict):
-        raise ContractLoadError(f"Contract must be a YAML mapping, got {type(data).__name__}: {path}")
+        raise ContractLoadError(
+            f"Contract must be a YAML mapping, got {type(data).__name__}: {path}"
+        )
 
     # Check for required envelope keys
     missing = [k for k in ("apiVersion", "kind", "metadata", "spec") if k not in data]
@@ -145,13 +158,33 @@ def load_contract(path: Path) -> dict:
     if "domain" not in metadata:
         raise ContractLoadError(f"Contract {path}: metadata.domain is required")
 
-    # Attach source path for error reporting
-    data["_source_path"] = str(path)
-
     return data
 
 
-def compute_fqn(contract: dict) -> str:
+class ContractSet(dict):
+    """FQN -> contract dict, with the file each contract came from alongside.
+
+    Subclasses `dict` so every existing consumer (`contracts[fqn]`,
+    `.items()`, `len()`) keeps working unchanged, while source paths live in a
+    separate mapping instead of inside the contract dicts. Anything that
+    serializes a contract — the Healer writing a healed contract back to disk,
+    a diff, an LLM prompt — therefore cannot leak a build-machine path into a
+    user's repository.
+
+    Attributes:
+        source_paths: FQN -> absolute file path, as strings.
+    """
+
+    def __init__(self, *args, source_paths: Optional[dict[str, str]] = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.source_paths: dict[str, str] = dict(source_paths or {})
+
+    def path_for(self, fqn: str) -> Optional[str]:
+        """Return the file a contract was loaded from, or None if unknown."""
+        return self.source_paths.get(fqn)
+
+
+def compute_fqn(contract: dict, source: Optional[Path] = None) -> str:
     """Compute the Fully Qualified Name for a contract.
 
     FQN format: kind/domain/name (all lowercase)
@@ -159,6 +192,8 @@ def compute_fqn(contract: dict) -> str:
 
     Args:
         contract: A loaded contract dict.
+        source: Optional path the contract came from, used only to make the
+            error message actionable.
 
     Returns:
         The FQN string.
@@ -166,21 +201,21 @@ def compute_fqn(contract: dict) -> str:
     Raises:
         ContractLoadError: If the contract is missing kind or metadata.
     """
-    kind = contract.get("kind", "").lower()
-    metadata = contract.get("metadata", {})
+    kind = str(contract.get("kind", "")).lower()
+    metadata = contract.get("metadata") or {}
     domain = metadata.get("domain", "")
     name = metadata.get("name", "")
 
     if not kind or not domain or not name:
-        source = contract.get("_source_path", "<unknown>")
         raise ContractLoadError(
-            f"Cannot compute FQN for {source}: kind={kind!r}, domain={domain!r}, name={name!r}"
+            f"Cannot compute FQN for {source or '<unknown>'}: "
+            f"kind={kind!r}, domain={domain!r}, name={name!r}"
         )
 
     return f"{kind}/{domain}/{name}"
 
 
-def load_all_contracts(root: Path, include_stdlib: bool = True) -> dict[str, dict]:
+def load_all_contracts(root: Path, include_stdlib: bool = True) -> ContractSet:
     """Discover and load all contracts, returning a map of FQN -> contract.
 
     This is a convenience function that combines discover_contracts,
@@ -191,25 +226,27 @@ def load_all_contracts(root: Path, include_stdlib: bool = True) -> dict[str, dic
         include_stdlib: If True, include stdlib contracts.
 
     Returns:
-        Dict mapping FQN strings to loaded contract dicts.
+        A ContractSet — a dict of FQN -> contract dict, plus `.source_paths`
+        and `.path_for(fqn)` for the file each contract came from.
 
     Raises:
         ContractLoadError: If any contract fails to load or has a duplicate FQN.
     """
     paths = discover_contracts(root, include_stdlib=include_stdlib)
-    contracts: dict[str, dict] = {}
+    contracts = ContractSet()
 
     for path in paths:
         contract = load_contract(path)
-        fqn = compute_fqn(contract)
+        fqn = compute_fqn(contract, source=path)
 
         if fqn in contracts:
-            existing = contracts[fqn].get("_source_path", "<unknown>")
+            existing = contracts.path_for(fqn) or "<unknown>"
             raise ContractLoadError(
                 f"Duplicate FQN '{fqn}': found in both {existing} and {path}"
             )
 
         contracts[fqn] = contract
+        contracts.source_paths[fqn] = str(path)
         logger.debug("Loaded %s from %s", fqn, path)
 
     logger.info("Loaded %d contracts total", len(contracts))

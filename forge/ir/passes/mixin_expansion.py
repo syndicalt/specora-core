@@ -2,18 +2,24 @@
 
 When an entity declares `mixins: ["mixin/stdlib/timestamped"]`, this pass
 finds the corresponding MixinIR and copies its fields into the entity's
-field list. The entity's own fields take precedence on name conflicts
-(if types match). Type conflicts are errors.
+field list. The entity's own fields take precedence on name conflicts.
 
-This pass must run BEFORE reference_resolution and state_machine_binding
-because mixin fields may contain references that need resolving.
+A name conflict where the *types* also differ is an error, reported by
+`forge.ir.semantic._validate_mixin_field_conflicts` — this pass returns a
+DomainIR rather than errors, and reporting is semantic validation's job. The
+check is not optional: an entity redeclaring the timestamped mixin's
+`created_at` as `string` used to win silently, and the only trace was a TEXT
+column where every generated caller expects a timestamp.
+
+This pass must run BEFORE state_machine_binding because mixin fields may
+contain references that later passes read.
 """
 
 from __future__ import annotations
 
 import logging
 
-from forge.ir.model import DomainIR, FieldIR
+from forge.ir.model import DomainIR
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +41,13 @@ def expand_mixins(ir: DomainIR) -> DomainIR:
     mixin_map = {m.fqn: m for m in ir.mixins}
 
     for entity in ir.entities:
-        # Get mixin refs from the raw compilation data
-        mixin_refs = getattr(entity, "_mixin_refs", [])
-        if not mixin_refs:
+        if not entity.mixin_refs:
             continue
 
         existing_names = {f.name for f in entity.fields}
         applied = []
 
-        for ref in mixin_refs:
+        for ref in entity.mixin_refs:
             mixin = mixin_map.get(ref)
             if mixin is None:
                 logger.warning(
@@ -54,9 +58,10 @@ def expand_mixins(ir: DomainIR) -> DomainIR:
 
             for field in mixin.fields:
                 if field.name in existing_names:
-                    # Entity already has this field — entity wins
+                    # Entity already has this field — entity wins. Whether that
+                    # override is legitimate is decided in semantic validation.
                     logger.debug(
-                        "Entity '%s' already has field '%s' from mixin '%s', keeping entity's version",
+                        "Entity '%s' already declares field '%s' from mixin '%s'",
                         entity.fqn, field.name, ref,
                     )
                     continue

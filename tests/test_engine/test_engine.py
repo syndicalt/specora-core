@@ -2,6 +2,7 @@
 
 All tests mock the provider layer so no real API calls are made.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +14,13 @@ from engine.config import EngineConfig, EngineConfigError
 from engine.engine import LLMEngine
 from engine.providers.base import LLMResponse, Message, ToolDefinition
 from engine.registry import ModelCapabilities
+from tests._optional import requires
+
+# Constructing an LLMEngine instantiates the concrete provider, which imports
+# the vendor SDK from the `[llm]` extra. Only the tests that get that far are
+# gated; config-validation tests below stay live on a bare `[dev]` install.
+requires_anthropic = requires("anthropic")
+requires_openai = requires("openai")
 
 
 def _make_config(
@@ -40,8 +48,9 @@ def _make_config(
 class TestEngineCreation:
     """Verify engine instantiation from config and environment."""
 
+    @requires_anthropic
     def test_engine_creates_from_config(self) -> None:
-        """Create EngineConfig with anthropic caps, create LLMEngine, verify model_id and strategy."""
+        """Build anthropic caps, create an LLMEngine, verify model_id and strategy."""
         config = _make_config(provider="anthropic")
         engine = LLMEngine(config)
 
@@ -49,6 +58,7 @@ class TestEngineCreation:
         assert engine.config.strategy == "tools"
         assert engine.config.capabilities.provider == "anthropic"
 
+    @requires_openai
     def test_engine_creates_from_openai_config(self) -> None:
         """Verify engine works with OpenAI provider config."""
         config = _make_config(provider="openai", model_id="gpt-4o")
@@ -67,6 +77,7 @@ class TestEngineCreation:
 class TestEngineAsk:
     """Verify the ask() convenience method."""
 
+    @requires_anthropic
     def test_engine_ask_returns_string(self) -> None:
         """Create engine, mock provider, verify ask() returns text."""
         config = _make_config()
@@ -86,6 +97,7 @@ class TestEngineAsk:
         assert result == "The answer is 42."
         engine._provider.chat.assert_called_once()
 
+    @requires_anthropic
     def test_engine_ask_with_system_prompt(self) -> None:
         """Verify system prompt is passed to provider.chat()."""
         config = _make_config()
@@ -110,6 +122,7 @@ class TestEngineAsk:
 class TestEngineChat:
     """Verify the full chat() interface."""
 
+    @requires_anthropic
     def test_engine_chat_returns_llm_response(self) -> None:
         """Verify chat() returns a full LLMResponse."""
         config = _make_config()
@@ -130,6 +143,7 @@ class TestEngineChat:
         assert isinstance(result, LLMResponse)
         assert result.content == "Hello!"
 
+    @requires_anthropic
     def test_engine_chat_passes_tools(self) -> None:
         """Verify tools are forwarded to the provider."""
         config = _make_config()
@@ -163,11 +177,13 @@ class TestEngineChat:
 class TestProviderFactory:
     """Verify _create_provider returns the correct provider type."""
 
+    @requires_anthropic
     def test_creates_anthropic_provider(self) -> None:
         config = _make_config(provider="anthropic")
         engine = LLMEngine(config)
         assert engine._provider.provider_name() == "anthropic"
 
+    @requires_openai
     def test_creates_openai_provider(self) -> None:
         config = _make_config(provider="openai", model_id="gpt-4o")
         engine = LLMEngine(config)

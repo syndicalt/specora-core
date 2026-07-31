@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+import re
 
 import yaml
 from rich.console import Console
@@ -31,6 +31,8 @@ from engine.providers.base import Message
 
 logger = logging.getLogger(__name__)
 console = Console()
+
+_FENCE_RE = re.compile(r"```(?:ya?ml|json)?\s*\n(.*?)```", re.DOTALL)
 
 
 def _render_prompt(
@@ -81,6 +83,21 @@ def _render_prompt(
     console.print()
 
     return response
+
+
+def _strip_code_fence(raw: str) -> str:
+    """Return the contents of the first fenced block, or the text unchanged.
+
+    Models routinely wrap structured output in a fence and prepend a sentence
+    of prose despite being told not to. Taking the first block's *contents*
+    rather than deleting every fence line keeps that prose out of the parser;
+    the old approach left it in front of the YAML, where it parsed as a
+    scalar and lost the payload.
+    """
+    match = _FENCE_RE.search(raw)
+    if match:
+        return match.group(1)
+    return raw.strip()
 
 
 class Interview:
@@ -188,29 +205,26 @@ class Interview:
         )
         raw = self.ask_llm(user_input, full_instruction)
 
-        # Strip markdown code fences if present
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            lines = cleaned.split("\n")
-            lines = [line for line in lines if not line.strip().startswith("```")]
-            cleaned = "\n".join(lines)
+        cleaned = _strip_code_fence(raw)
 
-        try:
-            result = yaml.safe_load(cleaned)
+        reasons: list[str] = []
+        for label, parse in (("YAML", yaml.safe_load), ("JSON", json.loads)):
+            try:
+                result = parse(cleaned)
+            except (yaml.YAMLError, json.JSONDecodeError, ValueError) as exc:
+                reasons.append(f"{label}: {exc}")
+                continue
             if isinstance(result, dict):
                 return result
-        except yaml.YAMLError:
-            pass
+            reasons.append(f"{label}: parsed to {type(result).__name__}, expected a mapping")
 
-        try:
-            result = json.loads(cleaned)
-            if isinstance(result, dict):
-                return result
-        except json.JSONDecodeError:
-            pass
-
+        # The parser diagnostics are the only thing that distinguishes "the
+        # model wrote prose" from "the model wrote YAML with a tab in it", so
+        # they travel with the error instead of being discarded.
         raise InterviewParseError(
-            f"Could not parse LLM response as YAML or JSON:\n{raw[:500]}"
+            "Could not parse LLM response as YAML or JSON ("
+            + "; ".join(reasons)
+            + f"):\n{raw[:500]}"
         )
 
     def confirm(self, message: str) -> bool:

@@ -1,5 +1,4 @@
 """Tests for healer.proposer.deterministic — Tier 1 normalize fixes."""
-import copy
 
 import pytest
 
@@ -7,7 +6,6 @@ from healer.proposer.deterministic import propose_deterministic_fix
 
 
 class TestDeterministicFix:
-
     @pytest.fixture
     def broken_contract(self) -> dict:
         return {

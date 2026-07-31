@@ -5,12 +5,15 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from forge.ir.model import EntityIR, FieldIR
+from forge.targets.postgres.gen_ddl import column_is_not_null, default_clause
 
 
 @dataclass
 class SchemaChange:
     """A single schema change detected between IR versions."""
-    change_type: str          # create_table, drop_table, add_column, drop_column, alter_type, set_not_null, drop_not_null, set_default, drop_default, add_index
+    # create_table, drop_table, add_column, drop_column, alter_type,
+    # set_not_null, drop_not_null, set_default, drop_default, add_index
+    change_type: str
     table_name: str
     field_name: str = ""
     old_value: Any = None
@@ -79,7 +82,7 @@ def _diff_entity_fields(old: EntityIR, new: EntityIR) -> list[SchemaChange]:
             ))
 
     # Removed fields
-    for name, f in old_fields.items():
+    for name in old_fields:
         if name not in new_fields:
             changes.append(SchemaChange(
                 change_type="drop_column",
@@ -105,34 +108,50 @@ def _diff_entity_fields(old: EntityIR, new: EntityIR) -> list[SchemaChange]:
                     field_ir=new_f,
                 ))
 
-            # Nullability change
-            if not old_f.required and new_f.required:
-                changes.append(SchemaChange(
-                    change_type="set_not_null",
-                    table_name=table,
-                    field_name=name,
-                ))
-            elif old_f.required and not new_f.required:
-                changes.append(SchemaChange(
-                    change_type="drop_not_null",
-                    table_name=table,
-                    field_name=name,
-                ))
-
-            # Default change
-            if old_f.default != new_f.default:
-                if new_f.default is not None and new_f.default != "":
+            # Default change, before the nullability change that may depend on
+            # it: SET NOT NULL on a column whose default was only just added
+            # would otherwise be evaluated against the old, defaultless column.
+            #
+            # Both comparisons are against the *rendered* column, not against
+            # `required` and `default` alone. A field that gains `computed: now`
+            # changes its DDL — it acquires DEFAULT now() and becomes NOT NULL —
+            # while both of those attributes are untouched, so comparing the raw
+            # attributes emitted no migration at all and the database silently
+            # diverged from the contract.
+            old_default = default_clause(old_f)
+            new_default = default_clause(new_f)
+            if old_default != new_default:
+                if new_default:
                     changes.append(SchemaChange(
                         change_type="set_default",
                         table_name=table,
                         field_name=name,
+                        old_value=old_f.default,
                         new_value=new_f.default,
+                        field_ir=new_f,
                     ))
-                elif old_f.default is not None and old_f.default != "":
+                else:
                     changes.append(SchemaChange(
                         change_type="drop_default",
                         table_name=table,
                         field_name=name,
                     ))
+
+            # Nullability change
+            old_not_null = column_is_not_null(old_f)
+            new_not_null = column_is_not_null(new_f)
+            if not old_not_null and new_not_null:
+                changes.append(SchemaChange(
+                    change_type="set_not_null",
+                    table_name=table,
+                    field_name=name,
+                    field_ir=new_f,
+                ))
+            elif old_not_null and not new_not_null:
+                changes.append(SchemaChange(
+                    change_type="drop_not_null",
+                    table_name=table,
+                    field_name=name,
+                ))
 
     return changes

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import re
 
-
 # ── Name normalization ──────────────────────────────────────────────────
 
 _PASCAL_SPLIT = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
@@ -27,7 +26,32 @@ def normalize_name(name: str) -> str:
     camelCase   → snake_case:  todoList → todo_list
     Mixed_Case  → snake_case:  Task_lifecycle → task_lifecycle
     Already ok  → unchanged:   task → task
+
+    **This is a formatting pass, not a validation gate, and its output is not
+    safe to put in a filesystem path.** It fixes casing; it does not remove
+    path separators or traversal segments, so `../../etc/passwd` and
+    `/abs/path` come back materially unchanged.
+
+    That is deliberate. Silently rewriting `../../etc/passwd` into
+    `etc_passwd` would hand back a name nobody asked for and leave the caller
+    believing its input was fine — the same silent-degradation failure this
+    engine exists to eliminate. A name carrying a path separator is an error to
+    be reported, not a formatting problem to be tidied away.
+
+    Callers turning a name into a path MUST gate the result:
+    `factory.paths.safe_name` normalizes and then rejects anything that does
+    not match `^[a-z][a-z0-9_]*$`. Both the Factory (LLM tool-call output) and
+    the Extractor (names scanned out of a third-party codebase) reached a file
+    write without that gate and were one join away from writing outside the
+    contracts root.
+
+    Raises:
+        ValueError: If *name* is not a string. `str(some_dict)` would otherwise
+            produce a plausible-looking name from a malformed LLM response.
     """
+    if not isinstance(name, str):
+        raise ValueError(f"Contract name must be a string, got {type(name).__name__}")
+
     # Split on PascalCase/camelCase boundaries
     parts = _PASCAL_SPLIT.sub("_", name).lower()
     # Collapse multiple underscores
@@ -93,17 +117,6 @@ def normalize_graph_edge(edge: str) -> str:
 
 # ── Contract-level normalization ────────────────────────────────────────
 
-# Map contract kind to the default kind for reference resolution
-_KIND_TO_REF_KIND = {
-    "Entity": "entity",
-    "Workflow": "workflow",
-    "Page": "page",
-    "Route": "route",
-    "Agent": "agent",
-    "Mixin": "mixin",
-    "Infra": "infra",
-}
-
 
 def normalize_contract(contract: dict) -> dict:
     """Normalize an entire contract dict in-place and return it.
@@ -117,10 +130,9 @@ def normalize_contract(contract: dict) -> dict:
     6. spec.entity → FQN format (Route/Page)
     7. spec.mixins[] → FQN format
     """
-    kind = contract.get("kind", "Entity")
-    metadata = contract.get("metadata", {})
+    metadata = contract.get("metadata") or {}
     domain = metadata.get("domain", "")
-    spec = contract.get("spec", {})
+    spec = contract.get("spec") or {}
 
     # 1. Normalize metadata.name
     if "name" in metadata:
@@ -138,10 +150,14 @@ def normalize_contract(contract: dict) -> dict:
         ]
 
     # 3-4. Normalize field references
-    fields = spec.get("fields", {})
+    fields = spec.get("fields") or {}
     for field_def in fields.values():
+        # A malformed field definition (`name: string`) is the compiler's to
+        # report; normalization must not crash before it gets the chance.
+        if not isinstance(field_def, dict):
+            continue
         refs = field_def.get("references")
-        if refs:
+        if isinstance(refs, dict):
             if "entity" in refs:
                 refs["entity"] = normalize_fqn(refs["entity"], "entity", domain)
             if "graph_edge" in refs:
@@ -177,7 +193,10 @@ def _normalize_requires_entry(ref: str, domain: str) -> str:
     lower = ref.lower()
     if "lifecycle" in lower or "workflow" in lower or "approval" in lower:
         return normalize_fqn(ref, "workflow", domain)
-    if "mixin" in lower or "stdlib" in parts[0] if parts else False:
+    # str.split never returns an empty list, so the original `... if parts else
+    # False` suffix could only ever bind the whole disjunction as a no-op
+    # conditional expression. Spelled out here as what it actually evaluated to.
+    if "mixin" in lower or "stdlib" in parts[0]:
         return normalize_fqn(ref, "mixin", domain)
 
     # Default: assume entity reference

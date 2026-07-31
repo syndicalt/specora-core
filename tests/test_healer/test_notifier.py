@@ -1,10 +1,11 @@
 """Tests for healer.notifier — notification channels."""
+
 import json
 from pathlib import Path
 
 import pytest
 
-from healer.models import HealerTicket, TicketSource, TicketStatus, Priority
+from healer.models import HealerTicket, TicketSource
 from healer.notifier import Notifier
 
 
@@ -14,7 +15,6 @@ def notifier(tmp_path: Path) -> Notifier:
 
 
 class TestFileNotification:
-
     def test_logs_to_jsonl(self, notifier: Notifier) -> None:
         ticket = HealerTicket(
             source=TicketSource.VALIDATION,

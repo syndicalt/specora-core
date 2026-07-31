@@ -27,14 +27,18 @@ Usage:
 
 from __future__ import annotations
 
+import heapq
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
 
 from forge.parser.dependencies import merge_dependencies
 
 logger = logging.getLogger(__name__)
+
+# An insertion-ordered set. Membership is O(1) and iteration order is the order
+# edges were added, so `dependencies_of` stays deterministic without sorting.
+OrderedFqnSet = dict[str, None]
 
 
 @dataclass
@@ -94,8 +98,9 @@ class DependencyGraph:
 
     def __init__(self):
         self.nodes: dict[str, ContractNode] = {}
-        self.edges: dict[str, list[str]] = {}  # fqn -> list of required fqns
-        self.reverse_edges: dict[str, list[str]] = {}  # fqn -> list of dependents
+        self.edges: dict[str, OrderedFqnSet] = {}  # fqn -> required fqns
+        self.reverse_edges: dict[str, OrderedFqnSet] = {}  # fqn -> dependents
+        self.build_errors: list[GraphError] = []  # authoring errors found while building
 
     def add_node(self, node: ContractNode) -> None:
         """Add a contract node to the graph.
@@ -104,8 +109,8 @@ class DependencyGraph:
             node: The ContractNode to add.
         """
         self.nodes[node.fqn] = node
-        self.edges.setdefault(node.fqn, [])
-        self.reverse_edges.setdefault(node.fqn, [])
+        self.edges.setdefault(node.fqn, {})
+        self.reverse_edges.setdefault(node.fqn, {})
 
     def add_edge(self, from_fqn: str, to_fqn: str) -> None:
         """Add a dependency edge (from_fqn requires to_fqn).
@@ -114,12 +119,8 @@ class DependencyGraph:
             from_fqn: The FQN of the contract that has the dependency.
             to_fqn: The FQN of the required contract.
         """
-        self.edges.setdefault(from_fqn, [])
-        if to_fqn not in self.edges[from_fqn]:
-            self.edges[from_fqn].append(to_fqn)
-        self.reverse_edges.setdefault(to_fqn, [])
-        if from_fqn not in self.reverse_edges[to_fqn]:
-            self.reverse_edges[to_fqn].append(from_fqn)
+        self.edges.setdefault(from_fqn, {})[to_fqn] = None
+        self.reverse_edges.setdefault(to_fqn, {})[from_fqn] = None
 
     def find_unresolved(self) -> list[GraphError]:
         """Find all unresolved references (requires pointing to non-existent contracts).
@@ -142,7 +143,13 @@ class DependencyGraph:
         return errors
 
     def detect_cycles(self) -> list[GraphError]:
-        """Detect circular dependencies using DFS.
+        """Detect circular dependencies using an explicit-stack DFS.
+
+        The traversal is iterative rather than recursive: contract chains are
+        user-authored and unbounded, and a recursive DFS turns a legitimately
+        deep `requires` chain into a RecursionError — a crash that names no
+        contract and looks nothing like the "your contracts are fine" answer it
+        actually represents.
 
         Returns:
             List of GraphError objects, one per cycle found.
@@ -150,32 +157,41 @@ class DependencyGraph:
         """
         visited: set[str] = set()
         in_stack: set[str] = set()
+        path: list[str] = []
         cycles: list[list[str]] = []
 
-        def dfs(fqn: str, path: list[str]) -> None:
-            if fqn in in_stack:
-                # Found a cycle — extract just the cycle portion
-                cycle_start = path.index(fqn)
-                cycle = path[cycle_start:] + [fqn]
-                cycles.append(cycle)
-                return
-            if fqn in visited:
-                return
+        for root in self.nodes:
+            if root in visited:
+                continue
 
-            visited.add(fqn)
-            in_stack.add(fqn)
-            path.append(fqn)
+            # Each frame is (fqn, iterator over its not-yet-walked dependencies).
+            # A frame is pushed with a None iterator to mean "not entered yet".
+            stack: list[tuple[str, Iterator[str] | None]] = [(root, None)]
 
-            for dep in self.edges.get(fqn, []):
-                if dep in self.nodes:  # Only follow edges to existing nodes
-                    dfs(dep, path)
+            while stack:
+                fqn, deps = stack.pop()
 
-            path.pop()
-            in_stack.remove(fqn)
+                if deps is None:
+                    if fqn in in_stack:
+                        cycles.append(path[path.index(fqn):] + [fqn])
+                        continue
+                    if fqn in visited:
+                        continue
+                    visited.add(fqn)
+                    in_stack.add(fqn)
+                    path.append(fqn)
+                    # Only follow edges to existing nodes; dangling requires are
+                    # reported by find_unresolved, not here.
+                    deps = iter([d for d in self.edges.get(fqn, {}) if d in self.nodes])
 
-        for fqn in self.nodes:
-            if fqn not in visited:
-                dfs(fqn, [])
+                next_dep = next(deps, None)
+                if next_dep is None:
+                    path.pop()
+                    in_stack.discard(fqn)
+                    continue
+
+                stack.append((fqn, deps))
+                stack.append((next_dep, None))
 
         return [
             GraphError(
@@ -193,59 +209,42 @@ class DependencyGraph:
         Contracts with no dependencies come first. Each contract appears
         only after all its dependencies.
 
+        Edge direction, stated once: `self.edges[A]` holds what A *requires*,
+        and `self.reverse_edges[B]` holds who requires B. Compilation must run
+        the other way — B before A — so Kahn's algorithm here treats a node's
+        *requires* count as its in-degree and walks `reverse_edges` to relax it.
+
         Returns:
-            List of FQNs in compilation order.
+            List of FQNs in compilation order. Ties are broken lexicographically
+            so the order is stable across runs and platforms; generators embed
+            this order in provenance comments, and an unstable order would make
+            every regeneration produce a spurious diff.
 
         Raises:
             GraphCycleError: If the graph has cycles (topological sort
                 is impossible with cycles).
         """
-        # Kahn's algorithm
-        in_degree: dict[str, int] = {fqn: 0 for fqn in self.nodes}
-        for fqn, deps in self.edges.items():
-            for dep in deps:
-                if dep in in_degree:
-                    in_degree[dep] = in_degree.get(dep, 0)  # ensure exists
+        pending_deps = {
+            fqn: sum(1 for dep in self.edges.get(fqn, {}) if dep in self.nodes)
+            for fqn in self.nodes
+        }
 
-        # Recompute: in_degree[X] = number of edges pointing TO X
-        in_degree = {fqn: 0 for fqn in self.nodes}
-        for fqn, deps in self.edges.items():
-            for dep in deps:
-                if dep in in_degree:
-                    in_degree[dep] += 1
-
-        # Wait — that's wrong. In Kahn's algorithm for a dependency graph
-        # where A requires B, we want B before A. So the edge is A -> B,
-        # meaning B has an in-degree from A. But we want to emit B first.
-        #
-        # Actually, let's think of it differently:
-        # - A requires B means "B must be compiled before A"
-        # - So the compilation edge is B -> A (B before A)
-        # - In Kahn's, we start with nodes that have no incoming compilation edges
-        # - A node's incoming compilation edges = its dependencies (requires list)
-
-        # In-degree = number of requires for each node (how many deps it has)
-        in_degree = {fqn: 0 for fqn in self.nodes}
-        for fqn, deps in self.edges.items():
-            # Count only deps that exist as nodes
-            in_degree[fqn] = len([d for d in deps if d in self.nodes])
-
-        # Start with nodes that have no dependencies
-        queue = [fqn for fqn, deg in sorted(in_degree.items()) if deg == 0]
+        # A heap rather than a re-sorted list: the old code called queue.sort()
+        # on every iteration and popped from the front, which is O(n^2 log n)
+        # for the same result heapq gives in O(n log n).
+        ready = [fqn for fqn, count in pending_deps.items() if count == 0]
+        heapq.heapify(ready)
         result: list[str] = []
 
-        while queue:
-            # Sort for deterministic output
-            queue.sort()
-            fqn = queue.pop(0)
+        while ready:
+            fqn = heapq.heappop(ready)
             result.append(fqn)
 
-            # For each node that depends on this one, decrement its in-degree
-            for dependent in self.reverse_edges.get(fqn, []):
-                if dependent in in_degree:
-                    in_degree[dependent] -= 1
-                    if in_degree[dependent] == 0:
-                        queue.append(dependent)
+            for dependent in self.reverse_edges.get(fqn, {}):
+                if dependent in pending_deps:
+                    pending_deps[dependent] -= 1
+                    if pending_deps[dependent] == 0:
+                        heapq.heappush(ready, dependent)
 
         if len(result) != len(self.nodes):
             # Cycle detected — some nodes never reached in-degree 0
@@ -266,7 +265,7 @@ class DependencyGraph:
         Returns:
             List of FQNs that directly require this contract.
         """
-        return self.reverse_edges.get(fqn, [])
+        return list(self.reverse_edges.get(fqn, {}))
 
     def dependencies_of(self, fqn: str) -> list[str]:
         """Find all contracts that the given contract requires.
@@ -277,7 +276,7 @@ class DependencyGraph:
         Returns:
             List of FQNs that this contract directly requires.
         """
-        return self.edges.get(fqn, [])
+        return list(self.edges.get(fqn, {}))
 
     def summary(self) -> str:
         """Return a human-readable summary of the graph.
@@ -302,43 +301,81 @@ class DependencyGraph:
         return "\n".join(lines)
 
 
-def build_dependency_graph(contracts: dict[str, dict]) -> DependencyGraph:
+def build_dependency_graph(
+    contracts: dict[str, dict],
+    source_paths: dict[str, str] | None = None,
+) -> DependencyGraph:
     """Build the dependency graph from a collection of loaded contracts.
 
     Creates nodes for each contract and edges from the `requires` arrays.
     Detects self-references as errors.
 
     Args:
-        contracts: Dict mapping FQN -> loaded contract dict.
+        contracts: Dict mapping FQN -> loaded contract dict. A `ContractSet`
+            from `load_all_contracts` carries its own source paths, which are
+            used automatically when `source_paths` is not given.
+        source_paths: Optional FQN -> file path mapping, used only for error
+            reporting. Source paths are deliberately kept out of the contract
+            dicts themselves so nothing can write them back to disk.
 
     Returns:
         A populated DependencyGraph.
     """
     graph = DependencyGraph()
+    if source_paths is None:
+        source_paths = getattr(contracts, "source_paths", {}) or {}
 
-    # Create nodes
+    # merge_dependencies walks every field of every contract; calling it once
+    # per contract and reusing the result keeps that cost linear.
+    dependencies = {fqn: merge_dependencies(contract) for fqn, contract in contracts.items()}
+
     for fqn, contract in contracts.items():
-        kind = contract.get("kind", "")
-        metadata = contract.get("metadata", {})
-        requires = merge_dependencies(contract)
+        metadata = contract.get("metadata") or {}
+        declared = contract.get("requires")
+        if isinstance(declared, list) and fqn in declared:
+            # An explicit `requires: [<self>]` is always an authoring mistake:
+            # it imposes no ordering the compiler can honour, so it means the
+            # author typed the wrong FQN and the dependency they meant to
+            # declare is missing.
+            graph.build_errors.append(
+                GraphError(
+                    error_type="self_reference",
+                    message=(
+                        f"Contract '{fqn}' lists itself in `requires`. A contract "
+                        f"cannot be compiled before itself — remove the entry, or "
+                        f"correct it to the contract that was meant."
+                    ),
+                    contract_fqn=fqn,
+                    details=[fqn],
+                )
+            )
 
-        node = ContractNode(
-            fqn=fqn,
-            kind=kind,
-            domain=metadata.get("domain", ""),
-            name=metadata.get("name", ""),
-            source_path=contract.get("_source_path", ""),
-            raw=contract,
-            requires=requires,
+        graph.add_node(
+            ContractNode(
+                fqn=fqn,
+                kind=contract.get("kind", ""),
+                domain=metadata.get("domain", ""),
+                name=metadata.get("name", ""),
+                source_path=source_paths.get(fqn, ""),
+                raw=contract,
+                requires=dependencies[fqn],
+            )
         )
-        graph.add_node(node)
 
-    # Create edges
-    for fqn, contract in contracts.items():
-        requires = merge_dependencies(contract)
+    for fqn, requires in dependencies.items():
         for dep in requires:
             if dep == fqn:
-                logger.warning("Contract '%s' requires itself — ignoring self-reference", fqn)
+                # A self-edge derived from contract *semantics* is legitimate and
+                # common: `account.parent_account_id -> account` (a chart-of-
+                # accounts hierarchy), `journal.reversal_of_id -> journal` (a
+                # reversing entry), threaded comments, org charts. The foreign
+                # key, the graph edge and the frontend picker are all compiled
+                # from `spec.fields.*.references` directly and are unaffected;
+                # this graph only decides compilation *order*, and an entity is
+                # compiled once as a whole, so it constrains nothing. Dropping
+                # the edge here is exact, not a degradation — hence debug, not
+                # a warning. Explicitly declared self-requires are caught above.
+                logger.debug("Contract '%s' references itself — no ordering edge needed", fqn)
                 continue
             graph.add_edge(fqn, dep)
 

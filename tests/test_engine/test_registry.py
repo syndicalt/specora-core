@@ -1,4 +1,5 @@
 """Tests for the model registry and capabilities system."""
+
 from __future__ import annotations
 
 from engine.registry import ModelCapabilities, ModelRegistry

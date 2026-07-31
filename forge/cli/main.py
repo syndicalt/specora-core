@@ -35,6 +35,18 @@ from rich.logging import RichHandler
 from rich.table import Table
 from rich.tree import Tree
 
+from extractor.cli.commands import extract as extract_cmd
+from factory.cli.add import factory_add
+from factory.cli.chat import factory_chat
+from factory.cli.explain import factory_explain
+from factory.cli.migrate import factory_migrate
+from factory.cli.new import factory_new
+from factory.cli.refine import factory_refine
+from factory.cli.visualize import factory_visualize
+from forge.bundle import copy_contracts
+from forge.cli.init_project import init_project
+from healer.cli.commands import healer as healer_group
+
 # Load .env file — don't override existing env vars (Docker sets them via env_file)
 load_dotenv(override=False)
 
@@ -85,7 +97,8 @@ def forge() -> None:
 
 @forge.command()
 @click.argument("path", default="domains/", type=click.Path())
-@click.option("--output", "output_format", type=click.Choice(["text", "json"]), default="text", help="Output format")
+@click.option("--output", "output_format", type=click.Choice(["text", "json"]),
+              default="text", help="Output format")
 def validate(path: str, output_format: str) -> None:
     """Validate all contracts against their meta-schemas.
 
@@ -93,16 +106,23 @@ def validate(path: str, output_format: str) -> None:
     meta-schema. Reports all errors and warnings with human-readable
     messages and suggested fixes.
     """
+    from forge.error_display import format_errors_rich
     from forge.parser.loader import load_all_contracts
     from forge.parser.validator import validate_all
-    from forge.error_display import format_errors_rich
 
     try:
         contracts = load_all_contracts(Path(path))
     except Exception as e:
         if output_format == "json":
             import json as json_mod
-            click.echo(json_mod.dumps({"valid": False, "contract_count": 0, "errors": [{"fqn": "", "path": "", "message": str(e), "severity": "error"}], "warnings": []}))
+            click.echo(json_mod.dumps({
+                "valid": False,
+                "contract_count": 0,
+                "errors": [
+                    {"fqn": "", "path": "", "message": str(e), "severity": "error"}
+                ],
+                "warnings": [],
+            }))
         else:
             console.print(f"[red]Error loading contracts:[/red] {e}")
         sys.exit(1)
@@ -116,8 +136,16 @@ def validate(path: str, output_format: str) -> None:
         result = {
             "valid": len(real_errors) == 0,
             "contract_count": len(contracts),
-            "errors": [{"fqn": e.contract_fqn, "path": e.path, "message": e.message, "severity": e.severity} for e in real_errors],
-            "warnings": [{"fqn": e.contract_fqn, "path": e.path, "message": e.message, "severity": e.severity} for e in warnings],
+            "errors": [
+                {"fqn": e.contract_fqn, "path": e.path,
+                 "message": e.message, "severity": e.severity}
+                for e in real_errors
+            ],
+            "warnings": [
+                {"fqn": e.contract_fqn, "path": e.path,
+                 "message": e.message, "severity": e.severity}
+                for e in warnings
+            ],
         }
         click.echo(json_mod.dumps(result))
         if real_errors:
@@ -136,14 +164,15 @@ def validate(path: str, output_format: str) -> None:
 
 @forge.command()
 @click.argument("path", default="domains/", type=click.Path())
-@click.option("--output", "output_format", type=click.Choice(["text", "json"]), default="text", help="Output format")
+@click.option("--output", "output_format", type=click.Choice(["text", "json"]),
+              default="text", help="Output format")
 def compile(path: str, output_format: str) -> None:
     """Compile contracts into IR.
 
     Runs the full pipeline: load -> validate -> resolve -> compile -> passes.
     Prints a summary of the compiled IR.
     """
-    from forge.ir.compiler import Compiler, CompilationError
+    from forge.ir.compiler import CompilationError, Compiler
 
     try:
         compiler = Compiler(contract_root=Path(path))
@@ -153,7 +182,7 @@ def compile(path: str, output_format: str) -> None:
             import json as json_mod
             click.echo(json_mod.dumps({"success": False, "errors": [str(err) for err in e.errors]}))
         else:
-            console.print(f"[red]Compilation failed:[/red]")
+            console.print("[red]Compilation failed:[/red]")
             for err in e.errors:
                 console.print(f"  {err}")
         sys.exit(1)
@@ -178,7 +207,7 @@ def compile(path: str, output_format: str) -> None:
         click.echo(json_mod.dumps(result))
         return
 
-    console.print(f"[green]Compilation successful[/green]\n")
+    console.print("[green]Compilation successful[/green]\n")
     console.print(ir.summary())
 
 
@@ -194,15 +223,14 @@ def generate(path: str, target: tuple[str, ...], output: str) -> None:
     Runs the full compilation pipeline, then invokes target generators
     to produce code files in the output directory.
     """
-    from forge.ir.compiler import Compiler, CompilationError
-    from forge.targets.base import GeneratedFile
+    from forge.ir.compiler import CompilationError, Compiler
 
     # Compile
     try:
         compiler = Compiler(contract_root=Path(path))
         ir = compiler.compile()
     except CompilationError as e:
-        console.print(f"[red]Compilation failed:[/red]")
+        console.print("[red]Compilation failed:[/red]")
         for err in e.errors:
             console.print(f"  {err}")
         sys.exit(1)
@@ -229,10 +257,21 @@ def generate(path: str, target: tuple[str, ...], output: str) -> None:
                 # Shell scripts must use LF line endings for Linux containers
                 newline = "\n" if f.path.endswith(".sh") else None
                 file_path.write_text(f.content, encoding="utf-8", newline=newline)
+                if getattr(f, "executable", False):
+                    file_path.chmod(file_path.stat().st_mode | 0o111)
                 console.print(f"  [green]wrote[/green] {f.path}")
                 total_files += 1
         except Exception as e:
             console.print(f"  [red]Error in {gen.name()}:[/red] {e}")
+
+    # Ship the contracts alongside the code they produced. The generated stack
+    # mounts ./domains into the Healer, which has nothing to heal without them.
+    try:
+        contracts = copy_contracts(Path(path), output_path)
+        console.print(f"  [green]bundled[/green] {len(contracts)} contracts")
+        total_files += len(contracts)
+    except (OSError, ValueError) as e:
+        console.print(f"  [red]Could not bundle contracts:[/red] {e}")
 
     console.print(f"\n[green]Generated {total_files} files[/green] in {output_path}")
 
@@ -242,12 +281,13 @@ def generate(path: str, target: tuple[str, ...], output: str) -> None:
     if env_example.exists() and not env_file.exists():
         import shutil
         shutil.copy2(env_example, env_file)
-        console.print(f"[cyan]Created .env from .env.example[/cyan] — edit secrets before deploying")
+        console.print("[cyan]Created .env from .env.example[/cyan] — edit secrets before deploying")
 
 
 @forge.command()
 @click.argument("path", default="domains/", type=click.Path())
-@click.option("--output", "output_format", type=click.Choice(["text", "json"]), default="text", help="Output format")
+@click.option("--output", "output_format", type=click.Choice(["text", "json"]),
+              default="text", help="Output format")
 def graph(path: str, output_format: str) -> None:
     """Display the contract dependency graph."""
     from forge.parser.graph import build_dependency_graph
@@ -369,7 +409,10 @@ def show(diff_id: str) -> None:
         elif change.change_type == "removed":
             console.print(f"  [red]-[/red] {change.path}: {change.old_value}")
         else:
-            console.print(f"  [yellow]~[/yellow] {change.path}: {change.old_value} -> {change.new_value}")
+            console.print(
+                f"  [yellow]~[/yellow] {change.path}: "
+                f"{change.old_value} -> {change.new_value}"
+            )
 
 
 # =============================================================================
@@ -452,14 +495,8 @@ def factory() -> None:
     pass
 
 
-# Import and register factory commands
-from factory.cli.new import factory_new
-from factory.cli.add import factory_add
-from factory.cli.explain import factory_explain
-from factory.cli.refine import factory_refine
-from factory.cli.chat import factory_chat
-from factory.cli.visualize import factory_visualize
-from factory.cli.migrate import factory_migrate
+# Registration has to follow the group definitions above; the imports
+# themselves live at the top of the module.
 factory.add_command(factory_new, "new")
 factory.add_command(factory_add, "add")
 factory.add_command(factory_explain, "explain")
@@ -473,8 +510,6 @@ factory.add_command(factory_migrate, "migrate")
 # Healer commands
 # =============================================================================
 
-# Import and register healer commands
-from healer.cli.commands import healer as healer_group
 cli.add_command(healer_group, "healer")
 
 
@@ -482,12 +517,7 @@ cli.add_command(healer_group, "healer")
 # Extractor commands
 # =============================================================================
 
-# Import and register extractor commands
-from extractor.cli.commands import extract as extract_cmd
 cli.add_command(extract_cmd, "extract")
-
-# Import and register project scaffolder
-from forge.cli.init_project import init_project
 cli.add_command(init_project, "init-project")
 
 
@@ -505,16 +535,18 @@ def _get_generators(target_names: tuple[str, ...]) -> list:
     Returns:
         List of instantiated generator objects.
     """
-    from forge.targets.typescript.gen_types import TypeScriptGenerator
-    from forge.targets.fastapi.gen_routes import FastAPIGenerator
-    from forge.targets.postgres.gen_ddl import PostgresGenerator
-    from forge.targets.fastapi_prod.generator import FastAPIProductionGenerator, DockerGenerator, TestSuiteGenerator
+    from forge.targets.fastapi_prod.generator import (
+        DockerGenerator,
+        FastAPIProductionGenerator,
+        TestSuiteGenerator,
+    )
     from forge.targets.migrations.generator import MigrationGenerator
     from forge.targets.nextjs.generator import NextJSGenerator
+    from forge.targets.postgres.gen_ddl import PostgresGenerator
+    from forge.targets.typescript.gen_types import TypeScriptGenerator
 
     registry = {
         "typescript": TypeScriptGenerator,
-        "fastapi": FastAPIGenerator,
         "postgres": PostgresGenerator,
         "fastapi-prod": FastAPIProductionGenerator,
         "docker": DockerGenerator,
@@ -526,11 +558,29 @@ def _get_generators(target_names: tuple[str, ...]) -> list:
     # Aliases — expand shorthand names into multiple generators
     aliases = {
         "prod": ["fastapi-prod", "postgres", "docker", "tests", "nextjs", "migrations"],
+        "fastapi": ["fastapi-prod"],
+    }
+
+    # `fastapi` used to select a separate generator that emitted no auth and no
+    # workflow enforcement no matter what the contracts declared, so a domain
+    # with infra/auth and a state machine produced an open, stateless app with
+    # no warning. It is now a name for the production backend; the redirect is
+    # announced because silently swapping a target is the same class of defect.
+    redirects = {
+        "fastapi": "fastapi-prod",
     }
 
     # Expand aliases
     expanded = []
     for name in target_names:
+        if name in redirects:
+            console.print(
+                f"[yellow]Target '{name}' now generates '{redirects[name]}'.[/yellow]"
+            )
+            console.print(
+                "  The old in-memory target ignored infra/auth and workflow "
+                "state machines. It has been removed."
+            )
         if name in aliases:
             expanded.extend(aliases[name])
         else:

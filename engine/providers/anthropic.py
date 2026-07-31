@@ -5,6 +5,7 @@ Uses the ``anthropic`` Python SDK.  System messages are passed separately
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -12,16 +13,27 @@ from engine.providers.base import LLMResponse, Message, Provider, ToolDefinition
 
 logger = logging.getLogger(__name__)
 
+# Structured output on this API is expressed as a forced single-tool call:
+# the schema becomes the tool's input schema, so the model must emit a value
+# that conforms rather than free text that resembles JSON.
+_STRUCTURED_TOOL_NAME = "emit_structured_result"
+
 
 class AnthropicProvider(Provider):
     """Provider implementation for Anthropic's Claude models."""
 
-    def __init__(self, api_key: str, model: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        timeout: float | None = None,
+    ) -> None:
         """Initialise with an API key and model identifier.
 
         Args:
             api_key: Anthropic API key (``sk-ant-...``).
             model: Model ID, e.g. ``claude-sonnet-4-6``.
+            timeout: Per-request timeout in seconds.
         """
         try:
             import anthropic  # noqa: F811
@@ -31,12 +43,20 @@ class AnthropicProvider(Provider):
                 "Install it with: pip install anthropic"
             ) from exc
 
-        self._client = anthropic.Anthropic(api_key=api_key)
+        client_kwargs: dict[str, Any] = {"api_key": api_key, "max_retries": 0}
+        if timeout is not None:
+            client_kwargs["timeout"] = timeout
+
+        self._client = anthropic.Anthropic(**client_kwargs)
         self._model = model
 
     def provider_name(self) -> str:
         """Return ``'anthropic'``."""
         return "anthropic"
+
+    def supports_native_structured_output(self) -> bool:
+        """Forced tool use is a real API-side guarantee."""
+        return True
 
     # ------------------------------------------------------------------
     # Message conversion helpers
@@ -118,6 +138,7 @@ class AnthropicProvider(Provider):
         tools: list[ToolDefinition] | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        response_schema: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """Send a chat completion request to the Anthropic API.
 
@@ -127,6 +148,7 @@ class AnthropicProvider(Provider):
             tools: Optional tool definitions the model may invoke.
             temperature: Sampling temperature (0.0 = deterministic).
             max_tokens: Maximum tokens in the response.
+            response_schema: JSON Schema forcing a structured reply.
 
         Returns:
             Normalised ``LLMResponse`` with content, tool calls, and usage.
@@ -141,13 +163,38 @@ class AnthropicProvider(Provider):
         if system:
             kwargs["system"] = system
 
-        if tools:
+        if response_schema is not None:
+            kwargs["tools"] = [
+                {
+                    "name": _STRUCTURED_TOOL_NAME,
+                    "description": "Return the result in the required shape.",
+                    "input_schema": response_schema,
+                }
+            ]
+            kwargs["tool_choice"] = {"type": "tool", "name": _STRUCTURED_TOOL_NAME}
+        elif tools:
             kwargs["tools"] = self._convert_tools(tools)
 
         logger.debug("Anthropic request: model=%s, messages=%d", self._model, len(messages))
         response = self._client.messages.create(**kwargs)
 
-        return self._parse_response(response)
+        parsed = self._parse_response(response)
+        if response_schema is not None:
+            parsed = self._unwrap_structured(parsed)
+        return parsed
+
+    @staticmethod
+    def _unwrap_structured(parsed: LLMResponse) -> LLMResponse:
+        """Move the forced tool's input into ``content`` as a JSON document."""
+        for call in parsed.tool_calls:
+            if call.get("name") == _STRUCTURED_TOOL_NAME:
+                return LLMResponse(
+                    content=json.dumps(call.get("input", {})),
+                    tool_calls=[],
+                    stop_reason=parsed.stop_reason,
+                    usage=parsed.usage,
+                )
+        return parsed
 
     @staticmethod
     def _parse_response(response: Any) -> LLMResponse:

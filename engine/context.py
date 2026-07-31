@@ -38,7 +38,11 @@ FIELD_TYPES_REFERENCE = """
 Valid field types:
   string   — Short text (names, codes, identifiers)
   integer  — Whole numbers (counts, years, IDs)
-  number   — Decimal numbers (weights, prices, percentages)
+  number   — INEXACT floating point (weights, coordinates, ratings)
+  decimal  — EXACT numbers. Use for money and anything else that must not
+             round: prices, balances, tax, quantities that are billed.
+             Size it with constraints: {precision: 12, scale: 2}.
+             Never use `number` for money — it is a float and loses precision.
   boolean  — True/false flags
   text     — Long text (descriptions, notes, content)
   array    — Lists (tags, items)
@@ -50,10 +54,16 @@ Valid field types:
 
 Special field features:
   required: true    — Must be provided on creation
-  immutable: true   — Cannot change after creation
+  immutable: true   — Cannot change AFTER creation (still set when creating)
+  sensitive: true   — Write-only. Accepted on create/update and stored, but
+                      NEVER returned by the API and never logged. REQUIRED for
+                      password hashes, API key secrets, and tokens. Without it
+                      the generated API publishes the value to every client.
   enum: [a, b, c]   — Fixed set of allowed values
-  computed: "now"    — Auto-set to current timestamp
-  computed: "uuid"   — Auto-generated UUID
+  computed: "now"           — Auto-set to current timestamp
+  computed: "now_on_update" — Refreshed on every write
+  computed: "current_user"  — The authenticated user's id
+  computed: "sequence(FMT)" — Sequential number with the given format
   references:        — Link to another entity
     entity: entity/domain/name    (FQN, all lowercase)
     display: field_name
@@ -101,7 +111,8 @@ def build_system_prompt(
         entities_ctx = f"\nExisting entities in this domain: {entity_list}\n"
 
     prompts = {
-        "domain_discovery": f"""You are a domain analyst helping a developer define their software domain.
+        "domain_discovery": f"""\
+You are a domain analyst helping a developer define their software domain.
 
 Your job is to discover the core entities (data models) their system needs.
 
@@ -116,7 +127,8 @@ When you have a clear picture, output a YAML list of entity names with brief des
 Domain being built: {domain}
 {entities_ctx}""",
 
-        "entity_interview": f"""You are a data modeling expert helping define entity fields for the Specora contract system.
+        "entity_interview": f"""\
+You are a data modeling expert helping define entity fields for the Specora contract system.
 
 Given a description of an entity, determine:
 1. What fields it needs (name, type, description, required, constraints)
@@ -139,7 +151,8 @@ Always include mixin/stdlib/timestamped and mixin/stdlib/identifiable unless exp
 IMPORTANT: All names must be snake_case. All FQNs must be kind/domain/name format, all lowercase.
 All graph_edge values must be SCREAMING_SNAKE_CASE (e.g., ASSIGNED_TO, not assigned_to).""",
 
-        "workflow_interview": f"""You are a workflow designer helping define state machines for entities.
+        "workflow_interview": f"""\
+You are a workflow designer helping define state machines for entities.
 
 Given a description of an entity's lifecycle, determine:
 1. What states it has (with labels and categories: open/hold/closed)
@@ -154,7 +167,9 @@ All state names and workflow names must be snake_case (e.g., in_progress, not In
 
 Domain: {domain}""",
 
-        "explain": """You are a technical documentation expert. Explain the given Specora contract in clear, plain English.
+        "explain": """\
+You are a technical documentation expert.
+Explain the given Specora contract in clear, plain English.
 
 Cover:
 - What the entity/workflow/page represents

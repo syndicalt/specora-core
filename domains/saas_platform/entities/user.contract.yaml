@@ -1,0 +1,52 @@
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: user
+  domain: saas_platform
+  description: "A person who can authenticate against the platform"
+  tags: [saas, auth]
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+  - entity/saas_platform/tenant
+spec:
+  icon: user
+  number_prefix: USR
+  fields:
+    email:
+      type: email
+      required: true
+      description: "Login identity. Unique across the platform."
+    full_name:
+      type: string
+      required: true
+    password_hash:
+      type: string
+      required: true
+      sensitive: true
+      description: >
+        Argon2id hash of the user's password. Marked sensitive so it is
+        accepted on write, stored, and never serialised into a response —
+        response models are built from the entity's full field list, so
+        without this flag the API would publish every user's hash.
+    role:
+      type: string
+      required: true
+      enum: [admin, owner, member, viewer]
+      description: "Platform role. Must stay in step with infra/saas_platform/auth roles."
+    tenant_id:
+      type: uuid
+      required: true
+      references:
+        entity: entity/saas_platform/tenant
+        display: name
+        graph_edge: BELONGS_TO
+    last_login_at:
+      type: datetime
+    is_active:
+      type: boolean
+      default: true
+      description: "Deactivated users retain their records but cannot authenticate."
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable

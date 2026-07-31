@@ -1,12 +1,10 @@
 """Tests for forge.error_display — human-readable validation errors."""
-import pytest
 
-from forge.error_display import FormattedError, humanize_error
+from forge.error_display import humanize_error
 from forge.parser.validator import ContractValidationError
 
 
 class TestHumanizeError:
-
     def test_snake_case_name_error(self) -> None:
         err = ContractValidationError(
             contract_fqn="entity/todo_list/task",
@@ -21,7 +19,10 @@ class TestHumanizeError:
         err = ContractValidationError(
             contract_fqn="entity/todo_list/task",
             path="requires.[2]",
-            message="'todo_list/User' does not match '^(entity|workflow|page|route|agent|mixin|infra)/[a-z][a-z0-9_/]*$'",
+            message=(
+                "'todo_list/User' does not match "
+                "'^(entity|workflow|page|route|agent|mixin|infra)/[a-z][a-z0-9_/]*$'"
+            ),
         )
         fe = humanize_error(err)
         assert "fully qualified name" in fe.message
@@ -61,7 +62,10 @@ class TestHumanizeError:
         err = ContractValidationError(
             contract_fqn="entity/todo_list/task",
             path="requires.[3]",
-            message="'workflow/todo_list/Task_lifecycle' does not match '^(entity|workflow|page|route|agent|mixin|infra)/[a-z][a-z0-9_/]*$'",
+            message=(
+                "'workflow/todo_list/Task_lifecycle' does not match "
+                "'^(entity|workflow|page|route|agent|mixin|infra)/[a-z][a-z0-9_/]*$'"
+            ),
         )
         fe = humanize_error(err)
         assert "workflow/todo_list/task_lifecycle" in fe.suggestion

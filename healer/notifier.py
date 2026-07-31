@@ -14,15 +14,26 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 from rich.console import Console
 
 from healer.models import HealerTicket
+from healer.security import (
+    ACTION_VIEW,
+    AuthError,
+    approval_tokens_enabled,
+    issue_action_token,
+    public_base_url,
+)
 
 logger = logging.getLogger(__name__)
 console = Console()
 
-ICONS = {"queued": "📥", "applied": "✅", "failed": "❌", "proposed": "💡", "rejected": "🚫", "approved": "👍"}
+ICONS = {
+    "queued": "📥", "applied": "✅", "failed": "❌",
+    "proposed": "💡", "rejected": "🚫", "approved": "👍",
+}
 
 
 class Notifier:
@@ -66,9 +77,13 @@ class Notifier:
     def _log_to_console(self, payload: dict) -> None:
         event = payload["event"]
         fqn = payload.get("contract_fqn") or "unknown"
-        colors = {"queued": "yellow", "applied": "green", "failed": "red", "proposed": "cyan", "rejected": "red"}
+        colors = {
+            "queued": "yellow", "applied": "green", "failed": "red",
+            "proposed": "cyan", "rejected": "red",
+        }
         color = colors.get(event, "white")
-        console.print(f"[{color}][healer/{event}][/{color}] {fqn}: {payload.get('message', '')[:80]}")
+        message = payload.get("message", "")[:80]
+        console.print(f"[{color}][healer/{event}][/{color}] {fqn}: {message}")
 
     def _send_webhook(self, payload: dict, url: str = "") -> None:
         try:
@@ -99,8 +114,7 @@ class Notifier:
         ticket_id = payload.get("ticket_id", "")
         icon = ICONS.get(event, "🔔")
 
-        healer_port = os.environ.get("SPECORA_HEALER_PORT", "8083")
-        ticket_url = f"http://localhost:{healer_port}/healer/tickets/{ticket_id}/view" if ticket_id else ""
+        ticket_url = _ticket_url(ticket_id)
 
         lines = [
             f"{icon} **Specora Healer — {event.upper()}**",
@@ -120,3 +134,25 @@ class Notifier:
             lines.append(f"🔗 [View ticket]({ticket_url})")
 
         return "\n".join(lines)
+
+
+def _ticket_url(ticket_id: str) -> str:
+    """Link to the ticket, carrying a signed view token when one can be minted.
+
+    The token is a bearer credential, so this URL is only as private as the
+    channel it is posted to — which is the point of the design: the webhook
+    already goes to a private Slack/Discord/Teams channel, and embedding the
+    credential is what removes the need for a login page on the Healer.
+    """
+    if not ticket_id:
+        return ""
+    base = public_base_url()
+    url = f"{base}/healer/tickets/{ticket_id}/view"
+    if not approval_tokens_enabled():
+        return url
+    try:
+        token = issue_action_token(ticket_id, ACTION_VIEW)
+    except AuthError as exc:
+        logger.warning("Could not mint a view token: %s", exc.detail)
+        return url
+    return f"{url}?t={quote(token, safe='')}"

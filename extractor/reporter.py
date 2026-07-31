@@ -1,13 +1,13 @@
 # extractor/reporter.py
 """Rich-formatted analysis report with accept/edit/skip per entity."""
+
 from __future__ import annotations
 
 from rich.console import Console
-from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
 
-from extractor.models import AnalysisReport, Confidence, ExtractedEntity
+from extractor.models import AnalysisReport, ExtractedEntity
 
 console = Console()
 
@@ -31,8 +31,20 @@ def display_report(report: AnalysisReport) -> list[ExtractedEntity]:
     table.add_row("Entities found", f"[green]{len(report.entities)}[/green]")
     table.add_row("Routes found", str(len(report.routes)))
     table.add_row("Workflows detected", str(len(report.workflows)))
+    if report.warnings:
+        table.add_row("Not analyzed", f"[yellow]{len(report.warnings)}[/yellow]")
     console.print(table)
     console.print()
+
+    if report.warnings:
+        # Anything the pipeline could not read is part of the answer: the user
+        # is about to treat this report as a map of their codebase.
+        console.print(Rule("[bold yellow]Gaps[/bold yellow]", style="yellow"))
+        for note in report.warnings[:25]:
+            console.print(f"  [yellow]![/yellow] [dim]{note}[/dim]")
+        if len(report.warnings) > 25:
+            console.print(f"  [dim]… and {len(report.warnings) - 25} more[/dim]")
+        console.print()
 
     if not report.entities:
         console.print("  [yellow]No entities found.[/yellow]")
@@ -44,10 +56,17 @@ def display_report(report: AnalysisReport) -> list[ExtractedEntity]:
     accepted: list[ExtractedEntity] = []
 
     for i, entity in enumerate(report.entities, 1):
-        confidence_color = {"high": "green", "medium": "yellow", "low": "red"}.get(entity.confidence.value, "white")
+        confidence_color = {"high": "green", "medium": "yellow", "low": "red"}.get(
+            entity.confidence.value, "white"
+        )
 
         # Entity header
-        console.print(f"  [bold]{i}/{len(report.entities)}[/bold]  [bold cyan]{entity.name}[/bold cyan]  [{confidence_color}]{entity.confidence.value} confidence[/{confidence_color}]")
+        console.print(
+            f"  [bold]{i}/{len(report.entities)}[/bold]  "
+            f"[bold cyan]{entity.name}[/bold cyan]  "
+            f"[{confidence_color}]{entity.confidence.value} confidence"
+            f"[/{confidence_color}]"
+        )
         if entity.description:
             console.print(f"  [dim]{entity.description}[/dim]")
         console.print(f"  [dim]Source: {entity.source_file}[/dim]")

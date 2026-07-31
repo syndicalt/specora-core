@@ -11,9 +11,9 @@ import tempfile
 from pathlib import Path
 
 from factory.emitters.entity_emitter import emit_entity
-from factory.emitters.workflow_emitter import emit_workflow
-from factory.emitters.route_emitter import emit_route
 from factory.emitters.page_emitter import emit_page
+from factory.emitters.route_emitter import emit_route
+from factory.emitters.workflow_emitter import emit_workflow
 from forge.ir.compiler import Compiler
 
 
@@ -56,11 +56,15 @@ def test_emitted_contracts_compile():
                 "widget_lifecycle", "test_domain", workflow_data
             ),
             "routes/widgets.contract.yaml": emit_route(
-                "widgets", "test_domain", "entity/test_domain/widget",
+                "widgets",
+                "test_domain",
+                "entity/test_domain/widget",
                 "workflow/test_domain/widget_lifecycle",
             ),
             "pages/widgets.contract.yaml": emit_page(
-                "widgets", "test_domain", "entity/test_domain/widget",
+                "widgets",
+                "test_domain",
+                "entity/test_domain/widget",
                 ["name", "count", "active", "state"],
             ),
         }
@@ -78,7 +82,8 @@ def test_emitted_contracts_compile():
         assert ir.domain == "test_domain"
         assert len(ir.entities) == 1
         assert ir.entities[0].name == "widget"
-        # Widget has 3 own fields + 4 mixin fields (id, number, created_at, updated_at) + state from workflow
+        # Widget has 3 own fields + 4 mixin fields (id, number, created_at,
+        # updated_at) + state from workflow
         assert len(ir.entities[0].fields) >= 7
         assert len(ir.workflows) >= 1
         assert len(ir.routes) == 1
@@ -132,8 +137,12 @@ def test_multi_entity_domain_compiles():
             "entities/pet.contract.yaml": emit_entity("pet", "pets", pet_data),
             "routes/owners.contract.yaml": emit_route("owners", "pets", "entity/pets/owner"),
             "routes/pets.contract.yaml": emit_route("pets", "pets", "entity/pets/pet"),
-            "pages/owners.contract.yaml": emit_page("owners", "pets", "entity/pets/owner", ["name", "email"]),
-            "pages/pets.contract.yaml": emit_page("pets", "pets", "entity/pets/pet", ["name", "species", "owner_id"]),
+            "pages/owners.contract.yaml": emit_page(
+                "owners", "pets", "entity/pets/owner", ["name", "email"]
+            ),
+            "pages/pets.contract.yaml": emit_page(
+                "pets", "pets", "entity/pets/pet", ["name", "species", "owner_id"]
+            ),
         }
 
         for rel_path, content in files.items():

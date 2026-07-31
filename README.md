@@ -60,10 +60,12 @@ runtime error --> classify --> trace to contract --> propose fix --> approve -->
 
 ### Extractor -- The Reverse Engineer
 
-Point it at an existing codebase. It scans Python files, TypeScript files, route definitions, and database schemas, then synthesizes contracts that describe what already exists. Migration path from legacy code to contract-driven development.
+Point it at an existing codebase. It reads Python with `ast` (Pydantic, SQLAlchemy, dataclasses, TypedDict) and TypeScript declarations with a brace-matching parser, then synthesizes contracts that validate and compile. Nothing in the scanned tree is imported, executed, or sent anywhere. Everything it could not read is reported rather than dropped, and every entity is reviewed by you before it is written. Migration path from legacy code to contract-driven development.
+
+SQL and Prisma schemas are scanned and reported but not yet extracted; JavaScript is read only for route registrations. See [docs/extractor.md](docs/extractor.md) for what it does and does not recognise.
 
 ```bash
-spc extractor synthesize /path/to/existing/app --domain my_app
+spc extract /path/to/existing/app --domain my_app
 ```
 
 ---
@@ -292,8 +294,21 @@ specora-core/
 | `OPENAI_API_KEY` | OpenAI |
 | `XAI_API_KEY` | xAI (Grok) |
 | `ZAI_API_KEY` | Z.AI (free tier available) |
-| `OLLAMA_BASE_URL` | Ollama (local models) |
+| `GOOGLE_API_KEY` | Google Gemini |
+| `OLLAMA_BASE_URL` | Ollama (local models); `OLLAMA_MODEL` picks the tag |
 | `SPECORA_AI_MODEL` | Force a specific model |
+
+Priority: `SPECORA_AI_MODEL` > `ANTHROPIC` > `OPENAI` > `XAI` > `ZAI` > `GOOGLE` > `OLLAMA`
+
+### LLM Reliability and Cost
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SPECORA_LLM_TIMEOUT` | `60` (`300` for Ollama) | Per-request timeout, seconds |
+| `SPECORA_LLM_MAX_ATTEMPTS` | `3` | Attempts before giving up |
+| `SPECORA_LLM_BACKOFF` | `0.5` | First retry delay, seconds |
+| `SPECORA_LLM_MAX_BACKOFF` | `8` | Retry delay ceiling, seconds |
+| `SPECORA_MODEL_PRICING` | -- | JSON map of model -> `{"input": usd_per_mtok, "output": usd_per_mtok}` for cost reporting |
 
 ### Generated App
 

@@ -5,12 +5,23 @@ metadata:
   domain: saas_platform
   description: "JWT authentication with tenant-scoped RBAC"
   tags: [saas, auth]
-requires: []
+requires:
+  - entity/saas_platform/user
 spec:
   category: auth
   config:
     provider: jwt
     roles: [admin, owner, member, viewer]
+    # The credential store the login handler verifies against. Without this the
+    # generator emits no login endpoint at all — which is correct, because the
+    # alternative it used to emit signed a token for whatever role the caller
+    # asked for. Every route contract here declares `roles`, so a build with no
+    # credential source would 401 forever with no way in.
+    user_entity: entity/saas_platform/user
+    identity_field: email
+    password_field: password_hash
+    role_field: role
+    active_field: is_active
   env_vars:
     AUTH_SECRET:
       description: "Secret key for JWT signing"

@@ -85,21 +85,28 @@ properties:
           properties:
             type:
               type: string
-              enum: [string, integer, number, boolean, text, array, object, datetime, date, uuid, email]
+              enum: [string, integer, number, decimal, boolean, text, array, object, datetime, date, uuid, email]
               description: >
                 The field's data type. Normalized types that map to
                 language-specific types in each generator target:
                   string   -> str / string / TEXT
                   integer  -> int / number / INTEGER
-                  number   -> float / number / NUMERIC
+                  number   -> float / number / DOUBLE PRECISION
+                  decimal  -> Decimal / string / NUMERIC(p, s)
                   boolean  -> bool / boolean / BOOLEAN
                   text     -> str / string / TEXT (long content)
                   array    -> list / Array / JSONB
                   object   -> dict / Record / JSONB
                   datetime -> datetime / string / TIMESTAMPTZ
                   date     -> date / string / DATE
-                  uuid     -> str / string / UUID
-                  email    -> str / string / TEXT (with email validation)
+                  uuid     -> UUID / string / UUID
+                  email    -> EmailStr / string / TEXT
+                Use `decimal` for money and any other exact quantity; it maps
+                to NUMERIC and serialises as a JSON string so no precision is
+                lost. Use `number` only where inexact floating point is
+                acceptable (measurements, coordinates, ratings). Set
+                constraints.precision and constraints.scale on a decimal field
+                to size its NUMERIC column; the defaults are (18, 2).
             description:
               type: string
               description: "Human-readable field description. Used in docs and JSDoc."
@@ -111,6 +118,15 @@ properties:
               type: boolean
               default: false
               description: "If true, field cannot be changed after creation."
+            sensitive:
+              type: boolean
+              default: false
+              description: >
+                Write-only. The field is accepted on create/update and stored,
+                but never serialised into an API response and never logged.
+                Required for password hashes, API key secrets, and tokens:
+                response models are built from the entity's full field list,
+                so a credential column without this flag is published by the API.
             default:
               description: "Default value if not provided."
             format:
@@ -152,6 +168,19 @@ properties:
                 pattern:
                   type: string
                   description: "Regex pattern the value must match."
+                precision:
+                  type: integer
+                  minimum: 1
+                  maximum: 1000
+                  description: >
+                    Total significant digits for a `decimal` field, sizing its
+                    NUMERIC(precision, scale) column. Defaults to 18.
+                scale:
+                  type: integer
+                  minimum: 0
+                  description: >
+                    Fractional digits for a `decimal` field. Defaults to 2.
+                    Must not exceed `precision`.
             references:
               type: object
               description: >
