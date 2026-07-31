@@ -978,6 +978,7 @@ def _family(token: str) -> str | None:
     return _json.loads(base64.urlsafe_b64decode(body)).get("fam")
 
 
+@requires_http
 class TestPerDeviceSessions:
     """Logout used to be subject-wide: signing out on a phone signed out a laptop.
 

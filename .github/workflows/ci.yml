@@ -146,7 +146,15 @@ jobs:
           cache: pip
       - run: pip install -e '.[dev,llm,healer]' pip-audit
       - name: Audit this project's dependencies
-        run: pip-audit --strict --progress-spinner off
+        # Audit the resolved dependency list rather than the environment.
+        # specora-core is installed from this checkout, so it is not on PyPI
+        # and cannot be looked up; auditing the environment makes --strict fail
+        # on the one package whose source we are already looking at, and
+        # --skip-editable does not help because --strict still counts a skip as
+        # unaudited.
+        run: |
+          pip freeze --exclude-editable > /tmp/resolved-deps.txt
+          pip-audit --strict --progress-spinner off -r /tmp/resolved-deps.txt
       - name: Audit the dependency set we generate for users
         # Generated apps inherit whatever requirements.txt the Docker generator
         # emits. Shipping a CVE-bearing auth stack to every generated app is a

@@ -47,6 +47,19 @@ dev = [
     # exclude` has to be honoured for the Markdown carve-out below to mean
     # anything.
     "ruff>=0.16",
+    # The regression suite does not read generated code, it RUNS it: it
+    # generates an app into a tmp_path, imports it, and drives it through a
+    # TestClient. So this repository's test environment needs the generated
+    # application's runtime dependencies too, and a missing one shows up as a
+    # collection error rather than a failing assertion.
+    #
+    # These were invisible locally because the working venv had accumulated
+    # them from earlier manual installs, so the suite passed here and failed on
+    # a clean CI runner. Anything the generated requirements.txt lists and a
+    # test imports belongs here.
+    "argon2-cffi>=23.1,<26.0",   # generated auth hashes with argon2id
+    "email-validator>=2.0",      # pydantic EmailStr, from the `email` IR type
+    "asyncpg>=0.29",             # generated postgres adapter
 ]
 llm = [
     "openai>=1.0",
