@@ -6,6 +6,7 @@ still resolves to the text that produced it. ``PromptRegistry.register``
 refuses a same-version re-registration with a different body to make that
 mistake loud.
 """
+
 from __future__ import annotations
 
 from engine.prompts.registry import Prompt, register

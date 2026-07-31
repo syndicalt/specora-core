@@ -95,15 +95,14 @@ def _list_page(view: EntityView) -> GeneratedFile:
 
     router_src = "  const router = useRouter();\n" if can_create else ""
     view_state_src = (
-        '  const [view, setView] = useState<"table" | "kanban">'
-        f'("{default_view}");\n'
+        f'  const [view, setView] = useState<"table" | "kanban">("{default_view}");\n'
         if has_table and has_kanban
         else ""
     )
 
     delete_handler = ""
     if can_delete:
-        delete_handler = f'''
+        delete_handler = f"""
   async function handleDelete(id: string) {{
     if (!window.confirm("Delete this {view.entity.name}? This cannot be undone.")) return;
     setActionError(null);
@@ -114,11 +113,11 @@ def _list_page(view: EntityView) -> GeneratedFile:
       setActionError(errorMessage(cause));
     }}
   }}
-'''
+"""
 
     transition_handler = ""
     if has_kanban:
-        transition_handler = f'''
+        transition_handler = f"""
   async function handleTransition(id: string, newState: string) {{
     setActionError(null);
     try {{
@@ -131,11 +130,11 @@ def _list_page(view: EntityView) -> GeneratedFile:
       setActionError(errorMessage(cause));
     }}
   }}
-'''
+"""
 
     toggle_src = ""
     if has_table and has_kanban:
-        toggle_src = '''
+        toggle_src = """
           <Button
             variant={view === "table" ? "default" : "outline"}
             size="sm"
@@ -149,7 +148,7 @@ def _list_page(view: EntityView) -> GeneratedFile:
             onClick={() => setView("kanban")}
           >
             Kanban
-          </Button>'''
+          </Button>"""
 
     create_button = ""
     if can_create:
@@ -173,7 +172,7 @@ def _list_page(view: EntityView) -> GeneratedFile:
     else:
         collection_src = table_src
 
-    content = f'''{_header(view, f"List view for {view.page.fqn}")}
+    content = f"""{_header(view, f"List view for {view.page.fqn}")}
 
 {imports_src}
 
@@ -218,7 +217,7 @@ export default function {cls}ListPage() {{
     </div>
   );
 }}
-'''
+"""
     return GeneratedFile(
         path=f"frontend/src/app/{view.app_dir}/page.tsx",
         content=content,
@@ -233,11 +232,7 @@ def _detail_page(view: EntityView) -> GeneratedFile:
     can_edit = _is_editable(view)
 
     heading_field = next(
-        (
-            f.name
-            for f in view.entity.fields
-            if f.type in ("string", "text") and not f.computed
-        ),
+        (f.name for f in view.entity.fields if f.type in ("string", "text") and not f.computed),
         "id",
     )
 
@@ -256,20 +251,20 @@ def _detail_page(view: EntityView) -> GeneratedFile:
     }}
   }}
 '''
-        delete_button = '''
+        delete_button = """
           <Button variant="destructive" onClick={handleDelete}>
             Delete
-          </Button>'''
+          </Button>"""
 
     edit_button = ""
     if can_edit:
-        edit_button = f'''
+        edit_button = f"""
           <Button
             variant="outline"
             onClick={{() => router.push(`{view.url}/${{encodeURIComponent(id)}}/edit`)}}
           >
             Edit
-          </Button>'''
+          </Button>"""
 
     content = f'''{_header(view, f"Detail view for {view.page.fqn}")}
 
@@ -353,7 +348,7 @@ def _create_page(view: EntityView) -> GeneratedFile:
     cls = view.component
     api = view.api
 
-    content = f'''{_header(view, f"Create form for {view.page.fqn}")}
+    content = f"""{_header(view, f"Create form for {view.page.fqn}")}
 
 "use client";
 import {{ useState }} from "react";
@@ -390,7 +385,7 @@ export default function Create{cls}Page() {{
     </div>
   );
 }}
-'''
+"""
     return GeneratedFile(
         path=f"frontend/src/app/{view.app_dir}/new/page.tsx",
         content=content,
@@ -402,7 +397,7 @@ def _edit_page(view: EntityView) -> GeneratedFile:
     cls = view.component
     api = view.api
 
-    content = f'''{_header(view, f"Edit form for {view.page.fqn}")}
+    content = f"""{_header(view, f"Edit form for {view.page.fqn}")}
 
 "use client";
 import {{ useEffect, useState }} from "react";
@@ -462,7 +457,7 @@ export default function Edit{cls}Page() {{
     </div>
   );
 }}
-'''
+"""
     return GeneratedFile(
         path=f"frontend/src/app/{view.app_dir}/[id]/edit/page.tsx",
         content=content,

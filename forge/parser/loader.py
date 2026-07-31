@@ -241,9 +241,7 @@ def load_all_contracts(root: Path, include_stdlib: bool = True) -> ContractSet:
 
         if fqn in contracts:
             existing = contracts.path_for(fqn) or "<unknown>"
-            raise ContractLoadError(
-                f"Duplicate FQN '{fqn}': found in both {existing} and {path}"
-            )
+            raise ContractLoadError(f"Duplicate FQN '{fqn}': found in both {existing} and {path}")
 
         contracts[fqn] = contract
         contracts.source_paths[fqn] = str(path)

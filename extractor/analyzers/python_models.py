@@ -222,9 +222,7 @@ def _entities_from_module(tree: ast.Module, rel: str, notes: list[str]) -> list[
         if len(fields) < 2:
             # A one-field class is a request body or a wrapper, not something
             # that warrants its own table, route, and page.
-            notes.append(
-                f"{rel}: skipped class {cls.name}, a single field is not a domain entity"
-            )
+            notes.append(f"{rel}: skipped class {cls.name}, a single field is not a domain entity")
             continue
 
         state_field, state_values = _state_machine(fields)

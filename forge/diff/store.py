@@ -88,9 +88,7 @@ class DiffStore:
     def _save_index(self) -> None:
         """Write the index to disk."""
         self._ensure_dir()
-        self._index_path().write_text(
-            json.dumps(self._load_index(), indent=2), encoding="utf-8"
-        )
+        self._index_path().write_text(json.dumps(self._load_index(), indent=2), encoding="utf-8")
 
     def save(self, diff: ContractDiff) -> None:
         """Persist a diff record.

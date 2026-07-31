@@ -21,6 +21,7 @@ Three properties hold regardless of what the model returns:
    that key through an in-process function table. There is no shell on this
    path and no string is ever reassembled into one.
 """
+
 from __future__ import annotations
 
 import json
@@ -62,38 +63,43 @@ class CommandSpec:
 # The single source of truth for what natural-language routing can reach.
 # forge.cli.repl asserts its handler table covers exactly these routes.
 ALLOWED_COMMANDS: tuple[CommandSpec, ...] = (
-    CommandSpec("forge validate", False, "forge validate <path>",
-                "Validate contracts against the meta-schemas"),
-    CommandSpec("forge compile", False, "forge compile <path>",
-                "Compile contracts to IR"),
-    CommandSpec("forge generate", True, "forge generate <path>",
-                "Generate code from contracts"),
-    CommandSpec("forge graph", False, "forge graph <path>",
-                "Show the contract dependency graph"),
-    CommandSpec("factory new", True, "factory new",
-                "Bootstrap a new domain through an interview"),
-    CommandSpec("factory add", True, "factory add <kind> --domain <d> --name <n>",
-                "Add a single contract"),
-    CommandSpec("factory explain", False, "factory explain <path>",
-                "Explain a contract in plain English"),
-    CommandSpec("factory refine", True, "factory refine <path> <instruction>",
-                "Modify a contract from an instruction"),
-    CommandSpec("factory chat", True, "factory chat --domain <d>",
-                "Agentic domain conversation"),
-    CommandSpec("factory visualize", True, "factory visualize <path>",
-                "Generate Mermaid diagrams"),
-    CommandSpec("factory migrate", True, "factory migrate <file> --domain <d>",
-                "Import from OpenAPI/SQL/Prisma"),
-    CommandSpec("healer fix", True, "healer fix <path>",
-                "Auto-fix validation errors"),
-    CommandSpec("healer status", False, "healer status",
-                "Show the healer queue"),
-    CommandSpec("healer tickets", False, "healer tickets",
-                "List healer tickets"),
-    CommandSpec("healer history", False, "healer history",
-                "Show healer fix history"),
-    CommandSpec("extract", True, "extract <path> --domain <d>",
-                "Reverse-engineer a codebase into contracts"),
+    CommandSpec(
+        "forge validate",
+        False,
+        "forge validate <path>",
+        "Validate contracts against the meta-schemas",
+    ),
+    CommandSpec("forge compile", False, "forge compile <path>", "Compile contracts to IR"),
+    CommandSpec("forge generate", True, "forge generate <path>", "Generate code from contracts"),
+    CommandSpec("forge graph", False, "forge graph <path>", "Show the contract dependency graph"),
+    CommandSpec("factory new", True, "factory new", "Bootstrap a new domain through an interview"),
+    CommandSpec(
+        "factory add", True, "factory add <kind> --domain <d> --name <n>", "Add a single contract"
+    ),
+    CommandSpec(
+        "factory explain", False, "factory explain <path>", "Explain a contract in plain English"
+    ),
+    CommandSpec(
+        "factory refine",
+        True,
+        "factory refine <path> <instruction>",
+        "Modify a contract from an instruction",
+    ),
+    CommandSpec("factory chat", True, "factory chat --domain <d>", "Agentic domain conversation"),
+    CommandSpec("factory visualize", True, "factory visualize <path>", "Generate Mermaid diagrams"),
+    CommandSpec(
+        "factory migrate",
+        True,
+        "factory migrate <file> --domain <d>",
+        "Import from OpenAPI/SQL/Prisma",
+    ),
+    CommandSpec("healer fix", True, "healer fix <path>", "Auto-fix validation errors"),
+    CommandSpec("healer status", False, "healer status", "Show the healer queue"),
+    CommandSpec("healer tickets", False, "healer tickets", "List healer tickets"),
+    CommandSpec("healer history", False, "healer history", "Show healer fix history"),
+    CommandSpec(
+        "extract", True, "extract <path> --domain <d>", "Reverse-engineer a codebase into contracts"
+    ),
 )
 
 _BY_ROUTE = {spec.route: spec for spec in ALLOWED_COMMANDS}
@@ -261,9 +267,7 @@ def route_natural_language(user_input: str) -> RouteDecision:
 
     spec, args, reason = validate_command(raw_command)
     if spec is None:
-        logger.warning(
-            "Rejected routed command (%s): %r", reason, str(raw_command)[:200]
-        )
+        logger.warning("Rejected routed command (%s): %r", reason, str(raw_command)[:200])
         return RouteDecision(
             status="rejected",
             explanation=explanation or "That does not map to a Specora command.",
@@ -283,10 +287,14 @@ def route_natural_language(user_input: str) -> RouteDecision:
 def main() -> None:
     """CLI entry point for agent routing. Reads argv, writes JSON to stdout."""
     if len(sys.argv) < 2:
-        print(json.dumps({
-            "status": "error",
-            "explanation": "Usage: python -m healer.api.agent 'user input'",
-        }))
+        print(
+            json.dumps(
+                {
+                    "status": "error",
+                    "explanation": "Usage: python -m healer.api.agent 'user input'",
+                }
+            )
+        )
         sys.exit(1)
 
     user_input = " ".join(sys.argv[1:])

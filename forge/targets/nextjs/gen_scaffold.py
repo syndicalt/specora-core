@@ -1,16 +1,19 @@
 """Generate the Next.js project scaffold — package.json, configs, shared libs."""
+
 from __future__ import annotations
 
 import json
 
 from forge.ir.model import DomainIR
 from forge.targets.base import GeneratedFile
+from forge.targets.nextjs import npm_deps
 
 
 def generate_scaffold(ir: DomainIR) -> list[GeneratedFile]:
     """Generate project configuration and the runtime helpers pages depend on."""
     return [
         _package_json(ir),
+        _package_lock(ir),
         _next_config(ir),
         _tailwind_config(ir),
         _postcss_config(ir),
@@ -21,10 +24,16 @@ def generate_scaffold(ir: DomainIR) -> list[GeneratedFile]:
     ]
 
 
+def _project_name(ir: DomainIR) -> str:
+    return f"{ir.domain}-frontend"
+
+
 def _package_json(ir: DomainIR) -> GeneratedFile:
+    # Exact versions, no ranges. See forge/targets/nextjs/npm_deps.py for why
+    # the pins and the lockfile beside them are one change, not two.
     data = {
-        "name": f"{ir.domain}-frontend",
-        "version": "0.2.0",
+        "name": _project_name(ir),
+        "version": npm_deps.FRONTEND_VERSION,
         "private": True,
         "scripts": {
             "dev": "next dev",
@@ -32,29 +41,21 @@ def _package_json(ir: DomainIR) -> GeneratedFile:
             "start": "next start",
             "lint": "next lint",
         },
-        "dependencies": {
-            "next": "^15.0.0",
-            "react": "^18.3.0",
-            "react-dom": "^18.3.0",
-            # lucide-react was listed but never imported. An unused dependency
-            # is a supply-chain surface and an install cost for nothing.
-            "clsx": "^2.1.0",
-            "tailwind-merge": "^2.3.0",
-            "class-variance-authority": "^0.7.0",
-        },
-        "devDependencies": {
-            "typescript": "^5.6.0",
-            "@types/react": "^18.3.0",
-            "@types/react-dom": "^18.3.0",
-            "@types/node": "^22.0.0",
-            "tailwindcss": "^3.4.0",
-            "postcss": "^8.4.0",
-            "autoprefixer": "^10.4.0",
-        },
+        "dependencies": npm_deps.dependencies(),
+        "devDependencies": npm_deps.dev_dependencies(),
     }
     return GeneratedFile(
         path="frontend/package.json",
         content=json.dumps(data, indent=2),
+        provenance=f"domain/{ir.domain}",
+    )
+
+
+def _package_lock(ir: DomainIR) -> GeneratedFile:
+    """Emit the committed lockfile so `npm ci` has the tree it requires."""
+    return GeneratedFile(
+        path="frontend/package-lock.json",
+        content=json.dumps(npm_deps.load_lockfile(_project_name(ir)), indent=2) + "\n",
         provenance=f"domain/{ir.domain}",
     )
 
@@ -167,7 +168,7 @@ export function truncate(str: string, length: number = 50): string {
 
 def _form_lib(ir: DomainIR) -> GeneratedFile:
     """Type-aware coercion and validation for every generated form."""
-    content = '''/**
+    content = """/**
  * Turn a submitted form into a typed API payload.
  *
  * The handler this replaces was:
@@ -267,7 +268,7 @@ export function coerceForm(
 
   return { values, errors };
 }
-'''
+"""
     return GeneratedFile(
         path="frontend/src/lib/form.ts",
         content=content,
@@ -277,7 +278,7 @@ export function coerceForm(
 
 def _pagination_lib(ir: DomainIR) -> GeneratedFile:
     """The keyset-pagination hook every list view is built on."""
-    content = '''"use client";
+    content = """"use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -378,7 +379,7 @@ export function useCursorList<T>(
     reload,
   };
 }
-'''
+"""
     return GeneratedFile(
         path="frontend/src/lib/pagination.ts",
         content=content,

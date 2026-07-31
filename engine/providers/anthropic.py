@@ -3,6 +3,7 @@
 Uses the ``anthropic`` Python SDK.  System messages are passed separately
 (Anthropic's API takes ``system`` as a top-level parameter, not as a message).
 """
+
 from __future__ import annotations
 
 import json

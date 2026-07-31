@@ -34,6 +34,7 @@ import re
 
 from forge.ir.model import EndpointIR, RouteIR
 from forge.targets.base import GeneratedFile, GenerationError, provenance_header
+from forge.targets.fastapi_prod.gen_routes import BATCH_ID_PARAM, MAX_FILTER_IDS
 from forge.targets.naming import camel_case, py_identifier
 from forge.targets.nextjs.context import (
     LOGIN_ROUTE,
@@ -72,6 +73,15 @@ export const API_BASE =
  */
 export const PAGE_SIZE = 50;
 
+/**
+ * Ids one batch reference lookup may name.
+ *
+ * This is the API's own ceiling on `?id__in=`, restated here so the client
+ * trims the request instead of earning a 400 for it. Sending more would not
+ * help anyway: the surplus ids are refused, not resolved.
+ */
+export const MAX_LOOKUP_IDS = {MAX_FILTER_IDS};
+
 /** Where an unauthenticated caller is sent. */
 export const LOGIN_ROUTE = "{LOGIN_ROUTE}";
 '''
@@ -85,18 +95,14 @@ export const LOGIN_ROUTE = "{LOGIN_ROUTE}";
 def _generate_client(ctx: FrontendContext) -> GeneratedFile:
     ir = ctx.ir
     provenance = ", ".join(r.fqn for r in ir.routes)
-    header = provenance_header(
-        "typescript", provenance, "Typed API client from route contracts"
-    )
+    header = provenance_header("typescript", provenance, "Typed API client from route contracts")
 
     entity_types = _entity_type_imports(ctx)
     lines: list[str] = [header.rstrip(), ""]
 
-    lines.append('import { API_BASE, PAGE_SIZE } from "./config";')
+    lines.append('import { API_BASE, MAX_LOOKUP_IDS, PAGE_SIZE } from "./config";')
     if ctx.auth is not None:
-        lines.append(
-            'import { authorizationHeader, endSession, refreshSession } from "./session";'
-        )
+        lines.append('import { authorizationHeader, endSession, refreshSession } from "./session";')
     if entity_types:
         names = ", ".join(sorted(entity_types))
         lines.append(f'import type {{ {names} }} from "./types";')
@@ -136,7 +142,7 @@ def _preamble(*, has_auth: bool) -> list[str]:
             "    }",
             "    endSession();",
             "    throw new ApiError(",
-            '      401,',
+            "      401,",
             '      "unauthenticated",',
             '      "Your session has ended. Please sign in again.",',
             "    );",
@@ -187,6 +193,15 @@ def _preamble(*, has_auth: bool) -> list[str]:
         "  limit?: number;",
         "  /** `next_cursor` from the previous page, or null/undefined for the first. */",
         "  cursor?: string | null;",
+        "  /**",
+        "   * Fetch exactly these ids, in one request.",
+        "   *",
+        "   * This is how a view resolves the references it has on screen. Reading",
+        "   * the target collection's first page instead left every id outside that",
+        "   * page permanently unresolved, and looked correct in any fixture small",
+        "   * enough to fit in one page.",
+        "   */",
+        "  ids?: readonly string[];",
         "}",
         "",
         "/**",
@@ -202,7 +217,7 @@ def _preamble(*, has_auth: bool) -> list[str]:
         "  readonly userMessage: string;",
         "",
         "  constructor(status: number, code: string, userMessage: string) {",
-        "    super(`${status} ${code || \"error\"}`);",
+        '    super(`${status} ${code || "error"}`);',
         '    this.name = "ApiError";',
         "    this.status = status;",
         "    this.code = code;",
@@ -323,10 +338,15 @@ def _preamble(*, has_auth: bool) -> list[str]:
             "",
             "function listQuery(params?: ListParams): string {",
             "  const query = new URLSearchParams();",
-            "  query.set(\"limit\", String(params?.limit ?? PAGE_SIZE));",
+            '  query.set("limit", String(params?.limit ?? PAGE_SIZE));',
             "  // URLSearchParams percent-encodes the cursor. It is opaque and may",
             "  // legitimately contain '+' or '=', which raw interpolation corrupts.",
             '  if (params?.cursor) query.set("cursor", params.cursor);',
+            "  // One repeated parameter per id rather than one delimited value: an",
+            "  // identifier is opaque, so any separator could occur inside one.",
+            "  for (const id of (params?.ids ?? []).slice(0, MAX_LOOKUP_IDS)) {",
+            f'    query.append("{BATCH_ID_PARAM}", String(id));',
+            "  }",
             "  return query.toString();",
             "}",
             "",

@@ -4,6 +4,7 @@ The prompt bodies themselves live in :mod:`engine.prompts.library`; this
 module holds only the machinery. See :mod:`engine.prompts` for the rationale
 and the public entry points.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -42,9 +43,7 @@ class Prompt:
         """
         if not variables:
             return self.body
-        return Template(self.body).safe_substitute(
-            {k: str(v) for k, v in variables.items()}
-        )
+        return Template(self.body).safe_substitute({k: str(v) for k, v in variables.items()})
 
 
 class PromptRegistry:
@@ -80,9 +79,7 @@ class PromptRegistry:
         prompt = versions.get(version)
         if prompt is None:
             known = ", ".join(f"v{v}" for v in sorted(versions))
-            raise PromptNotFoundError(
-                f"Prompt {name!r} has no version {version} (known: {known})"
-            )
+            raise PromptNotFoundError(f"Prompt {name!r} has no version {version} (known: {known})")
         return prompt
 
     def history(self, name: str) -> list[Prompt]:

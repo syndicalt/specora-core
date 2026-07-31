@@ -181,9 +181,11 @@ def provenance_header(
     # wrap it across continuation lines instead of shipping a lint exception.
     sources = [s.strip() for s in provenance.split(",") if s.strip()]
     if len(sources) > 1:
-        source_lines = [f"Source: {sources[0]},"] + [
-            f"        {s}," for s in sources[1:-1]
-        ] + [f"        {sources[-1]}"]
+        source_lines = (
+            [f"Source: {sources[0]},"]
+            + [f"        {s}," for s in sources[1:-1]]
+            + [f"        {sources[-1]}"]
+        )
     else:
         source_lines = [f"Source: {provenance}"]
 

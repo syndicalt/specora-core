@@ -1,4 +1,5 @@
 """Compare old vs new EntityIR to detect schema changes."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -11,6 +12,7 @@ from forge.targets.postgres.gen_ddl import column_is_not_null, default_clause
 @dataclass
 class SchemaChange:
     """A single schema change detected between IR versions."""
+
     # create_table, drop_table, add_column, drop_column, alter_type,
     # set_not_null, drop_not_null, set_default, drop_default, add_index
     change_type: str
@@ -40,20 +42,24 @@ def diff_entities(
     # New entities (tables to create)
     for fqn, entity in new_by_fqn.items():
         if fqn not in old_by_fqn:
-            changes.append(SchemaChange(
-                change_type="create_table",
-                table_name=entity.table_name,
-                entity=entity,
-            ))
+            changes.append(
+                SchemaChange(
+                    change_type="create_table",
+                    table_name=entity.table_name,
+                    entity=entity,
+                )
+            )
 
     # Removed entities (tables to drop)
     for fqn, entity in old_by_fqn.items():
         if fqn not in new_by_fqn:
-            changes.append(SchemaChange(
-                change_type="drop_table",
-                table_name=entity.table_name,
-                destructive=True,
-            ))
+            changes.append(
+                SchemaChange(
+                    change_type="drop_table",
+                    table_name=entity.table_name,
+                    destructive=True,
+                )
+            )
 
     # Changed entities (columns to alter)
     for fqn in old_by_fqn:
@@ -74,22 +80,26 @@ def _diff_entity_fields(old: EntityIR, new: EntityIR) -> list[SchemaChange]:
     # Added fields
     for name, f in new_fields.items():
         if name not in old_fields:
-            changes.append(SchemaChange(
-                change_type="add_column",
-                table_name=table,
-                field_name=name,
-                field_ir=f,
-            ))
+            changes.append(
+                SchemaChange(
+                    change_type="add_column",
+                    table_name=table,
+                    field_name=name,
+                    field_ir=f,
+                )
+            )
 
     # Removed fields
     for name in old_fields:
         if name not in new_fields:
-            changes.append(SchemaChange(
-                change_type="drop_column",
-                table_name=table,
-                field_name=name,
-                destructive=True,
-            ))
+            changes.append(
+                SchemaChange(
+                    change_type="drop_column",
+                    table_name=table,
+                    field_name=name,
+                    destructive=True,
+                )
+            )
 
     # Modified fields
     for name in old_fields:
@@ -99,14 +109,16 @@ def _diff_entity_fields(old: EntityIR, new: EntityIR) -> list[SchemaChange]:
 
             # Type change
             if old_f.type != new_f.type:
-                changes.append(SchemaChange(
-                    change_type="alter_type",
-                    table_name=table,
-                    field_name=name,
-                    old_value=old_f.type,
-                    new_value=new_f.type,
-                    field_ir=new_f,
-                ))
+                changes.append(
+                    SchemaChange(
+                        change_type="alter_type",
+                        table_name=table,
+                        field_name=name,
+                        old_value=old_f.type,
+                        new_value=new_f.type,
+                        field_ir=new_f,
+                    )
+                )
 
             # Default change, before the nullability change that may depend on
             # it: SET NOT NULL on a column whose default was only just added
@@ -122,36 +134,44 @@ def _diff_entity_fields(old: EntityIR, new: EntityIR) -> list[SchemaChange]:
             new_default = default_clause(new_f)
             if old_default != new_default:
                 if new_default:
-                    changes.append(SchemaChange(
-                        change_type="set_default",
-                        table_name=table,
-                        field_name=name,
-                        old_value=old_f.default,
-                        new_value=new_f.default,
-                        field_ir=new_f,
-                    ))
+                    changes.append(
+                        SchemaChange(
+                            change_type="set_default",
+                            table_name=table,
+                            field_name=name,
+                            old_value=old_f.default,
+                            new_value=new_f.default,
+                            field_ir=new_f,
+                        )
+                    )
                 else:
-                    changes.append(SchemaChange(
-                        change_type="drop_default",
-                        table_name=table,
-                        field_name=name,
-                    ))
+                    changes.append(
+                        SchemaChange(
+                            change_type="drop_default",
+                            table_name=table,
+                            field_name=name,
+                        )
+                    )
 
             # Nullability change
             old_not_null = column_is_not_null(old_f)
             new_not_null = column_is_not_null(new_f)
             if not old_not_null and new_not_null:
-                changes.append(SchemaChange(
-                    change_type="set_not_null",
-                    table_name=table,
-                    field_name=name,
-                    field_ir=new_f,
-                ))
+                changes.append(
+                    SchemaChange(
+                        change_type="set_not_null",
+                        table_name=table,
+                        field_name=name,
+                        field_ir=new_f,
+                    )
+                )
             elif old_not_null and not new_not_null:
-                changes.append(SchemaChange(
-                    change_type="drop_not_null",
-                    table_name=table,
-                    field_name=name,
-                ))
+                changes.append(
+                    SchemaChange(
+                        change_type="drop_not_null",
+                        table_name=table,
+                        field_name=name,
+                    )
+                )
 
     return changes

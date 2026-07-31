@@ -96,6 +96,7 @@ def analyze_typescript_types(
 
 def _strip_comments(source: str) -> str:
     """Blank out comments, preserving offsets so brace matching stays aligned."""
+
     def blank(match: re.Match) -> str:
         return re.sub(r"[^\n]", " ", match.group(0))
 

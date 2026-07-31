@@ -1,0 +1,39 @@
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: authors
+  domain: library
+  description: "CRUD API for authors"
+requires:
+  - entity/library/author
+spec:
+  entity: entity/library/author
+  base_path: /authors
+  endpoints:
+    # Without this route the frontend cannot resolve an author name at all:
+    # book.author_id references entity/library/author, the reference component
+    # looks up the target through its collection endpoint, and no endpoint was
+    # emitted because no Route contract existed. Every book row displayed an
+    # unresolved marker where the author should be. CLAUDE.md build rule 2 —
+    # "every entity needs a route" — exists for exactly this.
+    - method: GET
+      path: /
+      summary: List authors
+      response: {status: 200, shape: list}
+    - method: POST
+      path: /
+      summary: Create author
+      auto_fields: {id: uuid, created_at: now}
+      response: {status: 201, shape: entity}
+    - method: GET
+      path: /{id}
+      summary: Get author
+      response: {status: 200, shape: entity}
+    - method: PATCH
+      path: /{id}
+      summary: Update author
+      response: {status: 200, shape: entity}
+    - method: DELETE
+      path: /{id}
+      summary: Delete author
+      response: {status: 204}

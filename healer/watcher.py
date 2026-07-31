@@ -1,4 +1,5 @@
 """File watcher — monitors .forge/healer/inbox/ for error payloads."""
+
 from __future__ import annotations
 
 import json

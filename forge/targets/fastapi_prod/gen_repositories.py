@@ -76,6 +76,18 @@ class _EntityPlan:
     table_ident: str
     columns: tuple[str, ...]
     column_idents: dict[str, str]
+    # Column -> its PostgreSQL type, for columns whose values do not travel as
+    # text. A filter value arriving from a query string is a string whatever
+    # the column is, and Postgres will not compare `text` to `uuid`, so those
+    # columns need a server-side cast the textual ones must not get.
+    value_casts: dict[str, str]
+    # Columns the memory adapter compares as text. Postgres stores one
+    # canonical UUID value however the client spelled it; the in-memory store
+    # holds whatever object the caller happened to pass — `uuid.UUID` from a
+    # Pydantic model on the create path, `str` from `uuid.uuid4()` on the
+    # default path. Comparing those as text is what makes the two adapters
+    # answer the same question.
+    uuid_fields: tuple[str, ...]
     select_list: str
     id_cast: str
     has_created_at: bool
@@ -126,6 +138,16 @@ def generate_repositories(ir: DomainIR) -> list[GeneratedFile]:
         _generate_memory(plans),
         _generate_postgres(plans),
     ]
+
+
+def _is_textual(pg_type: str) -> bool:
+    """Whether a column accepts a string parameter without a cast.
+
+    A filter value that arrived over HTTP is a string no matter what the column
+    holds, and Postgres will not compare `text` to `uuid` or `timestamptz`.
+    Only the types that *are* text can take one unconverted.
+    """
+    return pg_type == "TEXT" or pg_type.startswith("VARCHAR")
 
 
 def _guard_map(sm: StateMachineIR | None) -> dict[tuple[str, str], list[str]]:
@@ -196,6 +218,10 @@ def _plan(entity: EntityIR, ir: DomainIR) -> _EntityPlan:
         columns = columns + ("state",)
 
     column_idents = {name: sql_ident(name) for name in columns}
+    pg_types = {
+        f.name: pg_column_type(f.type, f.constraints) for f in entity.fields if f.name in columns
+    }
+    value_casts = {name: pg for name, pg in pg_types.items() if not _is_textual(pg)}
 
     return _EntityPlan(
         entity=entity,
@@ -205,6 +231,11 @@ def _plan(entity: EntityIR, ir: DomainIR) -> _EntityPlan:
         table_ident=sql_ident(entity.table_name),
         columns=columns,
         column_idents=column_idents,
+        # A column the state-machine pass invented but the entity never
+        # declared has no IR type here; TEXT is what the DDL gives it, and a
+        # TEXT column needs no cast, so its absence from this map is correct.
+        value_casts=value_casts,
+        uuid_fields=tuple(f.name for f in entity.fields if f.type == "uuid" and f.name in columns),
         select_list=", ".join(column_idents[name] for name in columns),
         id_cast=id_cast,
         has_created_at=has_created_at,
@@ -256,11 +287,7 @@ def _wrap_literal(name: str, value: str, indent: str = "    ") -> list[str]:
             current = candidate
     if current:
         chunks.append(current)
-    return (
-        [f"{indent}{name} = ("]
-        + [f"{indent}    {chunk!r}" for chunk in chunks]
-        + [f"{indent})"]
-    )
+    return [f"{indent}{name} = ("] + [f"{indent}    {chunk!r}" for chunk in chunks] + [f"{indent})"]
 
 
 def _wrap_collection(
@@ -336,8 +363,7 @@ def _base_symbols(plans: list[_EntityPlan]) -> list[str]:
     Built from what the adapters actually emit rather than a fixed preamble:
     codegen contract §3, and the generated app lints its own output.
     """
-    symbols = ["ListPage", "clamp_limit", "decode_cursor", "encode_cursor",
-               "reject_unknown_fields"]
+    symbols = ["ListPage", "clamp_limit", "decode_cursor", "encode_cursor", "reject_unknown_fields"]
     if any(p.state_machine for p in plans):
         symbols.append("TransitionResult")
     symbols += [f"{p.cls}Repository" for p in plans]
@@ -393,7 +419,7 @@ def _generate_base(plans: list[_EntityPlan]) -> GeneratedFile:
         "",
         "    Rejecting is deliberate. Silently dropping an unrecognised filter",
         "    key widens the result set — if that key carried a tenant scope, the",
-        "    response leaks other tenants\' rows. Silently dropping an",
+        "    response leaks other tenants' rows. Silently dropping an",
         "    unrecognised write key discards data the caller believes it saved.",
         '    """',
         "",
@@ -533,8 +559,7 @@ def _generate_base(plans: list[_EntityPlan]) -> GeneratedFile:
         if plan.state_machine:
             lines.append("    @abstractmethod")
             lines.append(
-                "    async def transition("
-                "self, id: str, new_state: str) -> TransitionResult: ..."
+                "    async def transition(self, id: str, new_state: str) -> TransitionResult: ..."
             )
             lines.append("")
         lines.append("")
@@ -581,35 +606,38 @@ def _generate_memory(plans: list[_EntityPlan]) -> GeneratedFile:
     ]
     if any(p.has_created_at or p.has_updated_at for p in plans):
         lines.append("from datetime import datetime, timezone")
-    lines.extend([
-        "from typing import Any",
-        "",
-        "from backend.repositories.base import (",
-        "    " + ",\n    ".join(_base_symbols(plans)) + ",",
-        ")",
-        "",
-        "",
-        "# Stores live at module scope rather than on each repository class. The",
-        "# adapter is process-global by design — every request must see the same",
-        "# rows — but a class attribute could not be cleared without reaching into",
-        "# each class, which is why test runs used to accumulate rows across cases",
-        "# and a count assertion passed alone and failed in the suite.",
-        "_STORES: dict[str, dict[str, dict]] = {",
-        store_entries + ",",
-        "}",
-        "",
-        "",
-        "def reset_stores() -> None:",
-        '    """Empty every in-memory store, in place.',
-        "",
-        "    Call between tests. Clearing in place (rather than rebinding) keeps",
-        "    the aliases held by each repository class valid.",
-        '    """',
-        "    for store in _STORES.values():",
-        "        store.clear()",
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            "from typing import Any",
+            "",
+            "from backend.repositories.base import (",
+            "    " + ",\n    ".join(_base_symbols(plans)) + ",",
+            ")",
+            "",
+            "",
+            "# Stores live at module scope rather than on each repository class. The",
+            "# adapter is process-global by design — every request must see the same",
+            "# rows — but a class attribute could not be cleared without reaching into",
+            "# each class, which is why test runs used to accumulate rows across cases",
+            "# and a count assertion passed alone and failed in the suite.",
+            "_STORES: dict[str, dict[str, dict]] = {",
+            store_entries + ",",
+            "}",
+            "",
+            "",
+            "def reset_stores() -> None:",
+            '    """Empty every in-memory store, in place.',
+            "",
+            "    Call between tests. Clearing in place (rather than rebinding) keeps",
+            "    the aliases held by each repository class valid.",
+            '    """',
+            "    for store in _STORES.values():",
+            "        store.clear()",
+            "",
+            "",
+            *_memory_match_helper(),
+        ]
+    )
 
     for plan in plans:
         lines.extend(_memory_class(plan))
@@ -620,6 +648,55 @@ def _generate_memory(plans: list[_EntityPlan]) -> GeneratedFile:
         content="\n".join(lines),
         provenance=fqns,
     )
+
+
+def _memory_match_helper() -> list[str]:
+    """The filter predicate, shared by every in-memory repository in the module.
+
+    It exists so the memory adapter answers a filtered `list()` with exactly the
+    rows Postgres would return. Three behaviours have to be copied deliberately,
+    because none of them is what a plain `==` over a dict does.
+    """
+    return [
+        "def _as_text(value: Any) -> Any:",
+        '    """Canonicalise a value that Postgres compares by value, not spelling."""',
+        "    return value if value is None else str(value)",
+        "",
+        "",
+        "def _matches(record: dict, filters: dict, text_fields: frozenset) -> bool:",
+        '    """Whether one record satisfies every filter, with SQL\'s semantics.',
+        "",
+        "    A sequence value is a membership test — the Postgres adapter renders",
+        "    it as `= ANY(...)` — and any other value is equality.",
+        "",
+        "    Two SQL behaviours are reproduced on purpose. A comparison against",
+        "    NULL is unknown rather than true, so neither a NULL column nor a NULL",
+        "    comparand ever matches; a Python `==` would have matched both. And a",
+        "    value the caller spelled differently from the stored one — a UUID as a",
+        "    string against a `uuid.UUID` the create path happened to store — is",
+        "    still the same value to Postgres, which is why `text_fields` are",
+        "    compared as text.",
+        '    """',
+        "    for key, expected in filters.items():",
+        "        actual = record.get(key)",
+        "        if actual is None:",
+        "            return False",
+        "        if key in text_fields:",
+        "            actual = _as_text(actual)",
+        "        if isinstance(expected, (list, tuple, set, frozenset)):",
+        "            wanted = [",
+        "                _as_text(v) if key in text_fields else v",
+        "                for v in expected",
+        "                if v is not None",
+        "            ]",
+        "            if actual not in wanted:",
+        "                return False",
+        "        elif expected is None or actual != expected:",
+        "            return False",
+        "    return True",
+        "",
+        "",
+    ]
 
 
 def _memory_class(plan: _EntityPlan) -> list[str]:
@@ -638,16 +715,21 @@ def _memory_class(plan: _EntityPlan) -> list[str]:
         "",
         f'    _store = _STORES["{name}"]',
     ]
+    lines += _wrap_collection("_FIELDS", [repr(c) for c in plan.columns], "frozenset({", "})")
     lines += _wrap_collection(
-        "_FIELDS", [repr(c) for c in plan.columns], "frozenset({", "})"
+        "_TEXT_COMPARED_FIELDS",
+        [repr(c) for c in plan.uuid_fields],
+        "frozenset({",
+        "})",
     )
     lines += [
-        f"    _SORT_FIELDS = ({sort_repr},)" if len(plan.sort_fields) == 1
+        f"    _SORT_FIELDS = ({sort_repr},)"
+        if len(plan.sort_fields) == 1
         else f"    _SORT_FIELDS = ({sort_repr})",
         "",
         "    @classmethod",
         "    def _sort_key(cls, record: dict) -> tuple:",
-        f'        # Mirrors SQL `ORDER BY {_order_by(plan)}`. Postgres sorts NULLs',
+        f"        # Mirrors SQL `ORDER BY {_order_by(plan)}`. Postgres sorts NULLs",
         "        # first under DESC, so a missing value must outrank every present",
         "        # one here too.",
         "        return tuple(",
@@ -668,7 +750,7 @@ def _memory_class(plan: _EntityPlan) -> list[str]:
         f'            reject_unknown_fields(filters, self._FIELDS, "{name}")',
         "            items = [",
         "                r for r in items",
-        "                if all(r.get(k) == v for k, v in filters.items())",
+        "                if _matches(r, filters, self._TEXT_COMPARED_FIELDS)",
         "            ]",
         "        items.sort(key=self._sort_key, reverse=True)",
         "        if cursor is not None:",
@@ -716,28 +798,32 @@ def _memory_class(plan: _EntityPlan) -> list[str]:
     for field_name, value in plan.field_defaults:
         lines.append(f"        record.setdefault({field_name!r}, {value!r})")
 
-    lines.extend([
-        '        self._store[record["id"]] = record',
-        "        return dict(record)",
-        "",
-        "    async def update(self, id: str, data: dict) -> dict | None:",
-        f'        reject_unknown_fields(data, self._FIELDS, "{name}")',
-        "        record = self._store.get(id)",
-        "        if record is None:",
-        "            return None",
-        "        # `id` is the store key and the Postgres primary key; letting an",
-        "        # update move it would orphan the row under its old key.",
-        '        record.update({k: v for k, v in data.items() if k != "id"})',
-    ])
+    lines.extend(
+        [
+            '        self._store[record["id"]] = record',
+            "        return dict(record)",
+            "",
+            "    async def update(self, id: str, data: dict) -> dict | None:",
+            f'        reject_unknown_fields(data, self._FIELDS, "{name}")',
+            "        record = self._store.get(id)",
+            "        if record is None:",
+            "            return None",
+            "        # `id` is the store key and the Postgres primary key; letting an",
+            "        # update move it would orphan the row under its old key.",
+            '        record.update({k: v for k, v in data.items() if k != "id"})',
+        ]
+    )
     if plan.has_updated_at:
         lines.append('        record["updated_at"] = datetime.now(timezone.utc).isoformat()')
-    lines.extend([
-        "        return dict(record)",
-        "",
-        "    async def delete(self, id: str) -> bool:",
-        "        return self._store.pop(id, None) is not None",
-        "",
-    ])
+    lines.extend(
+        [
+            "        return dict(record)",
+            "",
+            "    async def delete(self, id: str) -> bool:",
+            "        return self._store.pop(id, None) is not None",
+            "",
+        ]
+    )
 
     if plan.state_machine:
         lines.extend(_memory_transition(plan))
@@ -771,10 +857,12 @@ def _memory_transition(plan: _EntityPlan) -> list[str]:
     lines.append('        record["state"] = new_state')
     if plan.has_updated_at:
         lines.append('        record["updated_at"] = datetime.now(timezone.utc).isoformat()')
-    lines.extend([
-        "        return TransitionResult(record=dict(record), error=None)",
-        "",
-    ])
+    lines.extend(
+        [
+            "        return TransitionResult(record=dict(record), error=None)",
+            "",
+        ]
+    )
     return lines
 
 
@@ -795,44 +883,47 @@ def _generate_postgres(plans: list[_EntityPlan]) -> GeneratedFile:
     ]
     if any(p.has_created_at or p.has_updated_at for p in plans):
         lines.append("from datetime import datetime, timezone")
-    lines.extend([
-        "from typing import Any",
-        "",
-        "import asyncpg",
-        "",
-        "from backend.config import (",
-        "    " + ",\n    ".join(CONFIG_IMPORTS) + ",",
-        ")",
-        "from backend.repositories.base import (",
-        "    " + ",\n    ".join(_base_symbols(plans)) + ",",
-        ")",
-        "",
-        "",
-        "# Connection pool — initialized on first use",
-        "_pool: asyncpg.Pool | None = None",
-        "",
-        "",
-        "async def get_pool() -> asyncpg.Pool:",
-        '    """Return the process-wide asyncpg pool, creating it on first use."""',
-        "    global _pool",
-        "    if _pool is None:",
-        "        _pool = await asyncpg.create_pool(",
-        "            DATABASE_URL,",
-        "            min_size=DATABASE_POOL_MIN_SIZE,",
-        "            max_size=DATABASE_POOL_MAX_SIZE,",
-        "            # Server-side cap. Postgres cancels a statement that exceeds",
-        "            # it and the connection returns to the pool, so one",
-        "            # pathological query cannot hold a slot for the process'",
-        "            # lifetime. max_size is the per-container concurrency",
-        "            # ceiling, so a pinned connection is a real outage.",
-        "            server_settings={",
-        '                "statement_timeout": str(DATABASE_STATEMENT_TIMEOUT_MS),',
-        "            },",
-        "        )",
-        "    return _pool",
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            "from typing import Any",
+            "",
+            "import asyncpg",
+            "",
+            "from backend.config import (",
+            "    " + ",\n    ".join(CONFIG_IMPORTS) + ",",
+            ")",
+            "from backend.repositories.base import (",
+            "    " + ",\n    ".join(_base_symbols(plans)) + ",",
+            ")",
+            "",
+            "",
+            "# Connection pool — initialized on first use",
+            "_pool: asyncpg.Pool | None = None",
+            "",
+            "",
+            "async def get_pool() -> asyncpg.Pool:",
+            '    """Return the process-wide asyncpg pool, creating it on first use."""',
+            "    global _pool",
+            "    if _pool is None:",
+            "        _pool = await asyncpg.create_pool(",
+            "            DATABASE_URL,",
+            "            min_size=DATABASE_POOL_MIN_SIZE,",
+            "            max_size=DATABASE_POOL_MAX_SIZE,",
+            "            # Server-side cap. Postgres cancels a statement that exceeds",
+            "            # it and the connection returns to the pool, so one",
+            "            # pathological query cannot hold a slot for the process'",
+            "            # lifetime. max_size is the per-container concurrency",
+            "            # ceiling, so a pinned connection is a real outage.",
+            "            server_settings={",
+            '                "statement_timeout": str(DATABASE_STATEMENT_TIMEOUT_MS),',
+            "            },",
+            "        )",
+            "    return _pool",
+            "",
+            "",
+            *_postgres_filter_helper(),
+        ]
+    )
 
     for plan in plans:
         lines.extend(_postgres_class(plan))
@@ -845,22 +936,55 @@ def _generate_postgres(plans: list[_EntityPlan]) -> GeneratedFile:
     )
 
 
+def _postgres_filter_helper() -> list[str]:
+    """The filter predicate renderer, shared by every adapter in the module."""
+    return [
+        "def _filter_clause(ident: str, value: Any, cast: str, index: int) -> str:",
+        '    """Render one filter predicate against bind parameter `index`.',
+        "",
+        "    A sequence becomes `= ANY($n)`: one bind parameter for the whole",
+        "    list, so the statement text — and therefore the plan cache entry —",
+        "    is the same whether the caller asked for one id or a hundred.",
+        "    Interpolating the values instead would build a new statement per",
+        "    batch size, and would put caller data in the SQL text.",
+        "",
+        "    `cast` is the column's PostgreSQL type, and is empty for columns that",
+        "    are already text. A value that arrived over HTTP is a string whatever",
+        "    the column holds, and `uuid = text` is an error rather than a",
+        "    comparison, so those are cast server-side. A value that arrives as its",
+        "    native type is bound as it is.",
+        "",
+        "    `ident` is never caller-supplied: it comes from the generation-time",
+        "    _COLUMN_IDENTS map, which is the only thing that puts an identifier",
+        "    into this SQL.",
+        '    """',
+        "    if isinstance(value, (list, tuple)):",
+        "        if cast and all(isinstance(v, str) for v in value):",
+        '            return f"{ident} = ANY(${index}::text[]::{cast}[])"',
+        '        return f"{ident} = ANY(${index})"',
+        "    if cast and isinstance(value, str):",
+        '        return f"{ident} = ${index}::text::{cast}"',
+        '    return f"{ident} = ${index}"',
+        "",
+        "",
+    ]
+
+
 def _postgres_class(plan: _EntityPlan) -> list[str]:
     name = plan.entity.name
     sort_repr = ", ".join(repr(c) for c in plan.sort_fields)
 
     sql_get = (
         f"SELECT {plan.select_list} FROM {plan.table_ident} "
-        f'WHERE {plan.column_idents["id"]} = $1{plan.id_cast}'
+        f"WHERE {plan.column_idents['id']} = $1{plan.id_cast}"
     )
     sql_delete = (
         f"DELETE FROM {plan.table_ident} "
-        f'WHERE {plan.column_idents["id"]} = $1{plan.id_cast} '
-        f'RETURNING {plan.column_idents["id"]}'
+        f"WHERE {plan.column_idents['id']} = $1{plan.id_cast} "
+        f"RETURNING {plan.column_idents['id']}"
     )
     sql_exists = (
-        f"SELECT 1 FROM {plan.table_ident} "
-        f'WHERE {plan.column_idents["id"]} = $1{plan.id_cast}'
+        f"SELECT 1 FROM {plan.table_ident} WHERE {plan.column_idents['id']} = $1{plan.id_cast}"
     )
 
     lines = [
@@ -881,7 +1005,9 @@ def _postgres_class(plan: _EntityPlan) -> list[str]:
         # Derived rather than restated: the allowlist and the identifier map
         # must never be able to drift apart.
         "    _FIELDS = frozenset(_COLUMN_IDENTS)",
-        f"    _SORT_FIELDS = ({sort_repr},)" if len(plan.sort_fields) == 1
+        *_wrap_dict("_VALUE_CASTS", plan.value_casts),
+        f"    _SORT_FIELDS = ({sort_repr},)"
+        if len(plan.sort_fields) == 1
         else f"    _SORT_FIELDS = ({sort_repr})",
     ]
     lines += _wrap_literal("_SQL_GET", sql_get)
@@ -891,24 +1017,28 @@ def _postgres_class(plan: _EntityPlan) -> list[str]:
     lines.append("")
 
     lines.extend(_postgres_list(plan))
-    lines.extend([
-        "    async def get(self, id: str) -> dict | None:",
-        "        pool = await get_pool()",
-        "        async with pool.acquire() as conn:",
-        "            row = await conn.fetchrow(self._SQL_GET, id)",
-        "        return dict(row) if row is not None else None",
-        "",
-    ])
+    lines.extend(
+        [
+            "    async def get(self, id: str) -> dict | None:",
+            "        pool = await get_pool()",
+            "        async with pool.acquire() as conn:",
+            "            row = await conn.fetchrow(self._SQL_GET, id)",
+            "        return dict(row) if row is not None else None",
+            "",
+        ]
+    )
     lines.extend(_postgres_create(plan))
     lines.extend(_postgres_update(plan))
-    lines.extend([
-        "    async def delete(self, id: str) -> bool:",
-        "        pool = await get_pool()",
-        "        async with pool.acquire() as conn:",
-        "            row = await conn.fetchrow(self._SQL_DELETE, id)",
-        "        return row is not None",
-        "",
-    ])
+    lines.extend(
+        [
+            "    async def delete(self, id: str) -> bool:",
+            "        pool = await get_pool()",
+            "        async with pool.acquire() as conn:",
+            "            row = await conn.fetchrow(self._SQL_DELETE, id)",
+            "        return row is not None",
+            "",
+        ]
+    )
 
     if plan.state_machine:
         lines.extend(_postgres_transition(plan))
@@ -925,7 +1055,8 @@ def _postgres_list(plan: _EntityPlan) -> list[str]:
     # position instead of counting past it the way OFFSET does.
     last = len(plan.sort_fields) - 1
     placeholders = ", ".join(
-        f"${{len(params)}}::text::{cast}" if i == last
+        f"${{len(params)}}::text::{cast}"
+        if i == last
         else f"${{len(params) - {last - i}}}::text::{cast}"
         for i, cast in enumerate(plan.sort_casts)
     )
@@ -949,11 +1080,19 @@ def _postgres_list(plan: _EntityPlan) -> list[str]:
         "        if filters:",
         f'            reject_unknown_fields(filters, self._FIELDS, "{name}")',
         "            for key, value in filters.items():",
+        "                # asyncpg encodes a list into an array parameter; a set",
+        "                # has no order to encode, so it is materialised first.",
+        "                if isinstance(value, (set, frozenset)):",
+        "                    value = list(value)",
         "                params.append(value)",
-        "                # Identifier from the generation-time allowlist, value",
-        "                # from a bind parameter — the caller's key never reaches",
-        "                # the SQL text.",
-        '                clauses.append(f"{self._COLUMN_IDENTS[key]} = ${len(params)}")',
+        "                clauses.append(",
+        "                    _filter_clause(",
+        "                        self._COLUMN_IDENTS[key],",
+        "                        value,",
+        '                        self._VALUE_CASTS.get(key, ""),',
+        "                        len(params),",
+        "                    )",
+        "                )",
         "        if cursor is not None:",
         "            after = decode_cursor(cursor, arity=len(self._SORT_FIELDS))",
         "            params.extend(after)",
@@ -968,7 +1107,7 @@ def _postgres_list(plan: _EntityPlan) -> list[str]:
         '        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""',
         "        sql = (",
         '            f"SELECT {self._SELECT} FROM {self._TABLE}{where} "',
-        f'            f\'ORDER BY {order_by} LIMIT ${{len(params)}}\'',
+        f"            f'ORDER BY {order_by} LIMIT ${{len(params)}}'",
         "        )",
         "        pool = await get_pool()",
         "        async with pool.acquire() as conn:",
@@ -1003,20 +1142,22 @@ def _postgres_create(plan: _EntityPlan) -> list[str]:
         lines.append(f'        record.setdefault("state", "{plan.initial_state}")')
     for field_name, value in plan.field_defaults:
         lines.append(f"        record.setdefault({field_name!r}, {value!r})")
-    lines.extend([
-        "        keys = list(record)",
-        '        columns = ", ".join(self._COLUMN_IDENTS[k] for k in keys)',
-        '        placeholders = ", ".join(f"${i}" for i in range(1, len(keys) + 1))',
-        "        sql = (",
-        '            f"INSERT INTO {self._TABLE} ({columns}) "',
-        '            f"VALUES ({placeholders}) RETURNING {self._SELECT}"',
-        "        )",
-        "        pool = await get_pool()",
-        "        async with pool.acquire() as conn:",
-        "            row = await conn.fetchrow(sql, *(record[k] for k in keys))",
-        "        return dict(row)",
-        "",
-    ])
+    lines.extend(
+        [
+            "        keys = list(record)",
+            '        columns = ", ".join(self._COLUMN_IDENTS[k] for k in keys)',
+            '        placeholders = ", ".join(f"${i}" for i in range(1, len(keys) + 1))',
+            "        sql = (",
+            '            f"INSERT INTO {self._TABLE} ({columns}) "',
+            '            f"VALUES ({placeholders}) RETURNING {self._SELECT}"',
+            "        )",
+            "        pool = await get_pool()",
+            "        async with pool.acquire() as conn:",
+            "            row = await conn.fetchrow(sql, *(record[k] for k in keys))",
+            "        return dict(row)",
+            "",
+        ]
+    )
     return lines
 
 
@@ -1031,27 +1172,29 @@ def _postgres_update(plan: _EntityPlan) -> list[str]:
         '        payload = {k: v for k, v in data.items() if k != "id"}',
     ]
     if plan.has_updated_at:
-        lines.append("        payload[\"updated_at\"] = datetime.now(timezone.utc)")
-    lines.extend([
-        "        if not payload:",
-        "            return await self.get(id)",
-        "        assignments: list[str] = []",
-        "        params: list[Any] = []",
-        "        for key, value in payload.items():",
-        "            params.append(value)",
-        '            assignments.append(f"{self._COLUMN_IDENTS[key]} = ${len(params)}")',
-        "        params.append(id)",
-        "        sql = (",
-        '            f"UPDATE {self._TABLE} SET " + ", ".join(assignments)',
-        f'            + f\' WHERE {id_ident} = ${{len(params)}}{plan.id_cast} \'',
-        '            + f"RETURNING {self._SELECT}"',
-        "        )",
-        "        pool = await get_pool()",
-        "        async with pool.acquire() as conn:",
-        "            row = await conn.fetchrow(sql, *params)",
-        "        return dict(row) if row is not None else None",
-        "",
-    ])
+        lines.append('        payload["updated_at"] = datetime.now(timezone.utc)')
+    lines.extend(
+        [
+            "        if not payload:",
+            "            return await self.get(id)",
+            "        assignments: list[str] = []",
+            "        params: list[Any] = []",
+            "        for key, value in payload.items():",
+            "            params.append(value)",
+            '            assignments.append(f"{self._COLUMN_IDENTS[key]} = ${len(params)}")',
+            "        params.append(id)",
+            "        sql = (",
+            '            f"UPDATE {self._TABLE} SET " + ", ".join(assignments)',
+            f"            + f' WHERE {id_ident} = ${{len(params)}}{plan.id_cast} '",
+            '            + f"RETURNING {self._SELECT}"',
+            "        )",
+            "        pool = await get_pool()",
+            "        async with pool.acquire() as conn:",
+            "            row = await conn.fetchrow(sql, *params)",
+            "        return dict(row) if row is not None else None",
+            "",
+        ]
+    )
     return lines
 
 
@@ -1079,9 +1222,8 @@ def _postgres_transition_constants(plan: _EntityPlan, sql_exists: str) -> list[s
             f"UPDATE {plan.table_ident} SET {set_clause} "
             f"WHERE {id_ident} = {id_param} RETURNING {plan.select_list}"
         )
-        return (
-            _wrap_literal("_SQL_TRANSITION_LOCK", sql_lock)
-            + _wrap_literal("_SQL_TRANSITION_APPLY", sql_apply)
+        return _wrap_literal("_SQL_TRANSITION_LOCK", sql_lock) + _wrap_literal(
+            "_SQL_TRANSITION_APPLY", sql_apply
         )
 
     sql_apply = (

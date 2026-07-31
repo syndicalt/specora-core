@@ -4,6 +4,7 @@ The registry maps model IDs to capability metadata so the engine can select
 the best interaction strategy (tool use, structured output, or raw prompt)
 without the caller needing to know provider-specific details.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -216,9 +217,7 @@ class ModelRegistry:
         """Return model IDs, optionally filtered by provider."""
         if provider is None:
             return list(self._models.keys())
-        return [
-            mid for mid, caps in self._models.items() if caps.provider == provider
-        ]
+        return [mid for mid, caps in self._models.items() if caps.provider == provider]
 
     def recommended(self) -> str:
         """Return the default recommended model ID."""

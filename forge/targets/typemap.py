@@ -146,9 +146,5 @@ def required_imports(ir_types: object) -> list[str]:
     Returns:
         Sorted unique import statements needed to annotate those types.
     """
-    needed = {
-        PY_TYPE_IMPORTS[py]
-        for t in ir_types
-        if (py := PY_TYPES.get(t)) in PY_TYPE_IMPORTS
-    }
+    needed = {PY_TYPE_IMPORTS[py] for t in ir_types if (py := PY_TYPES.get(t)) in PY_TYPE_IMPORTS}
     return sorted(needed)

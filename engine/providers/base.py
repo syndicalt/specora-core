@@ -9,6 +9,7 @@ counters are pinned to zero and ``engine.retry`` is the single place that
 decides whether a failure is worth resending. Two independent retry loops
 multiply into 9 requests where the operator asked for 3.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

@@ -686,8 +686,9 @@ spc forge generate domains/helpdesk -o /path/to/output
 # Start backend + database + healer (frontend runs locally)
 docker compose up -d --build
 
-# Run frontend locally
-cd frontend && npm install && npm run dev
+# Run frontend locally. `npm ci` installs the committed package-lock.json
+# exactly, so local and container builds resolve the same tree.
+cd frontend && npm ci && npm run dev
 
 # Or include frontend in Docker (slow on Windows)
 docker compose --profile frontend up -d --build

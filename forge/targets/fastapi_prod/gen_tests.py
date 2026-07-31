@@ -518,8 +518,87 @@ def _emit_list(ctx: _Ctx, endpoint: EndpointIR) -> list[str]:
             "",
         ]
     )
+    lines.extend(_emit_filter_tests(ctx, headers, plural))
 
     lines.extend(_emit_auth_tests(ctx, endpoint, "list", _url(ctx.base, "/")))
+    return lines
+
+
+def _emit_filter_tests(ctx: _Ctx, headers: list[str], plural: str) -> list[str]:
+    """Tests for the collection's filter surface.
+
+    Both assertions are about a request that must NOT succeed quietly. An
+    undeclared filter answered 200 with every row before it was rejected, and an
+    id list with no ceiling is an unbounded input on the same endpoint whose
+    `limit` is already bounded.
+    """
+    sample = (
+        '"00000000-0000-0000-0000-{:012d}".format(i)'
+        if _id_is_uuid(ctx.entity)
+        else '"no-such-record-{}".format(i)'
+    )
+    lines: list[str] = []
+
+    if ctx.can_create:
+        lines.extend(
+            [
+                ctx.signature(f"test_list_{plural}_batch_lookup_by_id"),
+                '    """`id__in` returns exactly the ids asked for, and nothing else.',
+                "",
+                "    This is what lets a view resolve the references on its own screen",
+                "    instead of reading the first page of the target collection and",
+                "    rendering everything past it as unresolved.",
+                '    """',
+                ctx.create_call(assign="wanted = "),
+                ctx.create_call(assign="other = "),
+                *_request(
+                    "resp = ",
+                    "get",
+                    _url(ctx.base, "/"),
+                    ['params={"id__in": [wanted["id"]]}', *headers],
+                ),
+                "    assert resp.status_code == 200",
+                '    returned = [item["id"] for item in resp.json()["items"]]',
+                '    assert returned == [wanted["id"]]',
+                '    assert other["id"] not in returned',
+                "",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            ctx.signature(f"test_list_{plural}_bounds_id_in"),
+            '    """The batch lookup is bounded, like `limit` and for the same reason."""',
+            f"    too_many = [{sample} for i in range(101)]",
+            *_request(
+                "resp = ",
+                "get",
+                _url(ctx.base, "/"),
+                ['params={"id__in": too_many}', *headers],
+            ),
+            "    assert resp.status_code == 400",
+            '    assert resp.json()["detail"]["error"] == "too_many_ids"',
+            "",
+            "",
+            ctx.signature(f"test_list_{plural}_rejects_undeclared_filter"),
+            '    """An undeclared query parameter is refused, not ignored.',
+            "",
+            "    Ignoring it — FastAPI's default — answers 200 with every row, which",
+            "    a caller cannot tell apart from a filter that matched everything.",
+            '    """',
+            *_request(
+                "resp = ",
+                "get",
+                _url(ctx.base, "/"),
+                ['params={"no_such_filter": "x"}', *headers],
+            ),
+            "    assert resp.status_code == 400",
+            '    assert resp.json()["detail"]["error"] == "unknown_query_parameter"',
+            "",
+            "",
+        ]
+    )
     return lines
 
 

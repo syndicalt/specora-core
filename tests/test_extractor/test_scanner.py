@@ -150,9 +150,7 @@ class TestHostileInput:
         with pytest.raises(FileNotFoundError):
             scan_directory(tmp_path / "nope")
 
-    def test_binary_and_undecodable_files_do_not_crash_classification(
-        self, tmp_path: Path
-    ) -> None:
+    def test_binary_and_undecodable_files_do_not_crash_classification(self, tmp_path: Path) -> None:
         (tmp_path / "weird.py").write_bytes(b"\xff\xfe\x00binary garbage\x00")
         results = scan_directory(tmp_path)
         assert [f.path for f in results] == ["weird.py"]

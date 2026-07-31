@@ -11,6 +11,7 @@ of the abuse: the fan-out comes from one failing contract, and there is exactly
 one client. A global bucket sits behind the per-contract buckets so a fault
 that sprays errors across many contracts is still bounded.
 """
+
 from __future__ import annotations
 
 import os
@@ -64,9 +65,7 @@ class TokenBucketLimiter:
             if rate_per_minute is None
             else rate_per_minute
         ) / 60.0
-        self.burst = (
-            _positive_env(INGEST_BURST_ENV, DEFAULT_BURST) if burst is None else burst
-        )
+        self.burst = _positive_env(INGEST_BURST_ENV, DEFAULT_BURST) if burst is None else burst
         self.global_rate_per_second = (
             _positive_env(INGEST_GLOBAL_RATE_ENV, DEFAULT_GLOBAL_RATE_PER_MINUTE)
             if global_rate_per_minute is None

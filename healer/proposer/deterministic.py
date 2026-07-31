@@ -1,4 +1,5 @@
 """Tier 1 proposer — deterministic fixes via normalize_contract()."""
+
 from __future__ import annotations
 
 import copy

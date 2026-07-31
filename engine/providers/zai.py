@@ -7,6 +7,7 @@ signed with the secret — not the raw key.
 This provider extends the OpenAI provider by signing a fresh JWT before
 each request.
 """
+
 from __future__ import annotations
 
 import json
@@ -42,15 +43,13 @@ def sign_zai_token(api_key: str) -> str:
         # is reported as "pyjwt is not installed" and the user reinstalls a
         # package that was there all along.
         raise ImportError(
-            "The 'pyjwt' package is required for Z.AI. "
-            "Install it with: pip install pyjwt"
+            "The 'pyjwt' package is required for Z.AI. Install it with: pip install pyjwt"
         ) from exc
 
     parts = api_key.split(".", 1)
     if len(parts) != 2:
         raise ValueError(
-            f"Invalid Z.AI API key format. Expected 'key_id.secret', "
-            f"got {len(parts)} part(s)."
+            f"Invalid Z.AI API key format. Expected 'key_id.secret', got {len(parts)} part(s)."
         )
 
     key_id, secret = parts
@@ -129,31 +128,35 @@ class ZAIProvider(Provider):
         for msg in messages:
             if msg.role == "tool" and msg.tool_results:
                 for tr in msg.tool_results:
-                    oai_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tr.get("tool_use_id", ""),
-                        "content": tr.get("content", ""),
-                    })
-            elif msg.role == "assistant" and msg.tool_calls:
-                oai_messages.append({
-                    "role": "assistant",
-                    "content": msg.content or "",
-                    "tool_calls": [
+                    oai_messages.append(
                         {
-                            "id": tc.get("id", ""),
-                            "type": "function",
-                            "function": {
-                                "name": tc.get("name", ""),
-                                "arguments": (
-                                    tc.get("input", "{}")
-                                    if isinstance(tc.get("input"), str)
-                                    else json.dumps(tc.get("input", {}))
-                                ),
-                            },
+                            "role": "tool",
+                            "tool_call_id": tr.get("tool_use_id", ""),
+                            "content": tr.get("content", ""),
                         }
-                        for tc in msg.tool_calls
-                    ],
-                })
+                    )
+            elif msg.role == "assistant" and msg.tool_calls:
+                oai_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": msg.content or "",
+                        "tool_calls": [
+                            {
+                                "id": tc.get("id", ""),
+                                "type": "function",
+                                "function": {
+                                    "name": tc.get("name", ""),
+                                    "arguments": (
+                                        tc.get("input", "{}")
+                                        if isinstance(tc.get("input"), str)
+                                        else json.dumps(tc.get("input", {}))
+                                    ),
+                                },
+                            }
+                            for tc in msg.tool_calls
+                        ],
+                    }
+                )
             else:
                 oai_messages.append({"role": msg.role, "content": msg.content})
 
@@ -195,16 +198,17 @@ class ZAIProvider(Provider):
                     args = json.loads(tc.function.arguments)
                 except json.JSONDecodeError:
                     logger.warning(
-                        "Z.AI returned unparsable tool arguments for %s; "
-                        "treating input as empty",
+                        "Z.AI returned unparsable tool arguments for %s; treating input as empty",
                         tc.function.name,
                     )
                     args = {}
-                tool_calls.append({
-                    "id": tc.id,
-                    "name": tc.function.name,
-                    "input": args,
-                })
+                tool_calls.append(
+                    {
+                        "id": tc.id,
+                        "name": tc.function.name,
+                        "input": args,
+                    }
+                )
 
         return LLMResponse(
             content=content,

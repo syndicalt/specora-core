@@ -52,7 +52,8 @@ def expand_mixins(ir: DomainIR) -> DomainIR:
             if mixin is None:
                 logger.warning(
                     "Entity '%s' references mixin '%s' which was not found",
-                    entity.fqn, ref,
+                    entity.fqn,
+                    ref,
                 )
                 continue
 
@@ -62,7 +63,9 @@ def expand_mixins(ir: DomainIR) -> DomainIR:
                     # override is legitimate is decided in semantic validation.
                     logger.debug(
                         "Entity '%s' already declares field '%s' from mixin '%s'",
-                        entity.fqn, field.name, ref,
+                        entity.fqn,
+                        field.name,
+                        ref,
                     )
                     continue
 

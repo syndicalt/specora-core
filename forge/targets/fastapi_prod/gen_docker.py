@@ -56,16 +56,16 @@ _POSTGRES_UID = 999
 # quoted Python snippet, where the Dockerfile parser's line-joining and the
 # shell's quoting rules interact in a way nobody should have to reason about.
 _APP_HEALTHCHECK = (
-    "CMD python -c \"import os,urllib.request as u; u.urlopen("
+    'CMD python -c "import os,urllib.request as u; u.urlopen('
     "'http://127.0.0.1:'+os.environ.get('PORT','8000')+'/health', timeout=4).read()\""
 )
 _HEALER_HEALTHCHECK = (
-    "CMD python -c \"import os,urllib.request as u; u.urlopen("
+    'CMD python -c "import os,urllib.request as u; u.urlopen('
     "'http://127.0.0.1:'+os.environ.get('SPECORA_HEALER_PORT','8083')"
     "+'/healer/health', timeout=4).read()\""
 )
 
-_SECRET_FILE_HELPER = '''
+_SECRET_FILE_HELPER = """
 # Resolve the `*_FILE` secret convention.
 #
 # Anything under compose's `environment:` is readable with `docker inspect`, is
@@ -109,14 +109,14 @@ resolve_file_secrets() {
         export "$name=$value"
     done
 }
-'''
+"""
 
 # Bounded, and fails fast on errors that waiting cannot fix. The previous
 # implementation was `until python -c "connect"; do sleep 1; done` with stderr
 # sent to /dev/null: a wrong password, a missing database or a typo in the DSN
 # all presented as a container that hung on boot forever, with no output, and
 # the orchestrator saw a slow start rather than a failed deploy.
-_DB_WAIT = '''
+_DB_WAIT = """
 if [ "${DATABASE_BACKEND:-postgres}" = "postgres" ]; then
     echo "[specora] Waiting for database (up to ${DATABASE_WAIT_TIMEOUT_SECONDS:-60}s)..."
     python - <<'PY'
@@ -180,7 +180,7 @@ while True:
 print("[specora] Database is ready.")
 PY
 fi
-'''
+"""
 
 
 def generate_docker(ir: DomainIR) -> list[GeneratedFile]:
@@ -324,7 +324,7 @@ def _generate_entrypoint(ir: DomainIR, has_auth: bool) -> GeneratedFile:
         + " ".join(secrets)
         + "\n"
         + _DB_WAIT
-        + '''
+        + """
 echo "[specora] Starting app (schema and migrations run at startup)..."
 
 # Worker count is read by uvicorn from $WEB_CONCURRENCY and left unset here,
@@ -350,7 +350,7 @@ exec uvicorn backend.app:app \\
     --port "${PORT:-8000}" \\
     --timeout-graceful-shutdown "${UVICORN_GRACEFUL_TIMEOUT:-20}" \\
     --no-server-header
-'''
+"""
     )
     return GeneratedFile(
         path="entrypoint.sh",
@@ -440,7 +440,7 @@ def _generate_healer_entrypoint(ir: DomainIR) -> GeneratedFile:
         + _SECRET_FILE_HELPER
         + "\nresolve_file_secrets "
         + " ".join(secrets)
-        + '''
+        + """
 
 # --host 0.0.0.0 is safe only because port 8083 is not published to the host.
 # The `serve` command defaults to loopback for exactly that reason; inside a
@@ -448,7 +448,7 @@ def _generate_healer_entrypoint(ir: DomainIR) -> GeneratedFile:
 exec python -m forge.cli.main healer serve \\
     --port "${SPECORA_HEALER_PORT:-8083}" \\
     --host 0.0.0.0
-'''
+"""
     )
     return GeneratedFile(
         path="entrypoint.healer.sh",
@@ -671,8 +671,8 @@ services:
           # loses the ticket that was being worked on.
           memory: ${{HEALER_MEMORY_LIMIT:-1g}}
 
-  # Frontend — behind a profile because npm install is slow in Docker on Windows.
-  # Run locally with: cd frontend && npm install && npm run dev
+  # Frontend — behind a profile because the npm install is slow in Docker on
+  # Windows. Run locally with: cd frontend && npm ci && npm run dev
   # Or include in Docker with: docker compose --profile frontend up
   frontend:
     profiles: [frontend]
@@ -779,9 +779,7 @@ unable to write its own queue.
 Back up `diffs/` with the contracts. It is the only record of who changed the
 source of truth and why; the contracts themselves show only the result.
 """
-    return GeneratedFile(
-        path=".forge/README.md", content=content, provenance=f"domain/{ir.domain}"
-    )
+    return GeneratedFile(path=".forge/README.md", content=content, provenance=f"domain/{ir.domain}")
 
 
 def _generate_init_secrets(ir: DomainIR, has_auth: bool) -> GeneratedFile:
@@ -793,7 +791,7 @@ def _generate_init_secrets(ir: DomainIR, has_auth: bool) -> GeneratedFile:
 new_secret auth_secret
 """
 
-    content = f'''#!/bin/bash
+    content = f"""#!/bin/bash
 # @generated from domain/{ir.domain}
 #
 # Create the secret files docker-compose.yml expects. Idempotent: an existing
@@ -855,7 +853,7 @@ echo "Secrets are in ./$DIR. They are not in .env and not in docker-compose.yml,
 echo "so they do not appear in \\`docker inspect\\` or \\`docker compose config\\`."
 echo "Back them up: losing auth_secret invalidates every issued token, and"
 echo "losing db_password locks you out of the pgdata volume."
-'''
+"""
     return GeneratedFile(
         path="init-secrets.sh",
         content=content,
@@ -941,148 +939,152 @@ def _generate_env_example(ir: DomainIR, has_auth: bool) -> GeneratedFile:
     ]
 
     if has_auth:
-        lines.extend([
-            "",
-            "",
-            "# =============================================================================",
-            "# Authentication",
-            "# =============================================================================",
-            "",
-            "# Under docker-compose this comes from secrets/auth_secret. Set it here",
-            "# only on a platform that injects secrets as environment variables.",
-            "# The app refuses to boot while it is empty, shorter than 32 characters,",
-            "# or still the placeholder, because every token it issued would be",
-            "# forgeable.  Generate one with: openssl rand -hex 32",
-            "AUTH_SECRET=",
-            "",
-            "AUTH_PROVIDER=jwt  # jwt | external",
-            "",
-            "# Bound into every token and required on every token verified.",
-            f"AUTH_ISSUER=specora:{ir.domain}",
-            f"AUTH_AUDIENCE=specora:{ir.domain}",
-            "",
-            "# Access tokens cannot be revoked, so they are short-lived; the refresh",
-            "# token is the revocable half and is single-use.",
-            "AUTH_TOKEN_EXPIRE_MINUTES=15",
-            "AUTH_REFRESH_TOKEN_EXPIRE_DAYS=14",
-            "",
-            "# The refresh token is also set as an httpOnly cookie. Browsers exempt",
-            "# http://localhost from the Secure attribute, so only a deployment",
-            "# deliberately served over plain HTTP needs this set to false.",
-            "AUTH_COOKIE_SECURE=true",
-            "",
-            "# Authentication is declared by this domain's contracts. Setting this to",
-            "# false does not disable it — the app refuses to boot instead.",
-            "AUTH_ENABLED=true",
-        ])
+        lines.extend(
+            [
+                "",
+                "",
+                "# =============================================================================",
+                "# Authentication",
+                "# =============================================================================",
+                "",
+                "# Under docker-compose this comes from secrets/auth_secret. Set it here",
+                "# only on a platform that injects secrets as environment variables.",
+                "# The app refuses to boot while it is empty, shorter than 32 characters,",
+                "# or still the placeholder, because every token it issued would be",
+                "# forgeable.  Generate one with: openssl rand -hex 32",
+                "AUTH_SECRET=",
+                "",
+                "AUTH_PROVIDER=jwt  # jwt | external",
+                "",
+                "# Bound into every token and required on every token verified.",
+                f"AUTH_ISSUER=specora:{ir.domain}",
+                f"AUTH_AUDIENCE=specora:{ir.domain}",
+                "",
+                "# Access tokens cannot be revoked, so they are short-lived; the refresh",
+                "# token is the revocable half and is single-use.",
+                "AUTH_TOKEN_EXPIRE_MINUTES=15",
+                "AUTH_REFRESH_TOKEN_EXPIRE_DAYS=14",
+                "",
+                "# The refresh token is also set as an httpOnly cookie. Browsers exempt",
+                "# http://localhost from the Secure attribute, so only a deployment",
+                "# deliberately served over plain HTTP needs this set to false.",
+                "AUTH_COOKIE_SECURE=true",
+                "",
+                "# Authentication is declared by this domain's contracts. Setting this to",
+                "# false does not disable it — the app refuses to boot instead.",
+                "AUTH_ENABLED=true",
+            ]
+        )
 
-    lines.extend([
-        "",
-        "",
-        "# =============================================================================",
-        "# AI / LLM Providers (for Healer Tier 2-3 + Factory + Chat)",
-        "# =============================================================================",
-        "# At least one provider needed for LLM-powered self-healing.",
-        "# Priority: SPECORA_AI_MODEL > ANTHROPIC > OPENAI > XAI > ZAI > OLLAMA",
-        "#",
-        "# These are billing credentials. Each also accepts the _FILE form, e.g.",
-        "# ANTHROPIC_API_KEY_FILE=/run/secrets/anthropic_api_key.",
-        "",
-        "# Override model: claude-sonnet-4-6, glm-5.1, gpt-4o, etc.",
-        "SPECORA_AI_MODEL=",
-        "",
-        "# Anthropic (recommended) — https://console.anthropic.com/",
-        "ANTHROPIC_API_KEY=",
-        "",
-        "# OpenAI — https://platform.openai.com/api-keys",
-        "OPENAI_API_KEY=",
-        "",
-        "# xAI (Grok) — https://console.x.ai/",
-        "XAI_API_KEY=",
-        "",
-        "# Z.AI (GLM) — https://z.ai — free models: glm-4.7-flash, glm-4.5-flash",
-        "ZAI_API_KEY=",
-        "",
-        "# Local (Ollama) — https://ollama.com/",
-        "OLLAMA_BASE_URL=",
-        "",
-        "",
-        "# =============================================================================",
-        "# Healer Service (runs as sidecar in Docker stack)",
-        "# =============================================================================",
-        "",
-        "SPECORA_HEALER_PORT=8083",
-        "",
-        "# Where the app posts unhandled errors. docker-compose sets this to",
-        "# http://healer:8083 over the compose network; port 8083 is deliberately",
-        "# not published to the host, because the same port also serves the",
-        "# control plane that applies contract fixes.",
-        "SPECORA_HEALER_URL=",
-        "",
-        "# Data plane credential. Under docker-compose this comes from",
-        "# secrets/healer_ingest_token. /healer/ingest is authenticated, and the",
-        "# app logs a warning at startup if a URL is configured without a token,",
-        "# because every report would be rejected.",
-        "SPECORA_HEALER_INGEST_TOKEN=",
-        "",
-        "# Control plane credential: signs the approve/reject links, so holding it",
-        "# is equivalent to being able to deploy. From secrets/healer_approval_secret",
-        "# under docker-compose. Without one of this, SPECORA_HEALER_OPERATOR_TOKEN",
-        "# or SPECORA_HEALER_PROXY_IDENTITY_HEADER the control plane fails closed.",
-        "SPECORA_HEALER_APPROVAL_SECRET=",
-        "",
-        "# Static bearer token for operators fronting the Healer with their own",
-        "# identity provider. Alternative to the signed-link scheme above.",
-        "SPECORA_HEALER_OPERATOR_TOKEN=",
-        "",
-        "# Optional: POST notifications on state changes",
-        "SPECORA_HEALER_WEBHOOK_URL=",
-        "",
-        "# Path to specora-core installation (for Healer Docker container)",
-        "SPECORA_CORE_PATH=./../specora-core",
-        "",
-        "# The healer writes contracts and regenerated code back to bind mounts,",
-        "# so its container uid must own this directory on the host.",
-        "#   SPECORA_HEALER_UID=$(id -u)  SPECORA_HEALER_GID=$(id -g)",
-        "SPECORA_HEALER_UID=1000",
-        "SPECORA_HEALER_GID=1000",
-        "",
-        "",
-        "# =============================================================================",
-        "# Container limits and exposure",
-        "# =============================================================================",
-        "# Limits exist so one container cannot take the host down with it. The",
-        "# defaults are a starting point; size them to the workload.",
-        "",
-        "APP_CPU_LIMIT=2",
-        "APP_MEMORY_LIMIT=1g",
-        "DB_CPU_LIMIT=2",
-        "DB_MEMORY_LIMIT=1g",
-        "HEALER_CPU_LIMIT=1",
-        "HEALER_MEMORY_LIMIT=1g",
-        "FRONTEND_CPU_LIMIT=1",
-        "FRONTEND_MEMORY_LIMIT=512m",
-        "",
-        "# Published on loopback by default: the app speaks plain HTTP and expects",
-        "# a TLS-terminating proxy in front of it. Widen deliberately.",
-        "APP_BIND_ADDRESS=127.0.0.1",
-        "FRONTEND_BIND_ADDRESS=127.0.0.1",
-        "",
-        "# Host-side ports. Only these two change; the in-container ports are",
-        "# fixed, so nothing inside the stack has to be reconfigured to move them.",
-        "APP_PORT=8000",
-        "FRONTEND_PORT=3000",
-        "",
-        "# What the browser uses to reach the API. Inlined into the client bundle",
-        "# at build time by Next.js, so changing it requires rebuilding the",
-        "# frontend image, and it must not be a compose-internal hostname.",
-        "NEXT_PUBLIC_API_URL=http://localhost:8000",
-        "",
-        "# Base image for both Python images. Pin a digest for a reproducible",
-        "# build:  PYTHON_IMAGE=python@sha256:...",
-        f"PYTHON_IMAGE={_PYTHON_IMAGE}",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "",
+            "# =============================================================================",
+            "# AI / LLM Providers (for Healer Tier 2-3 + Factory + Chat)",
+            "# =============================================================================",
+            "# At least one provider needed for LLM-powered self-healing.",
+            "# Priority: SPECORA_AI_MODEL > ANTHROPIC > OPENAI > XAI > ZAI > OLLAMA",
+            "#",
+            "# These are billing credentials. Each also accepts the _FILE form, e.g.",
+            "# ANTHROPIC_API_KEY_FILE=/run/secrets/anthropic_api_key.",
+            "",
+            "# Override model: claude-sonnet-4-6, glm-5.1, gpt-4o, etc.",
+            "SPECORA_AI_MODEL=",
+            "",
+            "# Anthropic (recommended) — https://console.anthropic.com/",
+            "ANTHROPIC_API_KEY=",
+            "",
+            "# OpenAI — https://platform.openai.com/api-keys",
+            "OPENAI_API_KEY=",
+            "",
+            "# xAI (Grok) — https://console.x.ai/",
+            "XAI_API_KEY=",
+            "",
+            "# Z.AI (GLM) — https://z.ai — free models: glm-4.7-flash, glm-4.5-flash",
+            "ZAI_API_KEY=",
+            "",
+            "# Local (Ollama) — https://ollama.com/",
+            "OLLAMA_BASE_URL=",
+            "",
+            "",
+            "# =============================================================================",
+            "# Healer Service (runs as sidecar in Docker stack)",
+            "# =============================================================================",
+            "",
+            "SPECORA_HEALER_PORT=8083",
+            "",
+            "# Where the app posts unhandled errors. docker-compose sets this to",
+            "# http://healer:8083 over the compose network; port 8083 is deliberately",
+            "# not published to the host, because the same port also serves the",
+            "# control plane that applies contract fixes.",
+            "SPECORA_HEALER_URL=",
+            "",
+            "# Data plane credential. Under docker-compose this comes from",
+            "# secrets/healer_ingest_token. /healer/ingest is authenticated, and the",
+            "# app logs a warning at startup if a URL is configured without a token,",
+            "# because every report would be rejected.",
+            "SPECORA_HEALER_INGEST_TOKEN=",
+            "",
+            "# Control plane credential: signs the approve/reject links, so holding it",
+            "# is equivalent to being able to deploy. From secrets/healer_approval_secret",
+            "# under docker-compose. Without one of this, SPECORA_HEALER_OPERATOR_TOKEN",
+            "# or SPECORA_HEALER_PROXY_IDENTITY_HEADER the control plane fails closed.",
+            "SPECORA_HEALER_APPROVAL_SECRET=",
+            "",
+            "# Static bearer token for operators fronting the Healer with their own",
+            "# identity provider. Alternative to the signed-link scheme above.",
+            "SPECORA_HEALER_OPERATOR_TOKEN=",
+            "",
+            "# Optional: POST notifications on state changes",
+            "SPECORA_HEALER_WEBHOOK_URL=",
+            "",
+            "# Path to specora-core installation (for Healer Docker container)",
+            "SPECORA_CORE_PATH=./../specora-core",
+            "",
+            "# The healer writes contracts and regenerated code back to bind mounts,",
+            "# so its container uid must own this directory on the host.",
+            "#   SPECORA_HEALER_UID=$(id -u)  SPECORA_HEALER_GID=$(id -g)",
+            "SPECORA_HEALER_UID=1000",
+            "SPECORA_HEALER_GID=1000",
+            "",
+            "",
+            "# =============================================================================",
+            "# Container limits and exposure",
+            "# =============================================================================",
+            "# Limits exist so one container cannot take the host down with it. The",
+            "# defaults are a starting point; size them to the workload.",
+            "",
+            "APP_CPU_LIMIT=2",
+            "APP_MEMORY_LIMIT=1g",
+            "DB_CPU_LIMIT=2",
+            "DB_MEMORY_LIMIT=1g",
+            "HEALER_CPU_LIMIT=1",
+            "HEALER_MEMORY_LIMIT=1g",
+            "FRONTEND_CPU_LIMIT=1",
+            "FRONTEND_MEMORY_LIMIT=512m",
+            "",
+            "# Published on loopback by default: the app speaks plain HTTP and expects",
+            "# a TLS-terminating proxy in front of it. Widen deliberately.",
+            "APP_BIND_ADDRESS=127.0.0.1",
+            "FRONTEND_BIND_ADDRESS=127.0.0.1",
+            "",
+            "# Host-side ports. Only these two change; the in-container ports are",
+            "# fixed, so nothing inside the stack has to be reconfigured to move them.",
+            "APP_PORT=8000",
+            "FRONTEND_PORT=3000",
+            "",
+            "# What the browser uses to reach the API. Inlined into the client bundle",
+            "# at build time by Next.js, so changing it requires rebuilding the",
+            "# frontend image, and it must not be a compose-internal hostname.",
+            "NEXT_PUBLIC_API_URL=http://localhost:8000",
+            "",
+            "# Base image for both Python images. Pin a digest for a reproducible",
+            "# build:  PYTHON_IMAGE=python@sha256:...",
+            f"PYTHON_IMAGE={_PYTHON_IMAGE}",
+            "",
+        ]
+    )
     return GeneratedFile(
         path=".env.example", content="\n".join(lines), provenance=f"domain/{ir.domain}"
     )
@@ -1108,15 +1110,17 @@ def _generate_requirements(ir: DomainIR, has_auth: bool) -> GeneratedFile:
         "httpx>=0.27,<1.0",
     ]
     if has_auth:
-        deps.extend([
-            "",
-            "# JWT: pyjwt rather than python-jose, which is unmaintained and carries",
-            "# algorithm-confusion advisories. >=2.10 for the strict issuer check.",
-            "pyjwt[crypto]>=2.10,<3.0",
-            "# Password hashing: argon2-cffi directly rather than passlib, which is",
-            "# unmaintained and whose 1.7.4 breaks against bcrypt 5.x.",
-            "argon2-cffi>=23.1,<26.0",
-        ])
+        deps.extend(
+            [
+                "",
+                "# JWT: pyjwt rather than python-jose, which is unmaintained and carries",
+                "# algorithm-confusion advisories. >=2.10 for the strict issuer check.",
+                "pyjwt[crypto]>=2.10,<3.0",
+                "# Password hashing: argon2-cffi directly rather than passlib, which is",
+                "# unmaintained and whose 1.7.4 breaks against bcrypt 5.x.",
+                "argon2-cffi>=23.1,<26.0",
+            ]
+        )
     return GeneratedFile(
         path="requirements.txt",
         content="\n".join(deps) + "\n",

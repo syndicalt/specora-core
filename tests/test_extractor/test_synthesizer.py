@@ -62,7 +62,7 @@ class OrderPage(BaseModel):
     next_cursor: str | None
 '''
 
-BACKEND_ROUTES = '''
+BACKEND_ROUTES = """
 from fastapi import APIRouter
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -81,7 +81,7 @@ async def create_order():
 @router.delete("/{record_id}")
 async def delete_order(record_id: str):
     ...
-'''
+"""
 
 FRONTEND_TYPES = """
 export interface Customer {

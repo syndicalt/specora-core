@@ -33,12 +33,13 @@ from forge.targets.fields import creatable_fields, disclosable_fields, updatable
 from forge.targets.naming import camel_case
 from forge.targets.nextjs.context import EntityView, FrontendContext
 
-#: Rows fetched to build a reference field's id -> display-name map.
+#: Rows fetched to populate a reference field's picker on a create/edit form.
 #:
-#: There is no batch-lookup endpoint, so display names are resolved from the
-#: first page of the referenced collection and anything beyond it renders as
-#: explicitly unresolved. Raising this trades a slower page for a wider window.
-REFERENCE_LOOKUP_LIMIT = 200
+#: A form has to offer every choice, so this one is still a page of the target
+#: collection and a target with more rows than this cannot be picked from the
+#: dropdown. Read views no longer use it: they resolve display names with
+#: `?id__in=`, which asks for exactly the ids on screen.
+REFERENCE_OPTIONS_LIMIT = 200
 
 #: IR types that need a JSON editor and a JSON parse on submit.
 _JSON_TYPES = frozenset({"array", "object"})
@@ -149,20 +150,35 @@ class _ReferenceBinding:
         binding: camelCase stem for the generated React state.
         model: The target's TypeScript interface, so fetched rows stay typed.
         display: The field on the target to show.
+        columns: Every field on this entity pointing at the same target. The
+            batch lookup has to ask for the ids of all of them, or the second
+            column renders unresolved against a map built only from the first.
     """
 
     def __init__(
-        self, column: str, api: str, binding: str, model: str, display: str
+        self,
+        column: str,
+        api: str,
+        binding: str,
+        model: str,
+        display: str,
+        columns: tuple[str, ...] = (),
     ) -> None:
         self.column = column
         self.api = api
         self.binding = binding
         self.model = model
         self.display = display
+        self.columns = columns or (column,)
 
     @property
     def state(self) -> str:
         return f"{self.binding}Names"
+
+    @property
+    def key(self) -> str:
+        """The memoised lookup key: the ids this binding must resolve."""
+        return f"{self.binding}Key"
 
     @property
     def setter(self) -> str:
@@ -219,15 +235,29 @@ def _reference_bindings(
 
 
 def _unique_bindings(bindings: list[_ReferenceBinding]) -> list[_ReferenceBinding]:
-    """One binding per target entity, preserving order."""
-    seen: set[str] = set()
-    unique = []
+    """One binding per target entity, preserving order and merging columns.
+
+    Merging rather than discarding: two fields pointing at the same entity share
+    one state variable and therefore one lookup, so that lookup has to cover
+    both columns' ids.
+
+    New objects are returned rather than the inputs being mutated, because this
+    is called more than once over the same list (state, keys, effect) and
+    accumulating into the arguments would grow the column list each time.
+    """
+    merged: dict[str, _ReferenceBinding] = {}
     for binding in bindings:
-        if binding.binding in seen:
-            continue
-        seen.add(binding.binding)
-        unique.append(binding)
-    return unique
+        existing = merged.get(binding.binding)
+        columns = existing.columns if existing else ()
+        merged[binding.binding] = _ReferenceBinding(
+            column=existing.column if existing else binding.column,
+            api=binding.api,
+            binding=binding.binding,
+            model=binding.model,
+            display=binding.display,
+            columns=columns + tuple(c for c in binding.columns if c not in columns),
+        )
+    return list(merged.values())
 
 
 def _binding_for(bindings: list[_ReferenceBinding], column: str) -> _ReferenceBinding | None:
@@ -249,18 +279,71 @@ def _type_imports(*names: str) -> str:
     return "import type { " + ", ".join(wanted) + ' } from "@/lib/types";'
 
 
-def _reference_lookup_effect(bindings: list[_ReferenceBinding], indent: str = "  ") -> str:
-    """The effect that populates every reference's id -> name map."""
-    unique = _unique_bindings(bindings)
-    if not unique:
-        return ""
+def _row_values_expr(binding: _ReferenceBinding, row: str, *, many: bool) -> str:
+    """The expression yielding every id one binding has to resolve.
 
-    lines = [f"{indent}useEffect(() => {{"]
-    for binding in unique:
+    `many` distinguishes a collection of rows (a table) from a single record (a
+    detail view); `row` is the binding those rows arrive under.
+    """
+    if not many:
+        return "[" + ", ".join(f"{row}.{c}" for c in binding.columns) + "]"
+    if len(binding.columns) == 1:
+        return f"{row}.map((item) => item.{binding.columns[0]})"
+    inner = ", ".join(f"item.{c}" for c in binding.columns)
+    return f"{row}.flatMap((item) => [{inner}])"
+
+
+def _reference_keys(
+    bindings: list[_ReferenceBinding],
+    row: str,
+    *,
+    many: bool,
+    indent: str = "  ",
+) -> str:
+    """The memoised id set each reference lookup depends on.
+
+    Memoised because the effect below has to re-run when the ids on screen
+    change and *only* then: depending on the rows themselves would refetch on
+    every render that hands the component a new array with the same contents.
+    """
+    lines = []
+    for binding in _unique_bindings(bindings):
         lines.extend(
             [
+                f"{indent}const {binding.key} = useMemo(",
+                f"{indent}  () => referenceKey({_row_values_expr(binding, row, many=many)}),",
+                f"{indent}  [{row}],",
+                f"{indent});",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _reference_lookup_effect(bindings: list[_ReferenceBinding], indent: str = "  ") -> str:
+    """The effect that populates every reference's id -> name map.
+
+    It asks the API for exactly the ids on screen (`?id__in=`) rather than for
+    the target collection's first page. The old lookup resolved a reference only
+    if its target happened to fall inside those rows, so a table of orders whose
+    customers were created early in a large collection rendered a column of
+    `unresolved` — correct-looking, permanently wrong, and invisible in a test
+    fixture where every collection is small.
+    """
+    lines: list[str] = []
+    for binding in _unique_bindings(bindings):
+        # One effect per binding, not one for all of them: each depends on its
+        # own id set, and a shared dependency list would refetch every target
+        # whenever any one of them changed.
+        lines.extend(
+            [
+                f"{indent}useEffect(() => {{",
+                f"{indent}  const ids = JSON.parse({binding.key}) as string[];",
+                f"{indent}  if (ids.length === 0) {{",
+                f"{indent}    {binding.setter}({{}});",
+                f"{indent}    return;",
+                f"{indent}  }}",
                 f"{indent}  {binding.api}",
-                f"{indent}    .list({{ limit: {REFERENCE_LOOKUP_LIMIT} }})",
+                f"{indent}    .list({{ limit: ids.length, ids }})",
                 f"{indent}    .then((page) => {{",
                 f"{indent}      const names: Record<string, string> = {{}};",
                 f"{indent}      for (const row of page.items) {{",
@@ -279,9 +362,9 @@ def _reference_lookup_effect(bindings: list[_ReferenceBinding], indent: str = " 
                 f"{indent}      // the whole view down with it.",
                 f'{indent}      console.error("Could not resolve {binding.binding} names", cause);',
                 f"{indent}    }});",
+                f"{indent}}}, [{binding.key}]);",
             ]
         )
-    lines.append(f"{indent}}}, []);")
     return "\n".join(lines)
 
 
@@ -298,7 +381,7 @@ def _reference_state(bindings: list[_ReferenceBinding], indent: str = "  ") -> s
 
 
 def _shadcn_button() -> GeneratedFile:
-    content = '''"use client";
+    content = """"use client";
 import { cn } from "@/lib/utils";
 import { forwardRef, type ButtonHTMLAttributes } from "react";
 
@@ -338,14 +421,14 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 );
 Button.displayName = "Button";
 export { Button };
-'''
+"""
     return GeneratedFile(
         path="frontend/src/components/ui/button.tsx", content=content, provenance="shadcn/ui"
     )
 
 
 def _shadcn_input() -> GeneratedFile:
-    content = '''import { cn } from "@/lib/utils";
+    content = """import { cn } from "@/lib/utils";
 import { forwardRef, type InputHTMLAttributes } from "react";
 
 const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
@@ -365,14 +448,14 @@ const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>
 );
 Input.displayName = "Input";
 export { Input };
-'''
+"""
     return GeneratedFile(
         path="frontend/src/components/ui/input.tsx", content=content, provenance="shadcn/ui"
     )
 
 
 def _shadcn_badge() -> GeneratedFile:
-    content = '''import { cn } from "@/lib/utils";
+    content = """import { cn } from "@/lib/utils";
 
 const colorMap: Record<string, string> = {
   critical: "bg-red-100 text-red-800",
@@ -400,14 +483,14 @@ export function Badge({ value, className }: { value: string; className?: string 
     </span>
   );
 }
-'''
+"""
     return GeneratedFile(
         path="frontend/src/components/ui/badge.tsx", content=content, provenance="shadcn/ui"
     )
 
 
 def _shadcn_card() -> GeneratedFile:
-    content = '''import { cn } from "@/lib/utils";
+    content = """import { cn } from "@/lib/utils";
 
 interface SlotProps {
   children: React.ReactNode;
@@ -433,14 +516,14 @@ export function CardTitle({ children, className }: SlotProps) {
 export function CardContent({ children, className }: SlotProps) {
   return <div className={className}>{children}</div>;
 }
-'''
+"""
     return GeneratedFile(
         path="frontend/src/components/ui/card.tsx", content=content, provenance="shadcn/ui"
     )
 
 
 def _shadcn_select() -> GeneratedFile:
-    content = '''import { cn } from "@/lib/utils";
+    content = """import { cn } from "@/lib/utils";
 import { forwardRef, type SelectHTMLAttributes } from "react";
 
 const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(
@@ -460,14 +543,14 @@ const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElem
 );
 Select.displayName = "Select";
 export { Select };
-'''
+"""
     return GeneratedFile(
         path="frontend/src/components/ui/select.tsx", content=content, provenance="shadcn/ui"
     )
 
 
 def _shadcn_table() -> GeneratedFile:
-    content = '''import { cn } from "@/lib/utils";
+    content = """import { cn } from "@/lib/utils";
 
 interface SlotProps {
   children: React.ReactNode;
@@ -513,7 +596,7 @@ export function TableHead({ children, className }: SlotProps) {
 export function TableCell({ children, className }: SlotProps) {
   return <td className={cn("px-4 py-3", className)}>{children}</td>;
 }
-'''
+"""
     return GeneratedFile(
         path="frontend/src/components/ui/table.tsx", content=content, provenance="shadcn/ui"
     )
@@ -525,7 +608,7 @@ def _states() -> GeneratedFile:
     A failed request used to leave the same empty table an empty collection
     does, so "the server is down" and "you have no tickets" looked identical.
     """
-    content = '''"use client";
+    content = """"use client";
 import { Button } from "@/components/ui/button";
 
 export function LoadingState({ label = "Loading..." }: { label?: string }) {
@@ -556,7 +639,7 @@ export function InlineError({ message }: { message: string }) {
     </p>
   );
 }
-'''
+"""
     return GeneratedFile(
         path="frontend/src/components/ui/states.tsx", content=content, provenance="shadcn/ui"
     )
@@ -564,16 +647,36 @@ export function InlineError({ message }: { message: string }) {
 
 def _reference_value() -> GeneratedFile:
     """Render a foreign key as its display name, or as visibly unresolved."""
-    content = '''import { cn } from "@/lib/utils";
+    content = """import { cn } from "@/lib/utils";
+
+/**
+ * The distinct ids a set of rows points at, as a stable dependency key.
+ *
+ * JSON rather than a delimited string: an identifier is opaque, so any
+ * separator chosen here could occur inside one. Returning a string rather than
+ * an array is what lets a `useEffect` depend on it — a fresh array with the
+ * same contents is a new reference on every render, and the lookup would run
+ * again each time.
+ */
+export function referenceKey(values: readonly unknown[]): string {
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const id = String(value);
+    if (id !== "") seen.add(id);
+  }
+  return JSON.stringify([...seen]);
+}
 
 /**
  * A reference rendered as the target's display name.
  *
- * Display names come from the first page of the referenced collection — the
- * API has no batch lookup — so an id outside that page cannot be resolved.
- * Falling back to the raw identifier would put a UUID on screen looking like
- * data; this says plainly that the name is missing and keeps the id in the
- * tooltip for whoever needs it.
+ * Display names are fetched by id (`?id__in=`), so an id on screen is
+ * resolvable however large the referenced collection is. What remains
+ * unresolved is a genuinely missing target: a deleted row, or one the caller
+ * is not allowed to read. Falling back to the raw identifier would put a UUID
+ * on screen looking like data; this says plainly that the name is missing and
+ * keeps the id in the tooltip for whoever needs it.
  */
 export function ReferenceValue({
   id,
@@ -601,7 +704,7 @@ export function ReferenceValue({
     </span>
   );
 }
-'''
+"""
     return GeneratedFile(
         path="frontend/src/components/ui/reference.tsx",
         content=content,
@@ -634,9 +737,7 @@ def _data_table(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
     columns = _table_columns(view)
     by_name = {f.name: f for f in entity.fields}
 
-    bindings = _reference_bindings(
-        ctx, entity, [by_name[c] for c in columns if c in by_name]
-    )
+    bindings = _reference_bindings(ctx, entity, [by_name[c] for c in columns if c in by_name])
 
     header_cells = "\n".join(
         f"            <TableHead>{_label(column)}</TableHead>" for column in columns
@@ -677,12 +778,13 @@ def _data_table(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
     body_cells_src = "\n".join(body_cells)
 
     needs_dates = any(
-        by_name.get(c) is not None and by_name[c].type in ("datetime", "date")
-        for c in columns
+        by_name.get(c) is not None and by_name[c].type in ("datetime", "date") for c in columns
     )
     imports = [
         '"use client";',
-        'import { useEffect, useState } from "react";',
+        # The react hooks are only used by the reference lookup, so an entity
+        # with no reference column must not import them at all.
+        'import { useEffect, useMemo, useState } from "react";' if bindings else "",
         'import { useRouter } from "next/navigation";',
         "import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell }"
         ' from "@/components/ui/table";',
@@ -690,7 +792,7 @@ def _data_table(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
     if any(by_name.get(c) is not None and by_name[c].enum_values for c in columns):
         imports.append('import { Badge } from "@/components/ui/badge";')
     if bindings:
-        imports.append('import { ReferenceValue } from "@/components/ui/reference";')
+        imports.append('import { ReferenceValue, referenceKey } from "@/components/ui/reference";')
         imports.append(_reference_imports(bindings))
     if needs_dates:
         formatters = sorted(
@@ -705,14 +807,10 @@ def _data_table(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
     imports_src = "\n".join(i for i in imports if i)
 
     state_src = _reference_state(bindings)
+    keys_src = _reference_keys(bindings, "items", many=True)
     effect_src = _reference_lookup_effect(bindings)
-    # `useEffect`/`useState` are only used by the reference lookup.
-    if not bindings:
-        imports_src = imports_src.replace(
-            'import { useEffect, useState } from "react";\n', ""
-        )
 
-    content = f'''{imports_src}
+    content = f"""{imports_src}
 
 interface {cls}TableProps {{
   items: {cls}[];
@@ -723,6 +821,7 @@ interface {cls}TableProps {{
 export function {cls}Table({{ items, basePath, onDelete }}: {cls}TableProps) {{
   const router = useRouter();
 {state_src}
+{keys_src}
 {effect_src}
 
   return (
@@ -760,7 +859,7 @@ export function {cls}Table({{ items, basePath, onDelete }}: {cls}TableProps) {{
     </Table>
   );
 }}
-'''
+"""
     return GeneratedFile(
         path=f"frontend/src/components/{cls}Table.tsx",
         content=content,
@@ -798,15 +897,10 @@ def _entity_form(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
         # Omitted on edit so a field the form does not render cannot be
         # reported as a missing required value.
         nested = "\n".join(f"          {spec}" for spec in create_only)
-        specs_src += (
-            "\n    ...(isEdit\n      ? {}\n      : {\n"
-            f"{nested}\n"
-            "        }),"
-        )
+        specs_src += f"\n    ...(isEdit\n      ? {{}}\n      : {{\n{nested}\n        }}),"
 
     option_state = "\n".join(
-        f"  const [{b.options}, {b.options_setter}] = useState<{b.model}[]>([]);"
-        for b in bindings
+        f"  const [{b.options}, {b.options_setter}] = useState<{b.model}[]>([]);" for b in bindings
     )
     option_effect = ""
     if bindings:
@@ -815,7 +909,7 @@ def _entity_form(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
             lines.extend(
                 [
                     f"    {binding.api}",
-                    f"      .list({{ limit: {REFERENCE_LOOKUP_LIMIT} }})",
+                    f"      .list({{ limit: {REFERENCE_OPTIONS_LIMIT} }})",
                     f"      .then((page) => {binding.options_setter}(page.items))",
                     "      .catch((cause) => {",
                     f'        console.error("Could not load {binding.binding} options", cause);',
@@ -850,7 +944,7 @@ def _entity_form(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
     imports.append(_type_imports(cls, *(b.model for b in bindings)))
     imports_src = "\n".join(i for i in imports if i)
 
-    content = f'''{imports_src}
+    content = f"""{imports_src}
 
 /**
  * How each field is validated and converted before it is sent.
@@ -906,7 +1000,7 @@ export function {cls}Form({{ data, onSubmit, submitLabel = "Save" }}: {cls}FormP
     </form>
   );
 }}
-'''
+"""
     return GeneratedFile(
         path=f"frontend/src/components/{cls}Form.tsx",
         content=content,
@@ -955,8 +1049,7 @@ def _form_input(
     required_attr = " required" if field.required else ""
     constraints = _input_constraints(field)
     input_class = (
-        'className="flex h-10 w-full rounded-md border border-gray-300 bg-white '
-        'px-3 py-2 text-sm"'
+        'className="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"'
     )
 
     if field.reference is not None:
@@ -967,7 +1060,7 @@ def _form_input(
             display = field.reference.display_field
             control = (
                 f'        <select id="{name}" name="{name}" '
-                f'defaultValue={{{prefill}}}{required_attr}\n'
+                f"defaultValue={{{prefill}}}{required_attr}\n"
                 f"          {input_class}>\n"
                 f'          <option value="">Select...</option>\n'
                 f"          {{{binding}Options.map((option) => (\n"
@@ -986,7 +1079,7 @@ def _form_input(
         # offering an empty dropdown.
         control = (
             f'        <input id="{name}" name="{name}" type="text" '
-            f'defaultValue={{{prefill}}}{required_attr}\n'
+            f"defaultValue={{{prefill}}}{required_attr}\n"
             f'          placeholder="Identifier"\n'
             f"          {input_class} />"
         )
@@ -998,7 +1091,7 @@ def _form_input(
         )
         control = (
             f'        <select id="{name}" name="{name}" '
-            f'defaultValue={{{prefill}}}{required_attr}\n'
+            f"defaultValue={{{prefill}}}{required_attr}\n"
             f"          {input_class}>\n"
             f'          <option value="">Select...</option>\n'
             f"{options}\n"
@@ -1029,7 +1122,7 @@ def _form_input(
             f"          defaultValue={{\n"
             f"            {json_prefill}\n"
             f"          }}\n"
-            f'          spellCheck={{false}}\n'
+            f"          spellCheck={{false}}\n"
             f'          className="flex min-h-[100px] w-full rounded-md border '
             f'border-gray-300 bg-white px-3 py-2 font-mono text-sm" />'
         )
@@ -1038,7 +1131,7 @@ def _form_input(
     if field.type == "text":
         control = (
             f'        <textarea id="{name}" name="{name}" '
-            f'defaultValue={{{prefill}}}{required_attr}{constraints}\n'
+            f"defaultValue={{{prefill}}}{required_attr}{constraints}\n"
             f'          className="flex min-h-[100px] w-full rounded-md border '
             f'border-gray-300 bg-white px-3 py-2 text-sm" />'
         )
@@ -1048,7 +1141,7 @@ def _form_input(
         return (
             f'      <div className="flex items-center gap-2">\n'
             f'        <input id="{name}" type="checkbox" name="{name}" '
-            f"defaultChecked={{{checked}}} className=\"h-4 w-4\" />\n"
+            f'defaultChecked={{{checked}}} className="h-4 w-4" />\n'
             f'        <label htmlFor="{name}" className="text-sm font-medium '
             f'text-gray-700">{label}</label>\n'
             f"      </div>"
@@ -1066,7 +1159,7 @@ def _form_input(
         extra = ' inputMode="decimal"' if field.type == "decimal" else ""
         control = (
             f'        <input id="{name}" type="{input_type}"{step}{extra} name="{name}" '
-            f'defaultValue={{{prefill}}}{required_attr}{constraints}\n'
+            f"defaultValue={{{prefill}}}{required_attr}{constraints}\n"
             f"          {input_class} />"
         )
         return wrap(control)
@@ -1079,7 +1172,7 @@ def _form_input(
     }.get(field.type, "text")
     control = (
         f'        <input id="{name}" type="{input_type}" name="{name}" '
-        f'defaultValue={{{prefill}}}{required_attr}{constraints}\n'
+        f"defaultValue={{{prefill}}}{required_attr}{constraints}\n"
         f"          {input_class} />"
     )
     return wrap(control)
@@ -1094,13 +1187,13 @@ def _input_constraints(field: FieldIR) -> str:
     attrs = []
     constraints = field.constraints or {}
     if "maxLength" in constraints:
-        attrs.append(f' maxLength={{{int(constraints["maxLength"])}}}')
+        attrs.append(f" maxLength={{{int(constraints['maxLength'])}}}")
     if "minLength" in constraints:
-        attrs.append(f' minLength={{{int(constraints["minLength"])}}}')
+        attrs.append(f" minLength={{{int(constraints['minLength'])}}}")
     if "min" in constraints:
-        attrs.append(f' min={{{constraints["min"]}}}')
+        attrs.append(f" min={{{constraints['min']}}}")
     if "max" in constraints:
-        attrs.append(f' max={{{constraints["max"]}}}')
+        attrs.append(f" max={{{constraints['max']}}}")
     if "pattern" in constraints:
         escaped = str(constraints["pattern"]).replace("\\", "\\\\").replace('"', '\\"')
         attrs.append(f' pattern="{escaped}"')
@@ -1120,13 +1213,10 @@ def _detail_view(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
         label = _label(field.name)
         binding = _binding_for(bindings, field.name)
         if binding is not None:
-            value = (
-                f"<ReferenceValue id={{data.{field.name}}} names={{{binding.state}}} />"
-            )
+            value = f"<ReferenceValue id={{data.{field.name}}} names={{{binding.state}}} />"
         elif field.enum_values:
             value = (
-                f'<Badge value={{data.{field.name} == null '
-                f'? "" : String(data.{field.name})}} />'
+                f'<Badge value={{data.{field.name} == null ? "" : String(data.{field.name})}} />'
             )
         elif field.type == "datetime":
             value = f"{{formatDateTime(data.{field.name} as string | null | undefined)}}"
@@ -1141,7 +1231,7 @@ def _detail_view(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
         else:
             value = f'{{data.{field.name} == null ? "\\u2014" : String(data.{field.name})}}'
         rows.append(
-            f'        <div>\n'
+            f"        <div>\n"
             f'          <span className="text-sm text-gray-500">{label}</span>\n'
             f"          <div>{value}</div>\n"
             f"        </div>"
@@ -1150,8 +1240,8 @@ def _detail_view(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
 
     imports = ['"use client";']
     if bindings:
-        imports.append('import { useEffect, useState } from "react";')
-        imports.append('import { ReferenceValue } from "@/components/ui/reference";')
+        imports.append('import { useEffect, useMemo, useState } from "react";')
+        imports.append('import { ReferenceValue, referenceKey } from "@/components/ui/reference";')
         imports.append(_reference_imports(bindings))
     if any(f.enum_values for f in fields) or entity.state_machine is not None:
         imports.append('import { Badge } from "@/components/ui/badge";')
@@ -1173,6 +1263,7 @@ def _detail_view(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
     imports_src = "\n".join(i for i in imports if i)
 
     state_src = _reference_state(bindings)
+    keys_src = _reference_keys(bindings, "data", many=False)
     effect_src = _reference_lookup_effect(bindings)
 
     state_widget = ""
@@ -1189,21 +1280,15 @@ def _detail_view(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
     # not compile.
     footer_parts = []
     if any(f.name == "id" for f in fields):
-        footer_parts.append('        ID: {String(data.id)}')
+        footer_parts.append("        ID: {String(data.id)}")
     if has_created_at:
-        footer_parts.append(
-            '        Created: {formatDateTime(data.created_at)}'
-        )
+        footer_parts.append("        Created: {formatDateTime(data.created_at)}")
     footer_src = ""
     if footer_parts:
         joined = "\n        &middot;\n".join(footer_parts)
-        footer_src = (
-            '      <div className="mt-6 text-xs text-gray-400">\n'
-            f"{joined}\n"
-            "      </div>"
-        )
+        footer_src = f'      <div className="mt-6 text-xs text-gray-400">\n{joined}\n      </div>'
 
-    content = f'''{imports_src}
+    content = f"""{imports_src}
 
 interface {cls}DetailProps {{
   data: {cls};
@@ -1211,6 +1296,7 @@ interface {cls}DetailProps {{
 
 export function {cls}Detail({{ data }}: {cls}DetailProps) {{
 {state_src}
+{keys_src}
 {effect_src}
 
   return (
@@ -1222,7 +1308,7 @@ export function {cls}Detail({{ data }}: {cls}DetailProps) {{
     </div>
   );
 }}
-'''
+"""
     return GeneratedFile(
         path=f"frontend/src/components/{cls}Detail.tsx",
         content=content,
@@ -1267,16 +1353,14 @@ def _kanban_board(ctx: FrontendContext, view: EntityView) -> GeneratedFile:
 
     card_lines = []
     for index, name in enumerate(card_fields):
-        style = (
-            "font-medium text-sm" if index == 0 else "text-sm text-gray-600"
-        )
+        style = "font-medium text-sm" if index == 0 else "text-sm text-gray-600"
         card_lines.append(
             f'                        <div className="{style}">'
             f'{{item.{name} == null ? "" : String(item.{name})}}</div>'
         )
     card_src = "\n".join(card_lines)
 
-    content = f'''"use client";
+    content = f""""use client";
 import {{ useState }} from "react";
 import Link from "next/link";
 
@@ -1388,7 +1472,7 @@ export function {cls}Kanban({{ items, basePath, onTransition }}: {cls}KanbanProp
     </div>
   );
 }}
-'''
+"""
     return GeneratedFile(
         path=f"frontend/src/components/{cls}Kanban.tsx",
         content=content,
@@ -1408,8 +1492,7 @@ def _app_sidebar(ctx: FrontendContext) -> GeneratedFile:
     sign_out_block = ""
     if ctx.auth is not None:
         sign_out_import = (
-            'import { useState } from "react";\n'
-            'import { signOut } from "@/lib/session";'
+            'import { useState } from "react";\nimport { signOut } from "@/lib/session";'
         )
         sign_out_state = """  const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
@@ -1427,7 +1510,7 @@ def _app_sidebar(ctx: FrontendContext) -> GeneratedFile:
     }
   }
 """
-        sign_out_block = '''
+        sign_out_block = """
       <div className="border-t p-2">
         {signOutError !== null && (
           <p role="alert" className="px-3 pb-2 text-xs text-red-600">
@@ -1448,9 +1531,9 @@ def _app_sidebar(ctx: FrontendContext) -> GeneratedFile:
         <p className="px-3 pt-1 text-xs text-gray-400">
           Ends your session on every device.
         </p>
-      </div>'''
+      </div>"""
 
-    content = f'''"use client";
+    content = f""""use client";
 import Link from "next/link";
 import {{ usePathname }} from "next/navigation";
 
@@ -1494,7 +1577,7 @@ export function AppSidebar() {{
     </aside>
   );
 }}
-'''
+"""
     return GeneratedFile(
         path="frontend/src/components/AppSidebar.tsx",
         content=content,

@@ -1,4 +1,5 @@
 """Runtime stacktrace → contract FQN inference."""
+
 from __future__ import annotations
 
 import re

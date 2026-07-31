@@ -1,4 +1,5 @@
 """Apply healer fixes with validation and rollback."""
+
 from __future__ import annotations
 
 import logging
@@ -50,9 +51,7 @@ def strip_internal_keys(value: Any) -> Any:
 
 
 def _dump(contract: dict) -> str:
-    return yaml.dump(
-        contract, default_flow_style=False, sort_keys=False, allow_unicode=True
-    )
+    return yaml.dump(contract, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 
 def apply_fix(
@@ -174,9 +173,7 @@ def _atomic_write(path: Path, content: str) -> None:
     leave the new name pointing at unwritten blocks.
     """
     directory = path.parent
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(directory), prefix=f".{path.name}.", suffix=".tmp"
-    )
+    fd, tmp_name = tempfile.mkstemp(dir=str(directory), prefix=f".{path.name}.", suffix=".tmp")
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:

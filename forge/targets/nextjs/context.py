@@ -140,17 +140,13 @@ class FrontendContext:
         # binding up by the entity the route manages — it is not derivable
         # from the entity name.
         self._api_by_entity: dict[str, str] = {
-            route.entity_fqn: module_slug(
-                route.name, route.domain, multi_domain=ir.multi_domain
-            )
+            route.entity_fqn: module_slug(route.name, route.domain, multi_domain=ir.multi_domain)
             for route in ir.routes
             if route.entity_fqn
         }
 
         self._methods_by_entity: dict[str, frozenset[str]] = {
-            route.entity_fqn: frozenset(
-                endpoint_method_name(e) for e in route.endpoints
-            )
+            route.entity_fqn: frozenset(endpoint_method_name(e) for e in route.endpoints)
             for route in ir.routes
             if route.entity_fqn
         }
@@ -164,9 +160,7 @@ class FrontendContext:
             view = EntityView(
                 entity=entity,
                 page=page,
-                component=class_name(
-                    entity.name, entity.domain, multi_domain=ir.multi_domain
-                ),
+                component=class_name(entity.name, entity.domain, multi_domain=ir.multi_domain),
                 api=self._api_by_entity.get(page.entity_fqn, ""),
                 url=_page_url(page, multi_domain=ir.multi_domain),
                 binding=camel_case(
@@ -210,9 +204,7 @@ class FrontendContext:
         """
         for entity in self.ir.entities:
             if entity.fqn == entity_fqn:
-                return class_name(
-                    entity.name, entity.domain, multi_domain=self.ir.multi_domain
-                )
+                return class_name(entity.name, entity.domain, multi_domain=self.ir.multi_domain)
         return ""
 
     def entity_has_field(self, entity_fqn: str, field_name: str) -> bool:

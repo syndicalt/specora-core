@@ -48,9 +48,7 @@ def infer_table_names(ir: DomainIR) -> DomainIR:
 
     for entity in ir.entities:
         if not entity.table_name:
-            entity.table_name = derive_table_name(
-                entity.name, entity.domain, multi_domain=multi
-            )
+            entity.table_name = derive_table_name(entity.name, entity.domain, multi_domain=multi)
             logger.debug(
                 "Inferred table name '%s' for entity '%s'",
                 entity.table_name,

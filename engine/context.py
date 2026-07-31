@@ -126,7 +126,6 @@ When you have a clear picture, output a YAML list of entity names with brief des
 
 Domain being built: {domain}
 {entities_ctx}""",
-
         "entity_interview": f"""\
 You are a data modeling expert helping define entity fields for the Specora contract system.
 
@@ -150,7 +149,6 @@ Always include mixin/stdlib/timestamped and mixin/stdlib/identifiable unless exp
 
 IMPORTANT: All names must be snake_case. All FQNs must be kind/domain/name format, all lowercase.
 All graph_edge values must be SCREAMING_SNAKE_CASE (e.g., ASSIGNED_TO, not assigned_to).""",
-
         "workflow_interview": f"""\
 You are a workflow designer helping define state machines for entities.
 
@@ -166,7 +164,6 @@ Output structured YAML with initial, states, transitions, and guards.
 All state names and workflow names must be snake_case (e.g., in_progress, not InProgress).
 
 Domain: {domain}""",
-
         "explain": """\
 You are a technical documentation expert.
 Explain the given Specora contract in clear, plain English.

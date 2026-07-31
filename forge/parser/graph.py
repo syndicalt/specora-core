@@ -173,7 +173,7 @@ class DependencyGraph:
 
                 if deps is None:
                     if fqn in in_stack:
-                        cycles.append(path[path.index(fqn):] + [fqn])
+                        cycles.append(path[path.index(fqn) :] + [fqn])
                         continue
                     if fqn in visited:
                         continue
@@ -379,9 +379,11 @@ def build_dependency_graph(
                 continue
             graph.add_edge(fqn, dep)
 
-    logger.info("Built dependency graph: %d nodes, %d edges",
-                len(graph.nodes),
-                sum(len(deps) for deps in graph.edges.values()))
+    logger.info(
+        "Built dependency graph: %d nodes, %d edges",
+        len(graph.nodes),
+        sum(len(deps) for deps in graph.edges.values()),
+    )
 
     return graph
 

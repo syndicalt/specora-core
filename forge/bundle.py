@@ -107,7 +107,7 @@ def _declared_domain(source: Path) -> str | None:
         return None
     if not isinstance(data, dict):
         return None
-    domain = data.get("metadata", {}).get("domain") if isinstance(
-        data.get("metadata"), dict
-    ) else None
+    domain = (
+        data.get("metadata", {}).get("domain") if isinstance(data.get("metadata"), dict) else None
+    )
     return domain if isinstance(domain, str) and domain else None

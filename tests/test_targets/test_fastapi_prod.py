@@ -484,3 +484,177 @@ class TestGenRoutes:
         content = files[0].content
         assert "require_auth" not in content
         assert "require_role" not in content
+
+
+def _filtered_ir(task_entity: EntityIR, task_route: RouteIR, filterable: list[str]) -> DomainIR:
+    """The task domain with a page contract declaring `filterable`."""
+    from forge.ir.model import PageIR
+
+    return DomainIR(
+        domain="test",
+        entities=[task_entity],
+        routes=[task_route],
+        pages=[
+            PageIR(
+                fqn="page/test/tasks",
+                name="tasks",
+                domain="test",
+                route="/tasks",
+                title="Tasks",
+                entity_fqn="entity/test/task",
+                views=[{"type": "table", "columns": ["title"], "filterable": filterable}],
+            )
+        ],
+    )
+
+
+def _list_module(ir: DomainIR) -> str:
+    from forge.targets.fastapi_prod.gen_routes import generate_routes
+
+    return generate_routes(ir)[0].content
+
+
+class TestFilterSurface:
+    """The filter capability the repositories implement must be reachable.
+
+    `filters` was allowlisted, parameterised, and supported by both adapters
+    while no generated route passed it, so `?state=x` was answered with every
+    row and a 200.
+    """
+
+    def test_a_declared_filter_becomes_a_typed_query_parameter(
+        self, task_entity: EntityIR, task_route: RouteIR
+    ) -> None:
+        content = _list_module(_filtered_ir(task_entity, task_route, ["priority"]))
+
+        assert "priority: str | None = Query(None)" in content
+        assert 'filters["priority"] = priority' in content
+        assert "filters=filters or None" in content
+
+    def test_an_undeclared_field_gets_no_parameter(
+        self, task_entity: EntityIR, task_route: RouteIR
+    ) -> None:
+        """The surface is what the contract declared, not every column."""
+        content = _list_module(_filtered_ir(task_entity, task_route, ["priority"]))
+
+        assert "assigned_to: str | None = Query(None)" not in content
+        assert '"assigned_to"' not in content.split("_LIST_QUERY_PARAMS")[1].split(")")[0]
+
+    def test_the_allowlist_is_the_one_the_ddl_indexed(
+        self, task_entity: EntityIR, task_route: RouteIR
+    ) -> None:
+        """Anti-drift: the schema builds a composite index per declared filter.
+
+        If the two halves derived the set separately, one could index a filter
+        the API never exposes, or expose one the schema never indexed.
+        """
+        from forge.targets.filters import declared_filter_fields
+
+        ir = _filtered_ir(task_entity, task_route, ["priority", "assigned_to"])
+        content = _list_module(ir)
+        exposed = set(
+            content.split("_LIST_QUERY_PARAMS = frozenset(")[1]
+            .split(")")[0]
+            .replace("{", "")
+            .replace("}", "")
+            .replace('"', "")
+            .replace(" ", "")
+            .split(",")
+        ) - {"limit", "cursor", "id__in", ""}
+
+        assert exposed == set(declared_filter_fields(ir)["entity/test/task"])
+
+    def test_the_batch_lookup_is_always_available_and_bounded(
+        self, task_route_ir: DomainIR
+    ) -> None:
+        """No contract declares it: every view needs it, and it exposes nothing
+        that GET /{id} does not already."""
+        from forge.targets.fastapi_prod.gen_routes import MAX_FILTER_IDS
+
+        content = _list_module(task_route_ir)
+
+        assert "id__in: list[uuid.UUID] | None = Query(None)" in content
+        assert f"if len(id__in) > {MAX_FILTER_IDS}:" in content
+        assert '"error": "too_many_ids"' in content
+
+    def test_an_unknown_query_parameter_is_rejected_not_ignored(
+        self, task_route_ir: DomainIR
+    ) -> None:
+        content = _list_module(task_route_ir)
+
+        assert "def _reject_unknown_query(request: Request) -> None:" in content
+        assert "set(request.query_params) - _LIST_QUERY_PARAMS" in content
+        assert '"error": "unknown_query_parameter"' in content
+
+    def test_a_filter_on_an_unfilterable_type_fails_generation(
+        self, task_entity: EntityIR, task_route: RouteIR
+    ) -> None:
+        """A datetime equality filter cannot mean the same thing in both
+        adapters, so it fails here rather than answering differently in
+        production than in test."""
+        from forge.targets.base import GenerationError
+
+        ir = _filtered_ir(task_entity, task_route, ["created_at"])
+
+        with pytest.raises(GenerationError, match="created_at"):
+            _list_module(ir)
+
+    def test_a_filter_shadowing_a_handler_parameter_fails_generation(
+        self, task_route: RouteIR
+    ) -> None:
+        from forge.targets.base import GenerationError
+
+        entity = EntityIR(
+            fqn="entity/test/task",
+            name="task",
+            domain="test",
+            table_name="tasks",
+            fields=[
+                FieldIR(name="limit", type="string"),
+                FieldIR(name="id", type="uuid", computed="uuid"),
+            ],
+        )
+
+        with pytest.raises(GenerationError, match="limit"):
+            _list_module(_filtered_ir(entity, task_route, ["limit"]))
+
+
+class TestAdapterFilterParity:
+    """Both adapters must answer a filtered call the same way."""
+
+    def test_postgres_binds_filter_values_and_never_their_keys(self, task_ir: DomainIR) -> None:
+        from forge.targets.fastapi_prod.gen_repositories import generate_repositories
+
+        pg = next(f for f in generate_repositories(task_ir) if "postgres.py" in f.path)
+
+        assert "reject_unknown_fields(filters, self._FIELDS" in pg.content
+        # The identifier comes from the generation-time map; the value is a $n.
+        assert "_filter_clause(" in pg.content
+        assert "self._COLUMN_IDENTS[key]," in pg.content
+        assert 'return f"{ident} = ${index}"' in pg.content
+
+    def test_a_sequence_becomes_one_bound_array_parameter(self, task_ir: DomainIR) -> None:
+        """`= ANY($n)` keeps the statement text independent of the batch size,
+        so no caller data reaches the SQL and one plan serves every size."""
+        from forge.targets.fastapi_prod.gen_repositories import generate_repositories
+
+        pg = next(f for f in generate_repositories(task_ir) if "postgres.py" in f.path)
+
+        assert 'f"{ident} = ANY(${index}::text[]::{cast}[])"' in pg.content
+        assert 'f"{ident} = ANY(${index})"' in pg.content
+
+    def test_a_uuid_column_is_cast_rather_than_compared_to_text(self, task_ir: DomainIR) -> None:
+        from forge.targets.fastapi_prod.gen_repositories import generate_repositories
+
+        pg = next(f for f in generate_repositories(task_ir) if "postgres.py" in f.path)
+
+        assert "'id': 'UUID'" in pg.content
+        assert 'f"{ident} = ${index}::text::{cast}"' in pg.content
+
+    def test_memory_matches_with_sql_semantics(self, task_ir: DomainIR) -> None:
+        from forge.targets.fastapi_prod.gen_repositories import generate_repositories
+
+        mem = next(f for f in generate_repositories(task_ir) if "memory.py" in f.path)
+
+        assert "_matches(r, filters, self._TEXT_COMPARED_FIELDS)" in mem.content
+        assert "_TEXT_COMPARED_FIELDS = frozenset({'id'})" in mem.content

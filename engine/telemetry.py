@@ -31,6 +31,7 @@ Usage::
     # {"calls": 3, "input_tokens": 4120, "output_tokens": 388,
     #  "estimated_cost_usd": None, "unpriced_calls": 3, ...}
 """
+
 from __future__ import annotations
 
 import json
@@ -74,9 +75,7 @@ class CallRecord:
     output_tokens: int = 0
     error_type: str | None = None
     estimated_cost_usd: float | None = None
-    timestamp: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def as_dict(self) -> dict:
         """Return a JSON-serialisable view for logging or transport."""
@@ -152,8 +151,7 @@ def estimate_cost(model_id: str, input_tokens: int, output_tokens: int) -> float
     if pricing is None:
         return None
     return (
-        input_tokens * pricing.input_per_mtok
-        + output_tokens * pricing.output_per_mtok
+        input_tokens * pricing.input_per_mtok + output_tokens * pricing.output_per_mtok
     ) / 1_000_000
 
 

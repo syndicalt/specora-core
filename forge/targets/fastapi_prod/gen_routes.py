@@ -13,10 +13,20 @@ previous fallback emitted a 200 stub whose function name was derived by
 `post_order_{id}_archive`, not a legal identifier, so the module failed to
 import and took the whole application down at deploy time.
 """
+
 from __future__ import annotations
 
-from forge.ir.model import DomainIR, EndpointIR, EntityIR, RouteIR
+from dataclasses import dataclass
+
+from forge.ir.model import DomainIR, EndpointIR, EntityIR, FieldIR, RouteIR
 from forge.targets.base import GeneratedFile, GenerationError, provenance_header
+
+# The set of filterable fields comes from the DDL generator rather than being
+# re-derived here. It reads the same Page and Route blocks to decide which
+# composite indexes to build, and an API that filters on a field the schema
+# never indexed — or a schema indexed for a filter the API never exposes — is
+# the two halves disagreeing about what the contract said.
+from forge.targets.filters import declared_filter_fields
 from forge.targets.naming import (
     class_name,
     module_slug,
@@ -51,14 +61,109 @@ TRANSITION_ERROR_STATUS = {
 MAX_LINE = 100
 
 SUPPORTED_SHAPES = (
-    "GET /", "POST /", "GET /{id}", "PATCH /{id}", "DELETE /{id}", "PUT /{id}/state",
+    "GET /",
+    "POST /",
+    "GET /{id}",
+    "PATCH /{id}",
+    "DELETE /{id}",
+    "PUT /{id}/state",
 )
+
+# The batch reference lookup: `?id__in=<id>&id__in=<id>` resolves exactly the
+# rows a client already has on screen, instead of pulling the first N rows of
+# the referenced collection and rendering everything past them as unresolved.
+BATCH_ID_PARAM = "id__in"
+
+# How many ids one request may name. An IN list with no ceiling is the same
+# unbounded-input defect as an unbounded `limit`, one layer over. 100 is chosen
+# against the request line rather than the database: 100 canonical UUIDs plus
+# their parameter names is ~4.3 kB, comfortably inside the 8 kB request-line
+# budget nginx and most proxies ship with, while still covering two reference
+# columns on a full default page.
+MAX_FILTER_IDS = 100
+
+_TOO_MANY_IDS_MESSAGE = f"{BATCH_ID_PARAM} accepts at most {MAX_FILTER_IDS} ids."
+
+# Handler-local names a declared filter must not collide with. A field called
+# `limit` would silently shadow the page-size parameter, which is exactly the
+# class of quiet failure this work exists to remove.
+RESERVED_QUERY_NAMES = frozenset(
+    {"limit", "cursor", BATCH_ID_PARAM, "request", "repo", "user", "filters", "page", "body"}
+)
+
+# IR type -> the annotation its filter query parameter takes. A type is absent
+# when equality on it cannot mean the same thing in both adapters:
+#
+#   datetime/date  the memory store holds an ISO string and Postgres a
+#                  timestamptz, so `?created_at=2026-01-01` matches in one and
+#                  not the other. A range filter is the useful operation anyway
+#                  and it is not this mechanism.
+#   decimal        a query string carries a decimal as text; parsing it to
+#                  float to compare against NUMERIC reintroduces exactly the
+#                  rounding the decimal type exists to prevent.
+#   array/object   a JSONB column has no single equality a query parameter can
+#                  express.
+FILTER_PARAM_TYPES = {
+    "string": "str",
+    "text": "str",
+    "email": "str",
+    "integer": "int",
+    "number": "float",
+    "boolean": "bool",
+    "uuid": "uuid.UUID",
+}
+
+
+@dataclass(frozen=True)
+class _FilterParam:
+    """One contract-declared filter, resolved into its handler parameter."""
+
+    name: str
+    annotation: str
+    # How the parameter is converted before it reaches the repository. A UUID
+    # arrives as `uuid.UUID` (so FastAPI rejects a malformed one at the
+    # boundary instead of asyncpg raising further in) and is normalised to its
+    # canonical text form, which is what the in-memory store holds.
+    value_expr: str
+
+
+def _filter_param(field: FieldIR, route_fqn: str) -> _FilterParam:
+    """Resolve one declared filter field into a typed query parameter.
+
+    Raises:
+        GenerationError: If the field cannot be filtered identically by both
+            adapters, or if its name would shadow a parameter the handler
+            already owns. Emitting the parameter anyway would mean a filter
+            that answers differently in test and in production, or one that is
+            silently ignored — the defect this closes.
+    """
+    if field.name in RESERVED_QUERY_NAMES:
+        raise GenerationError(
+            f"Route {route_fqn!r} declares {field.name!r} filterable, but the list "
+            f"handler already owns a parameter of that name "
+            f"({sorted(RESERVED_QUERY_NAMES)}). One would shadow the other. "
+            f"Rename the field, or drop it from the contract's filter list."
+        )
+    annotation = FILTER_PARAM_TYPES.get(field.type)
+    if annotation is None:
+        raise GenerationError(
+            f"Route {route_fqn!r} declares {field.name!r} filterable, but its type "
+            f"{field.type!r} has no equality a query parameter can express the same "
+            f"way in both repository adapters. Filterable types: "
+            f"{sorted(FILTER_PARAM_TYPES)}. Remove it from the filter list."
+        )
+    return _FilterParam(
+        name=field.name,
+        annotation=annotation,
+        value_expr=f"str({field.name})" if field.type == "uuid" else field.name,
+    )
 
 
 def generate_routes(ir: DomainIR) -> list[GeneratedFile]:
     """Generate one route module per Route contract."""
     entity_map = {e.fqn: e for e in ir.entities}
     auth_infra = next((i for i in ir.infra if i.category == "auth"), None)
+    declared_filters = declared_filter_fields(ir)
 
     files = []
     for route in ir.routes:
@@ -69,7 +174,15 @@ def generate_routes(ir: DomainIR) -> list[GeneratedFile]:
                 f"not in the compiled IR. The generated module would import models "
                 f"and a repository that do not exist."
             )
-        files.append(_generate_route(ir, route, entity, auth_infra))
+        files.append(
+            _generate_route(
+                ir,
+                route,
+                entity,
+                auth_infra,
+                declared_filters.get(route.entity_fqn, frozenset()),
+            )
+        )
     return files
 
 
@@ -112,10 +225,20 @@ class _RouteModule:
     lint gate.
     """
 
-    def __init__(self, ir: DomainIR, route: RouteIR, entity: EntityIR, auth_infra) -> None:
+    def __init__(
+        self,
+        ir: DomainIR,
+        route: RouteIR,
+        entity: EntityIR,
+        auth_infra,
+        declared_filters: frozenset[str] = frozenset(),
+    ) -> None:
         self.route = route
         self.entity = entity
         self.auth_infra = auth_infra
+        # Declaration order, not set order: the handler signature has to be
+        # stable across runs or every regeneration is a diff.
+        self.filter_fields = tuple(f for f in entity.fields if f.name in declared_filters)
         self.cls = class_name(entity.name, entity.domain, multi_domain=ir.multi_domain)
         self.slug = module_slug(entity.name, entity.domain, multi_domain=ir.multi_domain)
         self.repo_getter = repo_accessor(entity.name, entity.domain, multi_domain=ir.multi_domain)
@@ -231,12 +354,14 @@ class _RouteModule:
             lines.append(
                 f"from backend.auth.middleware import {', '.join(sorted(self.auth_imports))}"
             )
-        lines.extend([
-            "",
-            f'router = APIRouter(prefix="{self.base_path}", tags=["{self.entity.name}"])',
-            "",
-            "",
-        ])
+        lines.extend(
+            [
+                "",
+                f'router = APIRouter(prefix="{self.base_path}", tags=["{self.entity.name}"])',
+                "",
+                "",
+            ]
+        )
         lines.extend(self._public_helper())
         for handler in self.handlers.values():
             lines.extend(handler)
@@ -244,8 +369,14 @@ class _RouteModule:
         return "\n".join(lines)
 
 
-def _generate_route(ir: DomainIR, route: RouteIR, entity: EntityIR, auth_infra) -> GeneratedFile:
-    module = _RouteModule(ir, route, entity, auth_infra)
+def _generate_route(
+    ir: DomainIR,
+    route: RouteIR,
+    entity: EntityIR,
+    auth_infra,
+    declared_filters: frozenset[str] = frozenset(),
+) -> GeneratedFile:
+    module = _RouteModule(ir, route, entity, auth_infra, declared_filters)
 
     for endpoint in route.endpoints:
         _emit_endpoint(module, endpoint)
@@ -288,28 +419,129 @@ def _emit_list(module: _RouteModule, endpoint: EndpointIR) -> None:
     if auth_import:
         module.auth_imports.add(auth_import)
 
+    filters = [_filter_param(f, module.route.fqn) for f in module.filter_fields]
+    # `uuid.UUID`, not `str`: a malformed id would otherwise reach asyncpg and
+    # fail the server-side cast as a 500, the same way `/tenants/not-a-uuid`
+    # did before the path parameter was typed.
+    batch_annotation = "uuid.UUID" if module.id_is_uuid else "str"
+    if module.id_is_uuid or any(f.annotation == "uuid.UUID" for f in filters):
+        module.stdlib_imports.add("import uuid")
+    module.stdlib_imports.add("from typing import Any")
+    module.fastapi_imports.add("Request")
+
     params = module.params(
         auth_param,
+        "request: Request",
         f"limit: int = Query({DEFAULT_PAGE_SIZE}, ge=1, le={MAX_PAGE_SIZE})",
         "cursor: str | None = Query(None)",
+        *(f"{f.name}: {f.annotation} | None = Query(None)" for f in filters),
+        f"{BATCH_ID_PARAM}: list[{batch_annotation}] | None = Query(None)",
     )
-    module.add(name, [
-        f'@router.get("/", response_model={module.cls}Page)',
-        *_def_lines(name, params),
+
+    body = [
         f'    """List {module.entity.name} records, newest first."""',
-        "    try:",
-        "        page = await repo.list(limit=limit, cursor=cursor)",
-        "    except RepositoryError as exc:",
-        # A cursor arrives in a query string, so a truncated or hand-edited one
-        # is ordinary bad input. Uncaught it is a 500 — the failure keyset
-        # pagination was introduced to avoid.
-        '        raise HTTPException(400, detail={"error": "invalid_query", '
-        '"message": str(exc)}) from None',
-        f'    return {{"items": [{module.public("i")} for i in page.items], '
-        '"next_cursor": page.next_cursor}'
-        if module.sensitive
-        else '    return {"items": page.items, "next_cursor": page.next_cursor}',
-    ])
+        "    _reject_unknown_query(request)",
+        "    filters: dict[str, Any] = {}",
+    ]
+    for f in filters:
+        body.extend(
+            [
+                f"    if {f.name} is not None:",
+                f'        filters["{f.name}"] = {f.value_expr}',
+            ]
+        )
+    body.extend(
+        [
+            f"    if {BATCH_ID_PARAM} is not None:",
+            f"        if len({BATCH_ID_PARAM}) > {MAX_FILTER_IDS}:",
+            "            raise HTTPException(",
+            "                400,",
+            "                detail={",
+            '                    "error": "too_many_ids",',
+            f'                    "message": "{_TOO_MANY_IDS_MESSAGE}",',
+            "                },",
+            "            )",
+            "        # A list value is a membership test in both adapters. An empty",
+            "        # one asks for no ids and correctly matches nothing, which is",
+            "        # what SQL answers for `= ANY('{}')` too.",
+            f'        filters["id"] = [str(value) for value in {BATCH_ID_PARAM}]',
+            "    try:",
+            "        page = await repo.list(limit=limit, cursor=cursor, filters=filters or None)",
+            "    except RepositoryError as exc:",
+            # A cursor arrives in a query string, so a truncated or hand-edited one
+            # is ordinary bad input. Uncaught it is a 500 — the failure keyset
+            # pagination was introduced to avoid.
+            '        raise HTTPException(400, detail={"error": "invalid_query", '
+            '"message": str(exc)}) from None',
+            f'    return {{"items": [{module.public("i")} for i in page.items], '
+            '"next_cursor": page.next_cursor}'
+            if module.sensitive
+            else '    return {"items": page.items, "next_cursor": page.next_cursor}',
+        ]
+    )
+
+    module.add(
+        name,
+        [
+            *_query_guard(filters),
+            f'@router.get("/", response_model={module.cls}Page)',
+            *_def_lines(name, params),
+            *body,
+        ],
+    )
+
+
+def _query_guard(filters: list[_FilterParam]) -> list[str]:
+    """Emit the collection's query-parameter allowlist and its check.
+
+    FastAPI ignores a query parameter no handler declares. On a collection that
+    turns `?state=onboarding` — a typo, a renamed field, a filter nobody
+    declared filterable — into a **200 with every row**, which reads exactly
+    like "nothing was excluded because nothing matched that value". A caller
+    cannot tell the two apart, and if the parameter it meant to send was a
+    tenant scope, the response is other tenants' rows.
+
+    So an undeclared parameter is a 400. The bargain is deliberate: a client
+    that appends something harmless gets an error it must fix, and in exchange
+    no client can ever believe a filter was applied when it was not. 400 rather
+    than FastAPI's own 422, which means "a parameter I declared carries a value
+    I reject" — this is the other failure, a parameter that does not exist.
+    """
+    names = ["cursor", "limit", BATCH_ID_PARAM, *(f.name for f in filters)]
+    literal = "{" + ", ".join(f'"{n}"' for n in sorted(names)) + "}"
+    declaration = (
+        [f"_LIST_QUERY_PARAMS = frozenset({literal})"]
+        if len(literal) + 32 <= MAX_LINE
+        else ["_LIST_QUERY_PARAMS = frozenset(", f"    {literal}", ")"]
+    )
+    return [
+        *declaration,
+        "",
+        "",
+        "def _reject_unknown_query(request: Request) -> None:",
+        '    """Refuse a query parameter this collection does not implement.',
+        "",
+        "    Silently ignoring one is indistinguishable, to the caller, from",
+        "    applying it and matching every row.",
+        '    """',
+        "    unknown = sorted(set(request.query_params) - _LIST_QUERY_PARAMS)",
+        "    if not unknown:",
+        "        return",
+        "    raise HTTPException(",
+        "        400,",
+        "        detail={",
+        '            "error": "unknown_query_parameter",',
+        '            "message": (',
+        '                f"This collection does not implement {unknown}. It was "',
+        '                f"ignored rather than applied, so the response would have "',
+        '                f"contained rows you meant to exclude."',
+        "            ),",
+        '            "supported": sorted(_LIST_QUERY_PARAMS),',
+        "        },",
+        "    )",
+        "",
+        "",
+    ]
 
 
 def _emit_create(module: _RouteModule, endpoint: EndpointIR) -> None:
@@ -340,13 +572,15 @@ def _emit_create(module: _RouteModule, endpoint: EndpointIR) -> None:
             lines.append(f'    data["{field_name}"] = datetime.now(timezone.utc)')
 
     self_link = '{"self": f"' + module.base_path + "/{record['id']}\"}"
-    lines.extend([
-        "    record = await repo.create(data)",
-        # The memory adapter returns the stored object itself, so mutating the
-        # return value writes the link back into the store, where it reappears
-        # on every later read.
-        "    return {**" + module.public("record") + ', "_links": ' + self_link + "}",
-    ])
+    lines.extend(
+        [
+            "    record = await repo.create(data)",
+            # The memory adapter returns the stored object itself, so mutating the
+            # return value writes the link back into the store, where it reappears
+            # on every later read.
+            "    return {**" + module.public("record") + ', "_links": ' + self_link + "}",
+        ]
+    )
     module.add(name, lines)
 
 
@@ -357,15 +591,18 @@ def _emit_get(module: _RouteModule, endpoint: EndpointIR) -> None:
     if auth_import:
         module.auth_imports.add(auth_import)
 
-    module.add(name, [
-        f'@router.get("/{{{PATH_PARAM}}}", response_model={module.cls}Response)',
-        *_def_lines(name, module.params(auth_param, module.id_param())),
-        f'    """Fetch a {module.entity.name} by ID."""',
-        f"    record = await repo.get({module.id_arg})",
-        "    if record is None:",
-        '        raise HTTPException(404, detail={"error": "not_found"})',
-        f"    return {module.public('record')}",
-    ])
+    module.add(
+        name,
+        [
+            f'@router.get("/{{{PATH_PARAM}}}", response_model={module.cls}Response)',
+            *_def_lines(name, module.params(auth_param, module.id_param())),
+            f'    """Fetch a {module.entity.name} by ID."""',
+            f"    record = await repo.get({module.id_arg})",
+            "    if record is None:",
+            '        raise HTTPException(404, detail={"error": "not_found"})',
+            f"    return {module.public('record')}",
+        ],
+    )
 
 
 def _emit_update(module: _RouteModule, endpoint: EndpointIR) -> None:
@@ -375,28 +612,31 @@ def _emit_update(module: _RouteModule, endpoint: EndpointIR) -> None:
     if auth_import:
         module.auth_imports.add(auth_import)
 
-    module.add(name, [
-        f'@router.patch("/{{{PATH_PARAM}}}", response_model={module.cls}Response)',
-        *_def_lines(
-            name,
-            module.params(auth_param, module.id_param(), f"body: {module.cls}Update"),
-        ),
-        f'    """Partially update a {module.entity.name}."""',
-        # `exclude_unset` is what makes PATCH a partial update: every field on
-        # the model defaults to None, so `exclude_none` would erase the
-        # difference between "not mentioned" and "set to null" and a nullable
-        # field could never be cleared.
-        "    data = body.model_dump(exclude_unset=True)",
-        "    if not data:",
-        # An empty patch changes nothing; it must still answer with the current
-        # representation rather than send an empty SET clause to the adapter.
-        f"        record = await repo.get({module.id_arg})",
-        "    else:",
-        f"        record = await repo.update({module.id_arg}, data)",
-        "    if record is None:",
-        '        raise HTTPException(404, detail={"error": "not_found"})',
-        f"    return {module.public('record')}",
-    ])
+    module.add(
+        name,
+        [
+            f'@router.patch("/{{{PATH_PARAM}}}", response_model={module.cls}Response)',
+            *_def_lines(
+                name,
+                module.params(auth_param, module.id_param(), f"body: {module.cls}Update"),
+            ),
+            f'    """Partially update a {module.entity.name}."""',
+            # `exclude_unset` is what makes PATCH a partial update: every field on
+            # the model defaults to None, so `exclude_none` would erase the
+            # difference between "not mentioned" and "set to null" and a nullable
+            # field could never be cleared.
+            "    data = body.model_dump(exclude_unset=True)",
+            "    if not data:",
+            # An empty patch changes nothing; it must still answer with the current
+            # representation rather than send an empty SET clause to the adapter.
+            f"        record = await repo.get({module.id_arg})",
+            "    else:",
+            f"        record = await repo.update({module.id_arg}, data)",
+            "    if record is None:",
+            '        raise HTTPException(404, detail={"error": "not_found"})',
+            f"    return {module.public('record')}",
+        ],
+    )
 
 
 def _emit_delete(module: _RouteModule, endpoint: EndpointIR) -> None:
@@ -405,15 +645,18 @@ def _emit_delete(module: _RouteModule, endpoint: EndpointIR) -> None:
     if auth_import:
         module.auth_imports.add(auth_import)
 
-    module.add(name, [
-        f'@router.delete("/{{{PATH_PARAM}}}", status_code=204)',
-        *_def_lines(name, module.params(auth_param, module.id_param())),
-        f'    """Delete a {module.entity.name}."""',
-        f"    deleted = await repo.delete({module.id_arg})",
-        "    if not deleted:",
-        '        raise HTTPException(404, detail={"error": "not_found"})',
-        "    return None",
-    ])
+    module.add(
+        name,
+        [
+            f'@router.delete("/{{{PATH_PARAM}}}", status_code=204)',
+            *_def_lines(name, module.params(auth_param, module.id_param())),
+            f'    """Delete a {module.entity.name}."""',
+            f"    deleted = await repo.delete({module.id_arg})",
+            "    if not deleted:",
+            '        raise HTTPException(404, detail={"error": "not_found"})',
+            "    return None",
+        ],
+    )
 
 
 def _emit_transition(module: _RouteModule, endpoint: EndpointIR) -> None:

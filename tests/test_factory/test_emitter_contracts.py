@@ -126,9 +126,7 @@ def full_domain(domain: str = "shop") -> dict[str, str]:
         "workflows/product_lifecycle.contract.yaml": emit_workflow(
             "product_lifecycle", domain, workflow_data
         ),
-        "routes/products.contract.yaml": emit_route(
-            "products", domain, product_fqn, workflow_fqn
-        ),
+        "routes/products.contract.yaml": emit_route("products", domain, product_fqn, workflow_fqn),
         "routes/vendors.contract.yaml": emit_route("vendors", domain, vendor_fqn),
         "pages/products.contract.yaml": emit_page(
             "products", domain, product_fqn, page_columns(entity_fields)
@@ -161,9 +159,9 @@ class TestEmittedDomainGenerates:
 
         _, produced = build_and_generate(tmp_path, full_domain())
         assert "api_secret" not in produced["frontend/src/components/ProductTable.tsx"]
-        assert '_SENSITIVE_FIELDS = frozenset({"api_secret"})' in produced[
-            "backend/routes_product.py"
-        ]
+        assert (
+            '_SENSITIVE_FIELDS = frozenset({"api_secret"})' in produced["backend/routes_product.py"]
+        )
 
     def test_workflow_binding_produces_a_state_endpoint(self, tmp_path: Path) -> None:
         _, produced = build_and_generate(tmp_path, full_domain())
@@ -205,9 +203,7 @@ class TestEmitterRejectsBadInput:
 
     def test_entity_with_only_mixins_is_allowed(self) -> None:
         # Mixin fields are resolved by the compiler, so this one is not empty.
-        assert emit_entity(
-            "thing", "shop", {"fields": {}, "mixins": ["mixin/stdlib/identifiable"]}
-        )
+        assert emit_entity("thing", "shop", {"fields": {}, "mixins": ["mixin/stdlib/identifiable"]})
 
     def test_workflow_with_undeclared_initial_state_is_refused(self) -> None:
         with pytest.raises(EmitterError, match="initial state"):

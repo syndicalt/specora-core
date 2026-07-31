@@ -13,6 +13,7 @@ blocked the event loop, so an error storm (which is exactly when the generated
 app reports hardest) serialised every request behind it and the health check
 timed out, which made Docker restart the Healer.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -91,6 +92,7 @@ def _get_limiter() -> TokenBucketLimiter:
 # Background worker
 # ---------------------------------------------------------------------------
 
+
 async def _drain_worker() -> None:
     while True:
         if _work_signal is not None:
@@ -139,6 +141,7 @@ async def _auth_error_handler(_request: Request, exc: AuthError) -> JSONResponse
 # Request / response schemas
 # ---------------------------------------------------------------------------
 
+
 class IngestRequest(BaseModel):
     source: str
     contract_fqn: Optional[str] = None
@@ -159,6 +162,7 @@ class RejectRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Credential plumbing
 # ---------------------------------------------------------------------------
+
 
 def _bearer(request: Request) -> str:
     header = request.headers.get("authorization", "")
@@ -190,9 +194,7 @@ async def _parse_form(request: Request) -> dict[str, str]:
     parsing it directly keeps the sidecar's dependency set smaller. A multipart
     body yields an empty mapping, which makes the CSRF check fail closed.
     """
-    if not request.headers.get("content-type", "").startswith(
-        "application/x-www-form-urlencoded"
-    ):
+    if not request.headers.get("content-type", "").startswith("application/x-www-form-urlencoded"):
         return {}
     body = (await request.body()).decode("utf-8", errors="replace")
     return dict(parse_qsl(body, keep_blank_values=True))
@@ -214,9 +216,7 @@ async def _authorize(
     if action in MUTATING_ACTIONS:
         needs_csrf = actor.kind in _AMBIENT_ACTOR_KINDS or _is_form_post(request)
         if needs_csrf:
-            supplied = (form or {}).get("csrf", "") or request.headers.get(
-                "x-specora-csrf", ""
-            )
+            supplied = (form or {}).get("csrf", "") or request.headers.get("x-specora-csrf", "")
             verify_csrf_token(supplied, ticket_id, action, actor)
 
         if actor.nonce and not _get_queue().consume_token_nonce(
@@ -230,6 +230,7 @@ async def _authorize(
 # ---------------------------------------------------------------------------
 # Data plane — internal only, shared-secret authenticated
 # ---------------------------------------------------------------------------
+
 
 @app.get("/healer/health")
 async def health() -> dict:
@@ -276,6 +277,7 @@ async def ingest(body: IngestRequest, request: Request) -> IngestResponse:
 # Control plane — public, authenticated to a principal
 # ---------------------------------------------------------------------------
 
+
 @app.get("/healer/tickets")
 async def list_tickets(
     request: Request,
@@ -288,7 +290,9 @@ async def list_tickets(
     status_enum = TicketStatus(status) if status else None
     priority_enum = Priority(priority) if priority else None
     tickets = queue.list_tickets(
-        status=status_enum, priority=priority_enum, contract_fqn=contract_fqn,
+        status=status_enum,
+        priority=priority_enum,
+        contract_fqn=contract_fqn,
     )
     return [t.to_dict() for t in tickets]
 
@@ -327,9 +331,7 @@ async def reject_action(ticket_id: str, request: Request) -> str:
     """HTML form action — reject and redirect back to view."""
     form = await _parse_form(request)
     actor = await _authorize(request, ticket_id, ACTION_REJECT, form)
-    _get_pipeline().reject_ticket(
-        ticket_id, reason="Rejected via web UI", actor=actor.audit_id
-    )
+    _get_pipeline().reject_ticket(ticket_id, reason="Rejected via web UI", actor=actor.audit_id)
     return _redirect_page(ticket_id, "Rejected.", form.get("token", ""))
 
 
@@ -349,9 +351,7 @@ async def approve(ticket_id: str, request: Request) -> dict:
 
 
 @app.post("/healer/reject/{ticket_id}")
-async def reject(
-    ticket_id: str, request: Request, body: Optional[RejectRequest] = None
-) -> dict:
+async def reject(ticket_id: str, request: Request, body: Optional[RejectRequest] = None) -> dict:
     actor = await _authorize(request, ticket_id, ACTION_REJECT)
     reason = body.reason if body and body.reason else ""
     success = _get_pipeline().reject_ticket(ticket_id, reason=reason, actor=actor.audit_id)
@@ -376,6 +376,7 @@ async def reject(
 # were interpolated with none at all.
 # ---------------------------------------------------------------------------
 
+
 def _esc(value: object) -> str:
     return html.escape(str(value), quote=True)
 
@@ -397,9 +398,7 @@ def _hidden_credentials(ticket_id: str, action: str, actor: Actor) -> str:
     csrf = _esc(issue_csrf_token(ticket_id, action, actor))
     fields = [f'<input type="hidden" name="csrf" value="{csrf}">']
     if approval_tokens_enabled():
-        token = issue_action_token(
-            ticket_id, action, ttl_seconds=3600, subject=actor.principal
-        )
+        token = issue_action_token(ticket_id, action, ttl_seconds=3600, subject=actor.principal)
         fields.append(f'<input type="hidden" name="token" value="{_esc(token)}">')
     return "".join(fields)
 
@@ -432,14 +431,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 
 def _render_ticket_page(t: HealerTicket, ticket_id: str, actor: Actor) -> str:
     status_colors = {
-        "queued": "#eab308", "analyzing": "#3b82f6", "proposed": "#06b6d4",
-        "approved": "#22c55e", "applied": "#22c55e",
-        "failed": "#ef4444", "rejected": "#ef4444",
+        "queued": "#eab308",
+        "analyzing": "#3b82f6",
+        "proposed": "#06b6d4",
+        "approved": "#22c55e",
+        "applied": "#22c55e",
+        "failed": "#ef4444",
+        "rejected": "#ef4444",
     }
     status_color = status_colors.get(t.status.value, "#6b7280")
 
     priority_colors = {
-        "critical": "#ef4444", "high": "#f97316", "medium": "#eab308", "low": "#22c55e",
+        "critical": "#ef4444",
+        "high": "#f97316",
+        "medium": "#eab308",
+        "low": "#22c55e",
     }
     priority_color = priority_colors.get(t.priority.value, "#6b7280")
 
@@ -457,8 +463,7 @@ def _render_ticket_page(t: HealerTicket, ticket_id: str, actor: Actor) -> str:
             else:
                 continue
             changes_html += (
-                f'<div class="change">{_esc(change_type)}: '
-                f"{_esc(path)} = {_esc(new_value)}</div>"
+                f'<div class="change">{_esc(change_type)}: {_esc(path)} = {_esc(new_value)}</div>'
             )
 
         provenance = t.proposal.provenance
@@ -516,8 +521,7 @@ def _render_ticket_page(t: HealerTicket, ticket_id: str, actor: Actor) -> str:
         </div>"""
 
     meta_line = (
-        f"{_esc(ticket_id)} &middot; Tier {_esc(t.tier)} "
-        f"&middot; Source: {_esc(t.source.value)}"
+        f"{_esc(ticket_id)} &middot; Tier {_esc(t.tier)} &middot; Source: {_esc(t.source.value)}"
     )
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -541,7 +545,7 @@ def _render_ticket_page(t: HealerTicket, ticket_id: str, actor: Actor) -> str:
 
         <div class="field">
             <div class="field-label">Contract</div>
-            <div class="field-value"><code>{_esc(t.contract_fqn or 'unknown')}</code></div>
+            <div class="field-value"><code>{_esc(t.contract_fqn or "unknown")}</code></div>
         </div>
 
         <div class="field">
@@ -574,7 +578,7 @@ def _redirect_page(ticket_id: str, message: str, view_token: str) -> str:
         token = issue_action_token(ticket_id, ACTION_VIEW, ttl_seconds=3600)
         link = f'<p><a href="/healer/tickets/{safe_id}/view?t={_esc(token)}">Back to ticket</a></p>'
     return (
-        "<!DOCTYPE html><html><head><meta charset=\"UTF-8\">"
-        "<meta name=\"referrer\" content=\"no-referrer\">"
+        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+        '<meta name="referrer" content="no-referrer">'
         f"<title>Healer</title></head><body><p>{_esc(message)}</p>{link}</body></html>"
     )

@@ -6,6 +6,7 @@ Natural language routes through the LLM agent.
 
 Launch: `spc` or `specora-core` or `python -m forge.cli.repl`
 """
+
 from __future__ import annotations
 
 import io
@@ -52,34 +53,48 @@ LOGO = """[bold magenta]
 PROMPT_STYLE = Style.from_dict({"prompt": "ansimagenta bold"})
 
 COMMANDS = [
-    "/validate", "/compile", "/generate", "/graph",
-    "/new", "/add", "/explain", "/refine", "/chat",
-    "/heal", "/status", "/tickets", "/history",
-    "/visualize", "/migrate", "/extract",
-    "/help", "/clear", "/exit",
+    "/validate",
+    "/compile",
+    "/generate",
+    "/graph",
+    "/new",
+    "/add",
+    "/explain",
+    "/refine",
+    "/chat",
+    "/heal",
+    "/status",
+    "/tickets",
+    "/history",
+    "/visualize",
+    "/migrate",
+    "/extract",
+    "/help",
+    "/clear",
+    "/exit",
 ]
 
 COMMAND_HELP = {
-    "/validate [path]":              "Validate contracts against meta-schemas",
-    "/compile [path]":               "Compile contracts to IR",
-    "/generate [path]":              "Generate code from contracts",
-    "/graph [path]":                 "Show dependency graph",
-    "/new":                          "Bootstrap a new domain (interview)",
+    "/validate [path]": "Validate contracts against meta-schemas",
+    "/compile [path]": "Compile contracts to IR",
+    "/generate [path]": "Generate code from contracts",
+    "/graph [path]": "Show dependency graph",
+    "/new": "Bootstrap a new domain (interview)",
     "/add <kind> -d <domain> -n <name>": "Add a single contract",
-    "/explain <path>":               "Explain a contract in plain English",
-    "/refine <path> <instruction>":  "Modify a contract via natural language",
-    "/chat [--domain <d>]":          "Agentic domain conversation",
-    "/heal [path]":                  "Auto-fix validation errors",
-    "/status":                       "Healer queue status",
-    "/tickets":                      "List healer tickets",
-    "/history":                      "Healer fix history",
-    "/visualize [path]":             "Generate Mermaid diagrams",
-    "/migrate <file> -d <domain>":   "Import from OpenAPI/SQL/Prisma",
+    "/explain <path>": "Explain a contract in plain English",
+    "/refine <path> <instruction>": "Modify a contract via natural language",
+    "/chat [--domain <d>]": "Agentic domain conversation",
+    "/heal [path]": "Auto-fix validation errors",
+    "/status": "Healer queue status",
+    "/tickets": "List healer tickets",
+    "/history": "Healer fix history",
+    "/visualize [path]": "Generate Mermaid diagrams",
+    "/migrate <file> -d <domain>": "Import from OpenAPI/SQL/Prisma",
     "/extract <path> [--domain <d>]": "Reverse-engineer codebase into contracts",
-    "/help":                         "Show this help",
-    "/clear":                        "Clear the screen",
-    "/exit":                         "Exit the REPL",
-    "! <cmd>":                       "Run a shell command",
+    "/help": "Show this help",
+    "/clear": "Clear the screen",
+    "/exit": "Exit the REPL",
+    "! <cmd>": "Run a shell command",
 }
 
 completer = WordCompleter(COMMANDS, sentence=True)
@@ -87,12 +102,15 @@ completer = WordCompleter(COMMANDS, sentence=True)
 
 # ─── Output Helpers ──────────────────────────────────────────────────
 
+
 def _tool(name: str) -> None:
     console.print(f"  [cyan]⚡ {name}[/cyan]")
+
 
 def _ok(text: str) -> None:
     console.print(f"  [green]✓ {text}[/green]")
     console.print()
+
 
 def _err(text: str) -> None:
     console.print(
@@ -100,10 +118,12 @@ def _err(text: str) -> None:
     )
     console.print()
 
+
 def _info(text: str) -> None:
     for line in text.split("\n"):
         console.print(f"  {line}")
     console.print()
+
 
 def _timed(fn, label: str = "Running"):
     """Run a function with a spinner and return (result, elapsed_seconds)."""
@@ -132,6 +152,7 @@ def _timed(fn, label: str = "Running"):
 
 # ─── Welcome Screen ─────────────────────────────────────────────────
 
+
 def _show_welcome() -> None:
     console.print(LOGO)
     console.print()
@@ -140,12 +161,11 @@ def _show_welcome() -> None:
     domains_dir = Path("domains")
     if domains_dir.exists():
         domains = [
-            d.name
-            for d in domains_dir.iterdir()
-            if d.is_dir() and not d.name.startswith(".")
+            d.name for d in domains_dir.iterdir() if d.is_dir() and not d.name.startswith(".")
         ]
         if domains:
             from forge.parser.loader import load_all_contracts
+
             total_contracts = 0
             domain_info = []
             for d in domains:
@@ -155,8 +175,7 @@ def _show_welcome() -> None:
                     total_contracts += count
                     entities = sum(1 for c in contracts.values() if c.get("kind") == "Entity")
                     domain_info.append(
-                        f"[cyan]{d}[/cyan] "
-                        f"[dim]({entities} entities, {count} contracts)[/dim]"
+                        f"[cyan]{d}[/cyan] [dim]({entities} entities, {count} contracts)[/dim]"
                     )
                 except Exception:
                     domain_info.append(f"[cyan]{d}[/cyan] [dim](error loading)[/dim]")
@@ -179,6 +198,7 @@ def _show_welcome() -> None:
 
 
 # ─── Command Handlers ────────────────────────────────────────────────
+
 
 def cmd_validate(args: str) -> None:
     path = args.strip() or "domains/"
@@ -231,6 +251,7 @@ def cmd_generate(args: str) -> None:
     from forge.targets.typescript.gen_types import TypeScriptGenerator
 
     try:
+
         def run():
             compiler = Compiler(contract_root=Path(path))
             ir = compiler.compile()
@@ -277,8 +298,13 @@ def cmd_graph(args: str) -> None:
         by_kind.setdefault(node.kind, []).append(node)
 
     kind_icons = {
-        "Entity": "◆", "Workflow": "◎", "Route": "→", "Page": "▦",
-        "Mixin": "◇", "Agent": "⚙", "Infra": "▣",
+        "Entity": "◆",
+        "Workflow": "◎",
+        "Route": "→",
+        "Page": "▦",
+        "Mixin": "◇",
+        "Agent": "⚙",
+        "Infra": "▣",
     }
     for kind, nodes in sorted(by_kind.items()):
         icon = kind_icons.get(kind, "•")
@@ -308,12 +334,14 @@ def _invoke_click(cmd, argv: list[str]) -> None:
 def cmd_new(args: str) -> None:
     _tool("factory new")
     from factory.cli.new import factory_new
+
     _invoke_click(factory_new, [])
 
 
 def cmd_add(args: str) -> None:
     _tool(f"factory add {args}")
     from factory.cli.add import factory_add
+
     _invoke_click(factory_add, args.split() if args.strip() else [])
 
 
@@ -324,6 +352,7 @@ def cmd_explain(args: str) -> None:
         return
     _tool(f"factory explain {path}")
     from factory.cli.explain import factory_explain
+
     _invoke_click(factory_explain, [path])
 
 
@@ -334,12 +363,14 @@ def cmd_refine(args: str) -> None:
         return
     _tool(f"factory refine {parts[0]}")
     from factory.cli.refine import factory_refine
+
     _invoke_click(factory_refine, parts)
 
 
 def cmd_chat(args: str) -> None:
     _tool("factory chat")
     from factory.cli.chat import factory_chat
+
     _invoke_click(factory_chat, args.split() if args.strip() else [])
 
 
@@ -347,24 +378,28 @@ def cmd_heal(args: str) -> None:
     path = args.strip() or "domains/"
     _tool(f"healer fix {path}")
     from healer.cli.commands import fix
+
     _invoke_click(fix, [path])
 
 
 def cmd_status(args: str) -> None:
     _tool("healer status")
     from healer.cli.commands import status
+
     _invoke_click(status, [])
 
 
 def cmd_tickets(args: str) -> None:
     _tool("healer tickets")
     from healer.cli.commands import tickets
+
     _invoke_click(tickets, [])
 
 
 def cmd_history(args: str) -> None:
     _tool("healer history")
     from healer.cli.commands import history
+
     _invoke_click(history, [])
 
 
@@ -372,6 +407,7 @@ def cmd_visualize(args: str) -> None:
     argv = args.split() if args.strip() else ["domains/"]
     _tool(f"factory visualize {' '.join(argv)}")
     from factory.cli.visualize import factory_visualize
+
     _invoke_click(factory_visualize, argv)
 
 
@@ -382,6 +418,7 @@ def cmd_extract(args: str) -> None:
         return
     _tool(f"extract {' '.join(argv)}")
     from extractor.cli.commands import extract
+
     _invoke_click(extract, argv)
 
 
@@ -392,6 +429,7 @@ def cmd_migrate(args: str) -> None:
         return
     _tool(f"factory migrate {' '.join(argv)}")
     from factory.cli.migrate import factory_migrate
+
     _invoke_click(factory_migrate, argv)
 
 
@@ -403,9 +441,18 @@ def cmd_help(args: str) -> None:
     # Group commands
     groups = [
         ("Forge", ["/validate [path]", "/compile [path]", "/generate [path]", "/graph [path]"]),
-        ("Factory", ["/new", "/add <kind> -d <domain> -n <name>", "/explain <path>",
-                     "/refine <path> <instruction>", "/chat [--domain <d>]",
-                     "/visualize [path]", "/migrate <file> -d <domain>"]),
+        (
+            "Factory",
+            [
+                "/new",
+                "/add <kind> -d <domain> -n <name>",
+                "/explain <path>",
+                "/refine <path> <instruction>",
+                "/chat [--domain <d>]",
+                "/visualize [path]",
+                "/migrate <file> -d <domain>",
+            ],
+        ),
         ("Extractor", ["/extract <path> [--domain <d>]"]),
         ("Healer", ["/heal [path]", "/status", "/tickets", "/history"]),
         ("Session", ["/help", "/clear", "/exit", "! <cmd>"]),
@@ -465,8 +512,10 @@ def cmd_natural(text: str) -> None:
     _tool("Routing via agent…")
 
     try:
+
         def run():
             from healer.api.agent import route_natural_language
+
             return route_natural_language(text)
 
         decision, _elapsed = _timed(run, "Thinking")
@@ -479,8 +528,10 @@ def cmd_natural(text: str) -> None:
         if decision.suggestion:
             # Displayed as inert text. Rich markup is escaped so a crafted
             # reply cannot forge console output either.
-            console.print("  [dim]The router suggested a command that is not "
-                          "available from natural language:[/dim]")
+            console.print(
+                "  [dim]The router suggested a command that is not "
+                "available from natural language:[/dim]"
+            )
             console.print(RichText(f"    {decision.suggestion}", style="yellow"))
             console.print("  [dim]Run it yourself with ! if you trust it.[/dim]")
             console.print()
@@ -509,13 +560,21 @@ def cmd_natural(text: str) -> None:
 # ─── Command Router ──────────────────────────────────────────────────
 
 SLASH_MAP = {
-    "/validate": cmd_validate, "/compile": cmd_compile,
-    "/generate": cmd_generate, "/graph": cmd_graph,
-    "/new": cmd_new, "/add": cmd_add, "/explain": cmd_explain,
-    "/refine": cmd_refine, "/chat": cmd_chat,
-    "/heal": cmd_heal, "/status": cmd_status,
-    "/tickets": cmd_tickets, "/history": cmd_history,
-    "/visualize": cmd_visualize, "/migrate": cmd_migrate,
+    "/validate": cmd_validate,
+    "/compile": cmd_compile,
+    "/generate": cmd_generate,
+    "/graph": cmd_graph,
+    "/new": cmd_new,
+    "/add": cmd_add,
+    "/explain": cmd_explain,
+    "/refine": cmd_refine,
+    "/chat": cmd_chat,
+    "/heal": cmd_heal,
+    "/status": cmd_status,
+    "/tickets": cmd_tickets,
+    "/history": cmd_history,
+    "/visualize": cmd_visualize,
+    "/migrate": cmd_migrate,
     "/extract": cmd_extract,
     "/help": cmd_help,
 }
@@ -524,14 +583,21 @@ SLASH_MAP = {
 # keys validated by healer.api.agent, not command lines: nothing here is ever
 # built by string concatenation from model output.
 ROUTE_MAP = {
-    "forge validate": cmd_validate, "forge compile": cmd_compile,
-    "forge generate": cmd_generate, "forge graph": cmd_graph,
-    "factory new": cmd_new, "factory add": cmd_add,
-    "factory explain": cmd_explain, "factory refine": cmd_refine,
-    "factory chat": cmd_chat, "healer fix": cmd_heal,
-    "healer status": cmd_status, "healer tickets": cmd_tickets,
+    "forge validate": cmd_validate,
+    "forge compile": cmd_compile,
+    "forge generate": cmd_generate,
+    "forge graph": cmd_graph,
+    "factory new": cmd_new,
+    "factory add": cmd_add,
+    "factory explain": cmd_explain,
+    "factory refine": cmd_refine,
+    "factory chat": cmd_chat,
+    "healer fix": cmd_heal,
+    "healer status": cmd_status,
+    "healer tickets": cmd_tickets,
     "healer history": cmd_history,
-    "factory visualize": cmd_visualize, "factory migrate": cmd_migrate,
+    "factory visualize": cmd_visualize,
+    "factory migrate": cmd_migrate,
     "extract": cmd_extract,
 }
 
@@ -598,6 +664,7 @@ def handle_input(text: str) -> bool:
 
 
 # ─── Entry Point ─────────────────────────────────────────────────────
+
 
 def main() -> None:
     _show_welcome()

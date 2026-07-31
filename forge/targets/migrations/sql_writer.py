@@ -16,6 +16,7 @@ it, so a fix to quoting or defaults lands in both outputs at once. Previously
 the column renderer was duplicated between the two files and had already
 diverged.
 """
+
 from __future__ import annotations
 
 from forge.ir.model import DomainIR, EntityIR, FieldIR
@@ -119,8 +120,7 @@ def _add_column(change: SchemaChange, context: SchemaContext) -> tuple[str, list
     field = change.field_ir
     if not field:
         return (
-            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS "
-            f"{sql_ident(change.field_name)} TEXT;",
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {sql_ident(change.field_name)} TEXT;",
             [],
         )
 

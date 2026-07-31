@@ -308,9 +308,7 @@ def _validate_workflow_semantics(workflow: StateMachineIR) -> list[SemanticValid
                 )
 
     transition_pairs = {
-        (source, target)
-        for source, targets in workflow.transitions.items()
-        for target in targets
+        (source, target) for source, targets in workflow.transitions.items() for target in targets
     }
     for guard in workflow.guards:
         if (guard.from_state, guard.to_state) not in transition_pairs:

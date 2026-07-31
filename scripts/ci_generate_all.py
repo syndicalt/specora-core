@@ -22,9 +22,7 @@ REPO = Path(__file__).resolve().parent.parent
 def domains(root: Path) -> list[Path]:
     """Every directory under domains/ that holds at least one contract."""
     return sorted(
-        d
-        for d in (root / "domains").iterdir()
-        if d.is_dir() and any(d.rglob("*.contract.yaml"))
+        d for d in (root / "domains").iterdir() if d.is_dir() and any(d.rglob("*.contract.yaml"))
     )
 
 

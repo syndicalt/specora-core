@@ -1,4 +1,5 @@
 """Tier 2-3 proposer — LLM-powered structural and runtime fixes."""
+
 from __future__ import annotations
 
 import logging
@@ -34,7 +35,7 @@ _SYSTEM_PROMPT = (
     "immutable, computed, constraints, references, format, items_type\n"
     "4. Constraint sub-keys allowed: min, max, maxLength, minLength, pattern "
     "— NOTHING ELSE\n"
-    "5. Do NOT add \"required_when\", \"conditional_required\", or any property "
+    '5. Do NOT add "required_when", "conditional_required", or any property '
     "not listed above\n"
     "6. If a field should be conditionally required, just set required: true "
     "— workflow guards handle conditions\n"
@@ -44,8 +45,17 @@ _SYSTEM_PROMPT = (
 
 # Properties that are valid on a field definition
 _VALID_FIELD_PROPS = {
-    "type", "required", "description", "enum", "default", "immutable",
-    "computed", "constraints", "references", "format", "items_type",
+    "type",
+    "required",
+    "description",
+    "enum",
+    "default",
+    "immutable",
+    "computed",
+    "constraints",
+    "references",
+    "format",
+    "items_type",
 }
 
 # Properties that are valid inside constraints
@@ -61,6 +71,7 @@ def propose_llm_fix(
     """Propose a fix using the LLM. Includes sanitization and retry."""
     try:
         from engine.engine import LLMEngine
+
         engine = LLMEngine.from_env()
     except Exception as e:
         logger.warning("LLM engine not available: %s", e)
@@ -266,5 +277,5 @@ def _extract_yaml(response: str) -> Optional[dict]:
 def _extract_explanation(response: str) -> str:
     match = re.search(r"```", response)
     if match:
-        return response[:match.start()].strip()[:200]
+        return response[: match.start()].strip()[:200]
     return response[:200].strip()

@@ -167,12 +167,42 @@ def _write(root: Path, rel: str, body: str) -> None:
     path.write_text(body, encoding="utf-8")
 
 
-def _shop_contracts(root: Path) -> Path:
+ORDER_PAGE = """
+apiVersion: specora.dev/v1
+kind: Page
+metadata:
+  name: orders
+  domain: shop
+  description: "Browse orders"
+requires:
+  - entity/shop/order
+spec:
+  route: /orders
+  title: Orders
+  entity: entity/shop/order
+  generation_tier: mechanical
+  data_sources:
+    - endpoint: /orders
+      alias: orders
+  views:
+    - type: table
+      default: true
+      columns: [label, state]
+      filterable: [label, state]
+"""
+
+
+def _shop_contracts(root: Path, *, with_page: bool = False) -> Path:
     """Write the single-domain order fixture and return its contract root."""
     domain = root / "shop"
     _write(domain, "workflows/order_lifecycle.contract.yaml", ORDER_WORKFLOW)
     _write(domain, "entities/order.contract.yaml", ORDER_ENTITY)
     _write(domain, "routes/orders.contract.yaml", ORDER_ROUTE)
+    if with_page:
+        # The page contract is what declares a field filterable. Without one the
+        # collection exposes no filter at all — which is correct, and is why the
+        # fixture below is separate from `shop_app`.
+        _write(domain, "pages/orders.contract.yaml", ORDER_PAGE)
     return domain
 
 
@@ -216,6 +246,21 @@ def shop_app(tmp_path, monkeypatch):
         out=out,
         models=importlib.import_module("backend.models"),
         memory=importlib.import_module("backend.repositories.memory"),
+    )
+
+
+@pytest.fixture
+def filterable_shop_app(tmp_path, monkeypatch):
+    """The same application, plus a page contract declaring two filters."""
+    monkeypatch.setenv("DATABASE_BACKEND", "memory")
+    ir = Compiler(contract_root=_shop_contracts(tmp_path / "domains", with_page=True)).compile()
+    out = _emit(ir, tmp_path / "out")
+    sys.path.insert(0, str(out))
+    return SimpleNamespace(
+        ir=ir,
+        out=out,
+        memory=importlib.import_module("backend.repositories.memory"),
+        app=importlib.import_module("backend.app").app,
     )
 
 
@@ -814,3 +859,478 @@ class TestModelOutputCannotReachAShell:
         repl = pytest.importorskip("forge.cli.repl")
         with pytest.raises(RuntimeError):
             repl.cmd_shell("touch /tmp/pwned")
+
+
+# ── Per-device sessions ─────────────────────────────────────────────────────
+
+ACCOUNT_ENTITY = """
+apiVersion: specora.dev/v1
+kind: Entity
+metadata:
+  name: account
+  domain: shop
+  description: "A sign-in account"
+requires:
+  - mixin/stdlib/timestamped
+  - mixin/stdlib/identifiable
+spec:
+  fields:
+    email:
+      type: email
+      required: true
+    password_hash:
+      type: string
+      required: true
+      sensitive: true
+    role:
+      type: string
+      required: true
+      enum: [admin, member]
+  mixins:
+    - mixin/stdlib/timestamped
+    - mixin/stdlib/identifiable
+"""
+
+ACCOUNT_ROUTE = """
+apiVersion: specora.dev/v1
+kind: Route
+metadata:
+  name: accounts
+  domain: shop
+  description: "Account API"
+requires:
+  - entity/shop/account
+spec:
+  entity: entity/shop/account
+  base_path: /accounts
+  endpoints:
+    - {method: GET, path: /, summary: List accounts, response: {status: 200, shape: list}}
+    - {method: POST, path: /, summary: Create account, response: {status: 201, shape: entity}}
+"""
+
+AUTH_INFRA = """
+apiVersion: specora.dev/v1
+kind: Infra
+metadata:
+  name: auth
+  domain: shop
+  description: "JWT auth"
+spec:
+  category: auth
+  config:
+    provider: jwt
+    roles: [admin, member]
+    user_entity: entity/shop/account
+    identity_field: email
+    password_field: password_hash
+    role_field: role
+"""
+
+
+@pytest.fixture
+def authed_app(tmp_path, monkeypatch):
+    """Generate and import an auth-enabled app backed by the memory store."""
+    monkeypatch.setenv("DATABASE_BACKEND", "memory")
+    monkeypatch.setenv("AUTH_SECRET", "a-test-secret-long-enough-to-be-accepted-0000000000")
+
+    domain = tmp_path / "domains" / "shop"
+    _write(domain, "entities/account.contract.yaml", ACCOUNT_ENTITY)
+    _write(domain, "routes/accounts.contract.yaml", ACCOUNT_ROUTE)
+    _write(domain, "infra/auth.contract.yaml", AUTH_INFRA)
+
+    ir = Compiler(contract_root=domain).compile()
+    out = _emit(ir, tmp_path / "out")
+    sys.path.insert(0, str(out))
+    return SimpleNamespace(out=out, app=importlib.import_module("backend.app"))
+
+
+def _seed_and_login(authed_app, client, email="a@example.com"):
+    """Seed an account through the repository, then sign in and return the pair.
+
+    Through the repository rather than `POST /accounts`, because with auth
+    declared the collection endpoints require a token — and a token is the
+    thing this seeding exists to obtain.
+    """
+    provider = importlib.import_module("backend.auth.jwt_provider")
+    base = importlib.import_module("backend.repositories.base")
+
+    asyncio.run(
+        base.get_account_repo().create(
+            {
+                "email": email,
+                "password_hash": provider.hash_password("hunter2hunter2"),
+                "role": "member",
+            }
+        )
+    )
+    signed_in = client.post("/auth/login", json={"email": email, "password": "hunter2hunter2"})
+    assert signed_in.status_code == 200, signed_in.text
+    return signed_in.json()
+
+
+def _family(token: str) -> str | None:
+    """The `fam` claim, read without verifying — the tests assert on grouping."""
+    import base64
+    import json as _json
+
+    body = token.split(".")[1]
+    body += "=" * (-len(body) % 4)
+    return _json.loads(base64.urlsafe_b64decode(body)).get("fam")
+
+
+class TestPerDeviceSessions:
+    """Logout used to be subject-wide: signing out on a phone signed out a laptop.
+
+    The fix is a family id minted at login and carried through every rotation.
+    It has to buy per-device logout *without* giving up the property that made
+    subject-wide revocation defensible — that a thief who has already rotated a
+    stolen token does not survive the victim's logout.
+    """
+
+    def test_each_login_opens_its_own_family(self, authed_app) -> None:
+        from fastapi.testclient import TestClient
+
+        with TestClient(authed_app.app.app) as client:
+            first = _seed_and_login(authed_app, client)
+            client.cookies.clear()
+            second = client.post(
+                "/auth/login", json={"email": "a@example.com", "password": "hunter2hunter2"}
+            ).json()
+
+        assert _family(first["refresh_token"])
+        assert _family(first["refresh_token"]) != _family(second["refresh_token"])
+
+    def test_rotation_stays_inside_the_family(self, authed_app) -> None:
+        """If rotation minted a new family, revoking one would miss the rest."""
+        from fastapi.testclient import TestClient
+
+        with TestClient(authed_app.app.app) as client:
+            pair = _seed_and_login(authed_app, client)
+            rotated = client.post(
+                "/auth/refresh", json={"refresh_token": pair["refresh_token"]}
+            ).json()
+
+        assert _family(rotated["refresh_token"]) == _family(pair["refresh_token"])
+
+    def test_logout_ends_this_device_only(self, authed_app) -> None:
+        from fastapi.testclient import TestClient
+
+        with TestClient(authed_app.app.app) as client:
+            phone = _seed_and_login(authed_app, client)
+            client.cookies.clear()
+            laptop = client.post(
+                "/auth/login", json={"email": "a@example.com", "password": "hunter2hunter2"}
+            ).json()
+            client.cookies.clear()
+
+            assert (
+                client.post(
+                    "/auth/logout", json={"refresh_token": phone["refresh_token"]}
+                ).status_code
+                == 200
+            )
+
+            assert (
+                client.post(
+                    "/auth/refresh", json={"refresh_token": phone["refresh_token"]}
+                ).status_code
+                == 401
+            )
+            # The regression this whole change exists to fix.
+            assert (
+                client.post(
+                    "/auth/refresh", json={"refresh_token": laptop["refresh_token"]}
+                ).status_code
+                == 200
+            )
+
+    def test_all_devices_still_ends_everything(self, authed_app) -> None:
+        from fastapi.testclient import TestClient
+
+        with TestClient(authed_app.app.app) as client:
+            phone = _seed_and_login(authed_app, client)
+            client.cookies.clear()
+            laptop = client.post(
+                "/auth/login", json={"email": "a@example.com", "password": "hunter2hunter2"}
+            ).json()
+            client.cookies.clear()
+
+            client.post(
+                "/auth/logout?all_devices=true", json={"refresh_token": phone["refresh_token"]}
+            )
+
+            for token in (phone["refresh_token"], laptop["refresh_token"]):
+                assert (
+                    client.post("/auth/refresh", json={"refresh_token": token}).status_code == 401
+                )
+
+    def test_a_replay_destroys_the_whole_family_not_just_the_replayed_token(
+        self, authed_app
+    ) -> None:
+        """The property that makes rotation worth anything.
+
+        The thief redeems the stolen token first, so by the time the victim's
+        client presents it the thief holds a *different*, live token. Revoking
+        only what was presented would leave the stolen session running.
+        """
+        from fastapi.testclient import TestClient
+
+        with TestClient(authed_app.app.app) as client:
+            victim = _seed_and_login(authed_app, client)
+            client.cookies.clear()
+            elsewhere = client.post(
+                "/auth/login", json={"email": "a@example.com", "password": "hunter2hunter2"}
+            ).json()
+            client.cookies.clear()
+
+            stolen = victim["refresh_token"]
+            thief = client.post("/auth/refresh", json={"refresh_token": stolen}).json()
+            assert "refresh_token" in thief
+
+            replay = client.post("/auth/refresh", json={"refresh_token": stolen})
+            assert replay.status_code == 401
+
+            assert (
+                client.post(
+                    "/auth/refresh", json={"refresh_token": thief["refresh_token"]}
+                ).status_code
+                == 401
+            ), "reuse detection must revoke the family, not the presented jti"
+
+            # ...and only that family. Scoping the blast radius is the new part.
+            assert (
+                client.post(
+                    "/auth/refresh", json={"refresh_token": elsewhere["refresh_token"]}
+                ).status_code
+                == 200
+            )
+
+    def test_a_token_cannot_be_rotated_under_a_different_family(self, authed_app) -> None:
+        """`family_id` is part of the consume predicate, not just carried along."""
+        import jwt as pyjwt
+        from fastapi.testclient import TestClient
+
+        config = importlib.import_module("backend.config")
+        provider = importlib.import_module("backend.auth.jwt_provider")
+
+        with TestClient(authed_app.app.app) as client:
+            pair = _seed_and_login(authed_app, client)
+            claims = pyjwt.decode(pair["refresh_token"], options={"verify_signature": False})
+            claims["fam"] = "some-other-family"
+            forged = pyjwt.encode(claims, config.AUTH_SECRET, algorithm=provider.ALGORITHM)
+            assert client.post("/auth/refresh", json={"refresh_token": forged}).status_code == 401
+
+    def test_a_pre_upgrade_token_is_not_rejected_outright(self, authed_app) -> None:
+        """Tokens minted before families existed carry no `fam` claim.
+
+        Rejecting them would sign every user out the moment the upgrade
+        deployed. They fall into the same per-subject legacy family the
+        database backfill files their ledger rows under.
+        """
+        from fastapi.testclient import TestClient
+
+        store_module = importlib.import_module("backend.auth.token_store")
+        jwt_module = importlib.import_module("backend.auth.jwt_provider")
+
+        with TestClient(authed_app.app.app) as client:
+            pair = _seed_and_login(authed_app, client)
+            import jwt as pyjwt
+
+            config = importlib.import_module("backend.config")
+            claims = pyjwt.decode(pair["refresh_token"], options={"verify_signature": False})
+            subject = claims["sub"]
+            del claims["fam"]
+            legacy = pyjwt.encode(claims, config.AUTH_SECRET, algorithm=jwt_module.ALGORITHM)
+
+            # Re-file the ledger row the way the SQL backfill would.
+            store = store_module.get_refresh_token_store()
+            entry = store._tokens[claims["jti"]]
+            store._tokens[claims["jti"]] = (entry[0], "legacy:" + subject, entry[2])
+
+            assert client.post("/auth/refresh", json={"refresh_token": legacy}).status_code == 200
+
+
+# ── The filter surface is reachable, bounded, and honest ────────────────────
+
+
+def _client(app):
+    from fastapi.testclient import TestClient
+
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _ids(response) -> list[str]:
+    return [item["id"] for item in response.json()["items"]]
+
+
+@requires_http
+class TestDeclaredFiltersReachTheRepository:
+    """Pins: `filters` was implemented in both adapters, allowlisted, and
+    parameterised — and no generated route ever passed it. `?state=onboarding`
+    on a real deployment returned all 6 rows with a 200, so the filter looked
+    applied and was not."""
+
+    def test_a_declared_filter_actually_filters(self, filterable_shop_app) -> None:
+        client = _client(filterable_shop_app.app)
+        client.post("/orders/", json={"label": "keep"})
+        client.post("/orders/", json={"label": "drop"})
+
+        resp = client.get("/orders/", params={"label": "keep"})
+
+        assert resp.status_code == 200
+        assert [item["label"] for item in resp.json()["items"]] == ["keep"]
+
+    def test_an_undeclared_parameter_is_refused_rather_than_ignored(
+        self, filterable_shop_app
+    ) -> None:
+        """`tracking_code` is a real column that no contract declared filterable.
+
+        Answering 200 with every row is the defect: the caller cannot tell that
+        from a filter that matched everything.
+        """
+        client = _client(filterable_shop_app.app)
+        client.post("/orders/", json={"label": "a", "tracking_code": "TC-1"})
+        client.post("/orders/", json={"label": "b"})
+
+        resp = client.get("/orders/", params={"tracking_code": "TC-1"})
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["error"] == "unknown_query_parameter"
+
+    def test_the_filter_composes_with_the_cursor(self, filterable_shop_app) -> None:
+        """A filtered walk must page through the matching rows only."""
+        client = _client(filterable_shop_app.app)
+        wanted = {client.post("/orders/", json={"label": "keep"}).json()["id"] for _ in range(3)}
+        for _ in range(2):
+            client.post("/orders/", json={"label": "drop"})
+
+        seen: list[str] = []
+        cursor = None
+        for _ in range(5):
+            params = {"label": "keep", "limit": 2}
+            if cursor:
+                params["cursor"] = cursor
+            page = client.get("/orders/", params=params).json()
+            seen.extend(item["id"] for item in page["items"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
+
+        assert set(seen) == wanted
+        assert len(seen) == len(wanted)
+
+    def test_batch_lookup_returns_exactly_the_requested_ids(self, filterable_shop_app) -> None:
+        """The frontend resolves a reference column with this, so "exactly" is
+        the whole contract: an extra row is a name rendered against the wrong
+        id."""
+        client = _client(filterable_shop_app.app)
+        created = [client.post("/orders/", json={"label": f"o-{n}"}).json()["id"] for n in range(5)]
+        wanted = [created[0], created[3]]
+
+        resp = client.get("/orders/", params={"id__in": wanted})
+
+        assert resp.status_code == 200
+        assert sorted(_ids(resp)) == sorted(wanted)
+
+    def test_an_empty_batch_lookup_matches_nothing(self, filterable_shop_app) -> None:
+        """Asking for no ids is a well-defined question, and SQL's answer to
+        `= ANY('{}')` is no rows. Falling back to "unfiltered" would hand a
+        caller the whole collection for an empty selection."""
+        client = _client(filterable_shop_app.app)
+        client.post("/orders/", json={"label": "a"})
+
+        resp = client.get("/orders/?id__in=")
+
+        # An empty value is not a legal UUID, so the boundary refuses it before
+        # the handler; what must never happen is a 200 carrying every row.
+        assert resp.status_code == 422
+
+    def test_the_batch_lookup_is_bounded(self, filterable_shop_app) -> None:
+        """Pins: an unbounded IN list is the same defect as an unbounded
+        `limit`, one layer over."""
+        client = _client(filterable_shop_app.app)
+        too_many = [f"00000000-0000-0000-0000-{n:012d}" for n in range(101)]
+
+        resp = client.get("/orders/", params={"id__in": too_many})
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["error"] == "too_many_ids"
+
+    def test_a_malformed_id_is_rejected_at_the_boundary(self, filterable_shop_app) -> None:
+        """Pins: an id of the wrong shape reaching the adapter fails the
+        server-side cast, which surfaces as a 500 rather than a 4xx."""
+        client = _client(filterable_shop_app.app)
+
+        resp = client.get("/orders/", params={"id__in": ["not-a-uuid"]})
+
+        assert resp.status_code == 422
+
+    def test_a_collection_with_no_declared_filters_exposes_none(self, shop_app) -> None:
+        """The filter surface is the contract's, not every column's."""
+        client = _client(importlib.import_module("backend.app").app)
+        client.post("/orders/", json={"label": "a"})
+
+        assert client.get("/orders/", params={"label": "a"}).status_code == 400
+        # The batch lookup is not a filter declaration: it exposes nothing that
+        # GET /orders/{id} does not already, and every view needs it.
+        assert client.get("/orders/", params={"id__in": []}).status_code == 200
+
+
+class TestAdapterFilterSemantics:
+    """Pins: the two adapters answered the same filtered call differently.
+
+    Each case below is one place a plain `record[k] == v` diverges from what
+    Postgres does, and the memory adapter is the one that has to match.
+    """
+
+    def test_a_null_column_never_matches(self, shop_app) -> None:
+        repo = shop_app.memory.MemoryOrderRepository()
+        asyncio.run(repo.create({"label": "a"}))
+
+        page = asyncio.run(repo.list(filters={"tracking_code": "TC-1"}))
+
+        assert page.items == []
+
+    def test_a_null_comparand_matches_nothing(self, shop_app) -> None:
+        """`col = NULL` is unknown in SQL, so it selects no row — including the
+        rows whose column is itself NULL, which `==` would have matched."""
+        repo = shop_app.memory.MemoryOrderRepository()
+        asyncio.run(repo.create({"label": "a"}))
+
+        page = asyncio.run(repo.list(filters={"tracking_code": None}))
+
+        assert page.items == []
+
+    def test_an_id_matches_however_it_is_spelled(self, shop_app) -> None:
+        """Postgres stores one canonical UUID whatever the client sent. The
+        store holds whatever object the caller passed, so the comparison has to
+        be by value rather than by Python type."""
+        import uuid as uuid_module
+
+        repo = shop_app.memory.MemoryOrderRepository()
+        record = asyncio.run(repo.create({"label": "a"}))
+
+        page = asyncio.run(repo.list(filters={"id": [uuid_module.UUID(record["id"])]}))
+
+        assert _record_ids(page) == [record["id"]]
+
+    def test_a_sequence_value_is_a_membership_test(self, shop_app) -> None:
+        repo = shop_app.memory.MemoryOrderRepository()
+        wanted = [asyncio.run(repo.create({"label": f"o-{n}"}))["id"] for n in range(4)]
+
+        page = asyncio.run(repo.list(filters={"id": wanted[:2]}))
+
+        assert sorted(_record_ids(page)) == sorted(wanted[:2])
+
+    def test_an_unknown_filter_key_is_refused_not_dropped(self, shop_app) -> None:
+        """Dropping it widens the result set; if the key carried a tenant scope
+        that is another tenant's rows."""
+        repo = shop_app.memory.MemoryOrderRepository()
+        base = importlib.import_module("backend.repositories.base")
+
+        with pytest.raises(base.UnknownFieldError):
+            asyncio.run(repo.list(filters={"tenant_id": "t-1"}))
+
+
+def _record_ids(page) -> list[str]:
+    return [str(item["id"]) for item in page.items]

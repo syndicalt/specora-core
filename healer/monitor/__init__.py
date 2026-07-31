@@ -1,4 +1,5 @@
 """Healer monitor — success rates, recurring patterns, metrics."""
+
 from __future__ import annotations
 
 from collections import Counter

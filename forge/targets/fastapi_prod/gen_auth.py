@@ -27,6 +27,7 @@ role in the contract — to unauthenticated callers. Whether authentication
 exists is a property of the contracts, not of an environment variable; see
 gen_config, which now refuses to boot if the override is set.
 """
+
 from __future__ import annotations
 
 from forge.ir.model import DomainIR, InfraIR
@@ -142,16 +143,30 @@ class AuthProvider(ABC):
         \"\"\"Return the caller behind an access token, or None if it is not valid.\"\"\"
 
     @abstractmethod
-    async def issue_tokens(self, user: AuthUser) -> TokenPair:
-        \"\"\"Mint a new pair. Callers must verify a credential first.\"\"\"
+    async def issue_tokens(
+        self, user: AuthUser, *, family_id: Optional[str] = None
+    ) -> TokenPair:
+        \"\"\"Mint a new pair. Callers must verify a credential first.
+
+        `family_id` names the sign-in the pair belongs to; omit it to start a
+        new one.
+        \"\"\"
 
     @abstractmethod
     async def rotate_refresh(self, refresh_token: str) -> Optional[TokenPair]:
-        \"\"\"Exchange a refresh token for a new pair, invalidating the old one.\"\"\"
+        \"\"\"Exchange a refresh token for a new pair, invalidating the old one.
+
+        The replacement stays in the presented token's family. A replay
+        destroys that whole family.
+        \"\"\"
 
     @abstractmethod
-    async def revoke_refresh(self, refresh_token: str) -> bool:
-        \"\"\"Revoke the presented token and its siblings. False if it was not valid.\"\"\"
+    async def revoke_refresh(self, refresh_token: str, *, all_devices: bool = False) -> bool:
+        \"\"\"Revoke the presented sign-in and everything it rotated into.
+
+        With `all_devices`, revoke every sign-in for the subject instead.
+        False if the token was not valid.
+        \"\"\"
 """
     return GeneratedFile(path="backend/auth/interface.py", content=content, provenance=infra.fqn)
 
@@ -174,11 +189,17 @@ from backend.config import (
 
 
 class RefreshTokenStore(ABC):
-    \"\"\"Records which refresh tokens are still live.
+    \"\"\"Records which refresh tokens are still live, grouped into families.
 
     Rotation needs server-side state: a JWT on its own is valid until it
     expires and cannot be withdrawn, so without this ledger a leaked refresh
     token is a permanent credential and logout is cosmetic.
+
+    A *family* is one sign-in. Logging in mints a family id; every rotation
+    carries the same id forward, so a family is exactly "this browser, this
+    device, since it last authenticated". That is the unit logout revokes and
+    the unit a detected replay destroys — the two operations that need to reach
+    a whole session rather than the one token in hand.
     \"\"\"
 
     @abstractmethod
@@ -186,14 +207,26 @@ class RefreshTokenStore(ABC):
         \"\"\"Prepare backing storage. Called once from the app lifespan.\"\"\"
 
     @abstractmethod
-    async def issue(self, jti: str, subject: str, expires_at: datetime) -> None: ...
+    async def issue(
+        self, jti: str, subject: str, family_id: str, expires_at: datetime
+    ) -> None: ...
 
     @abstractmethod
-    async def consume(self, jti: str, subject: str) -> bool:
-        \"\"\"Atomically spend a token. False means it was unknown, expired or reused.\"\"\"
+    async def consume(self, jti: str, subject: str, family_id: str) -> bool:
+        \"\"\"Atomically spend a token.
+
+        False means it was unknown, expired, reused, or presented with a family
+        it does not belong to. All four are handled the same way by the caller:
+        revoke the family.
+        \"\"\"
 
     @abstractmethod
-    async def revoke_subject(self, subject: str) -> None: ...
+    async def revoke_family(self, family_id: str) -> None:
+        \"\"\"End one sign-in, including every token it has rotated into.\"\"\"
+
+    @abstractmethod
+    async def revoke_subject(self, subject: str) -> None:
+        \"\"\"End every sign-in for this account, on every device.\"\"\"
 
 
 class MemoryRefreshTokenStore(RefreshTokenStore):
@@ -204,23 +237,35 @@ class MemoryRefreshTokenStore(RefreshTokenStore):
     \"\"\"
 
     def __init__(self) -> None:
-        self._tokens: dict[str, tuple[str, datetime]] = {{}}
+        self._tokens: dict[str, tuple[str, str, datetime]] = {{}}
         self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         return None
 
-    async def issue(self, jti: str, subject: str, expires_at: datetime) -> None:
+    async def issue(
+        self, jti: str, subject: str, family_id: str, expires_at: datetime
+    ) -> None:
         async with self._lock:
-            self._tokens[jti] = (subject, expires_at)
+            self._tokens[jti] = (subject, family_id, expires_at)
 
-    async def consume(self, jti: str, subject: str) -> bool:
+    async def consume(self, jti: str, subject: str, family_id: str) -> bool:
         async with self._lock:
             entry = self._tokens.pop(jti, None)
         if entry is None:
             return False
-        stored_subject, expires_at = entry
-        return stored_subject == subject and expires_at > datetime.now(timezone.utc)
+        stored_subject, stored_family, expires_at = entry
+        return (
+            stored_subject == subject
+            and stored_family == family_id
+            and expires_at > datetime.now(timezone.utc)
+        )
+
+    async def revoke_family(self, family_id: str) -> None:
+        async with self._lock:
+            self._tokens = {{
+                jti: entry for jti, entry in self._tokens.items() if entry[1] != family_id
+            }}
 
     async def revoke_subject(self, subject: str) -> None:
         async with self._lock:
@@ -235,13 +280,43 @@ class PostgresRefreshTokenStore(RefreshTokenStore):
         CREATE TABLE IF NOT EXISTS _auth_refresh_tokens (
             jti         TEXT PRIMARY KEY,
             subject     TEXT NOT NULL,
+            family_id   TEXT NOT NULL,
             expires_at  TIMESTAMPTZ NOT NULL,
             created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     \"\"\"
-    _INDEX = (
+
+    # `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists,
+    # so a deployment that ran an earlier build has the four-column table and
+    # would never see family_id. These four statements are the upgrade path.
+    # Each is a no-op on a database that is already current, so initialize()
+    # stays safe to run on every boot and from every worker at once.
+    #
+    # The backfill matters as much as the column. Existing rows predate
+    # families, and there is no record of which device each belonged to;
+    # guessing would be worse than not guessing. Filing them all under one
+    # per-subject family means a replay of a token issued before the upgrade
+    # still revokes every pre-upgrade session for that account — which is
+    # precisely the behaviour those tokens were issued under. New sign-ins get
+    # real per-device families from their first login.
+    #
+    # The literal prefix keeps a legacy family id from ever colliding with a
+    # minted one: subjects are UUIDs with dashes, minted ids are 32 hex
+    # characters, and neither can begin with "legacy:".
+    _MIGRATIONS = (
+        "ALTER TABLE _auth_refresh_tokens ADD COLUMN IF NOT EXISTS family_id TEXT",
+        "UPDATE _auth_refresh_tokens SET family_id = 'legacy:' || subject "
+        "WHERE family_id IS NULL",
+        "ALTER TABLE _auth_refresh_tokens ALTER COLUMN family_id SET NOT NULL",
+    )
+
+    _INDEXES = (
         "CREATE INDEX IF NOT EXISTS _auth_refresh_tokens_subject_idx "
-        "ON _auth_refresh_tokens (subject)"
+        "ON _auth_refresh_tokens (subject)",
+        # Revoking a family is now the common path — every logout takes it —
+        # so it must not be a sequential scan of every live token in the system.
+        "CREATE INDEX IF NOT EXISTS _auth_refresh_tokens_family_idx "
+        "ON _auth_refresh_tokens (family_id)",
     )
 
     def __init__(self) -> None:
@@ -271,33 +346,53 @@ class PostgresRefreshTokenStore(RefreshTokenStore):
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(self._DDL)
-            await conn.execute(self._INDEX)
+            for statement in self._MIGRATIONS:
+                await conn.execute(statement)
+            for statement in self._INDEXES:
+                await conn.execute(statement)
 
-    async def issue(self, jti: str, subject: str, expires_at: datetime) -> None:
+    async def issue(
+        self, jti: str, subject: str, family_id: str, expires_at: datetime
+    ) -> None:
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
-                "INSERT INTO _auth_refresh_tokens (jti, subject, expires_at) "
-                "VALUES ($1, $2, $3)",
+                "INSERT INTO _auth_refresh_tokens (jti, subject, family_id, expires_at) "
+                "VALUES ($1, $2, $3, $4)",
                 jti,
                 subject,
+                family_id,
                 expires_at,
             )
 
-    async def consume(self, jti: str, subject: str) -> bool:
+    async def consume(self, jti: str, subject: str, family_id: str) -> bool:
         # DELETE ... RETURNING is the whole point: two concurrent presentations
         # of the same token cannot both come back with a row, so a replay is
         # always distinguishable from the legitimate use.
+        #
+        # family_id is part of the predicate, not just carried alongside it: a
+        # token is only spendable within the family it was issued into, so a
+        # signed token whose family has already been revoked cannot be rotated
+        # back to life by presenting it against a different one.
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "DELETE FROM _auth_refresh_tokens "
-                "WHERE jti = $1 AND subject = $2 AND expires_at > now() "
+                "WHERE jti = $1 AND subject = $2 AND family_id = $3 "
+                "AND expires_at > now() "
                 "RETURNING jti",
                 jti,
                 subject,
+                family_id,
             )
         return row is not None
+
+    async def revoke_family(self, family_id: str) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM _auth_refresh_tokens WHERE family_id = $1", family_id
+            )
 
     async def revoke_subject(self, subject: str) -> None:
         pool = await self._get_pool()
@@ -358,6 +453,25 @@ _hasher = PasswordHasher()
 _ABSENT_ACCOUNT_HASH = _hasher.hash("specora-no-such-account")
 
 
+def _family_of(payload: dict) -> str:
+    \"\"\"The session family a decoded refresh token belongs to.
+
+    Refresh tokens minted before families existed carry no `fam` claim. They
+    are not rejected — that would sign every user out on deploy — but they have
+    no device to be scoped to, so they fall into the same per-subject legacy
+    family the database backfill files their ledger rows under. Revoking it
+    ends all of that account's pre-upgrade sessions, which is the behaviour
+    those tokens were issued under. The first fresh login gets a real family.
+
+    A missing claim cannot be forged: the payload has already been signature
+    checked, so `fam` is absent only if this server never put one there.
+    \"\"\"
+    family = payload.get("fam")
+    if family:
+        return str(family)
+    return "legacy:" + str(payload["sub"])
+
+
 class JWTAuthProvider(AuthProvider):
 
     async def authenticate(self, token: str) -> Optional[AuthUser]:
@@ -370,19 +484,34 @@ class JWTAuthProvider(AuthProvider):
             role=str(payload.get("role", "")),
         )
 
-    async def issue_tokens(self, user: AuthUser) -> TokenPair:
+    async def issue_tokens(
+        self, user: AuthUser, *, family_id: Optional[str] = None
+    ) -> TokenPair:
+        \"\"\"Mint a pair.
+
+        Args:
+            family_id: The sign-in this pair belongs to. Omitted at login,
+                where a fresh family is minted; passed by rotation, which must
+                keep the family so that revoking it still reaches every token
+                the original has since turned into.
+        \"\"\"
         now = datetime.now(timezone.utc)
         access_ttl = timedelta(minutes=AUTH_TOKEN_EXPIRE_MINUTES)
         refresh_ttl = timedelta(days=AUTH_REFRESH_TOKEN_EXPIRE_DAYS)
         claims = {{"sub": user.id, "email": user.email, "role": user.role}}
 
+        family = family_id or uuid.uuid4().hex
         refresh_jti = uuid.uuid4().hex
-        await get_refresh_token_store().issue(refresh_jti, user.id, now + refresh_ttl)
+        await get_refresh_token_store().issue(
+            refresh_jti, user.id, family, now + refresh_ttl
+        )
 
         return TokenPair(
             access_token=self._encode({{**claims, "typ": "access"}}, now, access_ttl),
             refresh_token=self._encode(
-                {{**claims, "typ": "refresh", "jti": refresh_jti}}, now, refresh_ttl
+                {{**claims, "typ": "refresh", "jti": refresh_jti, "fam": family}},
+                now,
+                refresh_ttl,
             ),
             expires_in=int(access_ttl.total_seconds()),
         )
@@ -394,11 +523,21 @@ class JWTAuthProvider(AuthProvider):
 
         store = get_refresh_token_store()
         subject = str(payload["sub"])
-        if not await store.consume(str(payload["jti"]), subject):
+        family = _family_of(payload)
+        if not await store.consume(str(payload["jti"]), subject, family):
             # The signature was good but the ledger has already spent this jti,
             # so the token was replayed — assume it leaked and drop the whole
             # family rather than issuing the attacker a fresh pair.
-            await store.revoke_subject(subject)
+            #
+            # The family, not the single jti, and this is the property the
+            # rotation scheme is built on. A thief who redeems a stolen token
+            # first holds a *different*, live jti; revoking only the one just
+            # presented would leave exactly the session that was stolen. The
+            # family reaches every descendant of the compromised sign-in.
+            #
+            # `fam` is read from the decoded payload, so it is covered by the
+            # signature: a caller cannot point this at somebody else's session.
+            await store.revoke_family(family)
             return None
 
         return await self.issue_tokens(
@@ -406,18 +545,31 @@ class JWTAuthProvider(AuthProvider):
                 id=subject,
                 email=str(payload.get("email", "")),
                 role=str(payload.get("role", "")),
-            )
+            ),
+            family_id=family,
         )
 
-    async def revoke_refresh(self, refresh_token: str) -> bool:
-        # Subject-wide, not just this jti. Logout is a security action, and if
-        # the token was stolen and already rotated once, the copy the user holds
-        # is the dead one while the thief's is live — revoking only what was
-        # presented would leave the session the user is trying to end.
+    async def revoke_refresh(self, refresh_token: str, *, all_devices: bool = False) -> bool:
+        \"\"\"Revoke the presented sign-in, or every sign-in for the account.
+
+        The default is family-wide rather than token-wide, and that is the
+        security-relevant part. If the token was stolen and the thief has
+        already rotated it, the copy the user holds is the dead one and the
+        thief's is live — revoking only the jti presented would leave running
+        precisely the session the user is trying to end. Rotation carries the
+        family forward, so revoking the family reaches the thief's token too.
+
+        What the family *doesn't* do is reach the account's other devices,
+        which subject-wide revocation could not avoid touching.
+        \"\"\"
         payload = self._decode(refresh_token, expected_type="refresh")
         if payload is None:
             return False
-        await get_refresh_token_store().revoke_subject(str(payload["sub"]))
+        store = get_refresh_token_store()
+        if all_devices:
+            await store.revoke_subject(str(payload["sub"]))
+        else:
+            await store.revoke_family(_family_of(payload))
         return True
 
     def _encode(self, claims: dict, now: datetime, ttl: timedelta) -> str:
@@ -466,10 +618,14 @@ def _generate_middleware(ir: DomainIR, infra: InfraIR) -> GeneratedFile:
     header = provenance_header("python", infra.fqn, "Auth middleware — FastAPI dependencies")
     rules = protected_routes(ir, infra)
 
-    starlette_imports = [
-        "from starlette.requests import Request",
-        "from starlette.responses import JSONResponse",
-    ] if rules else []
+    starlette_imports = (
+        [
+            "from starlette.requests import Request",
+            "from starlette.responses import JSONResponse",
+        ]
+        if rules
+        else []
+    )
 
     lines = [
         header,
@@ -490,7 +646,7 @@ def _generate_middleware(ir: DomainIR, infra: InfraIR) -> GeneratedFile:
         "# rejects a bare token with no scheme at all.",
         "_bearer = HTTPBearer(auto_error=False)",
         "",
-        f"_CHALLENGE = {{\"WWW-Authenticate\": 'Bearer realm=\"{ir.domain}\"'}}",
+        f'_CHALLENGE = {{"WWW-Authenticate": \'Bearer realm="{ir.domain}"\'}}',
         "",
         "_provider: Optional[AuthProvider] = None",
         "",
@@ -555,38 +711,40 @@ def _protected_routes_block(rules: list[tuple[str, list[str], list[str]]]) -> li
         method_set = ", ".join(f'"{m}"' for m in methods)
         role_set = ", ".join(f'"{r}"' for r in roles)
         lines.append(f'    ("{path}", frozenset({{{method_set}}}), frozenset({{{role_set}}})),')
-    lines.extend([
-        ")",
-        "",
-        "",
-        "def _required_roles(path: str, method: str) -> Optional[frozenset[str]]:",
-        "    for prefix, methods, roles in PROTECTED_ROUTES:",
-        "        if method in methods and (path == prefix or path.startswith(prefix + \"/\")):",
-        "            return roles",
-        "    return None",
-        "",
-        "",
-        "async def enforce_protected_routes(request: Request, call_next):",
-        "    required = _required_roles(request.url.path, request.method.upper())",
-        "    if required is None:",
-        "        return await call_next(request)",
-        "",
-        '    scheme, _, token = request.headers.get("authorization", "").partition(" ")',
-        '    if scheme.lower() != "bearer" or not token.strip():',
-        "        return JSONResponse(",
-        '            status_code=401, content={"error": "missing_token"}, headers=_CHALLENGE',
-        "        )",
-        "    user = await get_auth_provider().authenticate(token.strip())",
-        "    if user is None:",
-        "        return JSONResponse(",
-        '            status_code=401, content={"error": "invalid_token"}, headers=_CHALLENGE',
-        "        )",
-        "    if user.role not in required:",
-        "        return JSONResponse(",
-        "            status_code=403,",
-        '            content={"error": "forbidden", "required_roles": sorted(required)},',
-        "        )",
-        "    return await call_next(request)",
-        "",
-    ])
+    lines.extend(
+        [
+            ")",
+            "",
+            "",
+            "def _required_roles(path: str, method: str) -> Optional[frozenset[str]]:",
+            "    for prefix, methods, roles in PROTECTED_ROUTES:",
+            '        if method in methods and (path == prefix or path.startswith(prefix + "/")):',
+            "            return roles",
+            "    return None",
+            "",
+            "",
+            "async def enforce_protected_routes(request: Request, call_next):",
+            "    required = _required_roles(request.url.path, request.method.upper())",
+            "    if required is None:",
+            "        return await call_next(request)",
+            "",
+            '    scheme, _, token = request.headers.get("authorization", "").partition(" ")',
+            '    if scheme.lower() != "bearer" or not token.strip():',
+            "        return JSONResponse(",
+            '            status_code=401, content={"error": "missing_token"}, headers=_CHALLENGE',
+            "        )",
+            "    user = await get_auth_provider().authenticate(token.strip())",
+            "    if user is None:",
+            "        return JSONResponse(",
+            '            status_code=401, content={"error": "invalid_token"}, headers=_CHALLENGE',
+            "        )",
+            "    if user.role not in required:",
+            "        return JSONResponse(",
+            "            status_code=403,",
+            '            content={"error": "forbidden", "required_roles": sorted(required)},',
+            "        )",
+            "    return await call_next(request)",
+            "",
+        ]
+    )
     return lines

@@ -108,9 +108,9 @@ class TestPostEditValidation:
         # gets written is not what was validated before the preview.
         contracts = _emit_domain("library", _session(tmp_path))
         edited = dict(contracts)
-        edited["entities/book.contract.yaml"] = contracts[
-            "entities/book.contract.yaml"
-        ].replace("type: string", "type: strng")
+        edited["entities/book.contract.yaml"] = contracts["entities/book.contract.yaml"].replace(
+            "type: string", "type: strng"
+        )
 
         errors = _validate_emitted_contracts(edited)
         assert errors and any("strng" in e.message for e in errors)

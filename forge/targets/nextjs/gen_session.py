@@ -29,7 +29,9 @@ def generate_session(ctx: FrontendContext) -> list[GeneratedFile]:
 
 def _generate_session_module(ir: DomainIR, auth: AuthSpec) -> GeneratedFile:
     header = provenance_header("typescript", auth.fqn, "Session and token custody")
-    content = header.rstrip() + f'''
+    content = (
+        header.rstrip()
+        + f"""
 
 "use client";
 
@@ -345,16 +347,17 @@ export async function signOut(): Promise<boolean> {{
   if (typeof window !== "undefined") window.location.assign(LOGIN_ROUTE);
   return true;
 }}
-'''
-    return GeneratedFile(
-        path="frontend/src/lib/session.ts", content=content, provenance=auth.fqn
+"""
     )
+    return GeneratedFile(path="frontend/src/lib/session.ts", content=content, provenance=auth.fqn)
 
 
 def _generate_app_shell(ir: DomainIR, auth: AuthSpec) -> GeneratedFile:
     """The client shell that gates every page except sign-in."""
     header = provenance_header("typescript", auth.fqn, "Authenticated app shell")
-    content = header.rstrip() + '''
+    content = (
+        header.rstrip()
+        + """
 
 "use client";
 
@@ -434,7 +437,8 @@ function Gate({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-'''
+"""
+    )
     return GeneratedFile(
         path="frontend/src/components/AppShell.tsx", content=content, provenance=auth.fqn
     )
@@ -443,7 +447,9 @@ function Gate({ children }: { children: React.ReactNode }) {
 def _generate_login_page(ir: DomainIR, auth: AuthSpec) -> GeneratedFile:
     header = provenance_header("typescript", auth.fqn, "Sign-in page")
     title = ir.domain.replace("_", " ").title()
-    content = header.rstrip() + f'''
+    content = (
+        header.rstrip()
+        + f'''
 
 "use client";
 
@@ -546,6 +552,7 @@ export default function LoginPage() {{
   );
 }}
 '''
+    )
     return GeneratedFile(
         path="frontend/src/app/login/page.tsx", content=content, provenance=auth.fqn
     )

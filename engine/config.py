@@ -3,6 +3,7 @@
 ``EngineConfig.from_env()`` probes environment variables in priority order
 so the caller never has to wire provider details manually.
 """
+
 from __future__ import annotations
 
 import os
@@ -71,9 +72,7 @@ class EngineConfig:
 
         anthropic_key = _env("ANTHROPIC_API_KEY")
         if anthropic_key:
-            return cls._build(
-                "claude-sonnet-4-6", registry, policy, api_key=anthropic_key
-            )
+            return cls._build("claude-sonnet-4-6", registry, policy, api_key=anthropic_key)
 
         openai_key = _env("OPENAI_API_KEY")
         if openai_key:
@@ -130,9 +129,7 @@ class EngineConfig:
         return replace(policy, timeout_seconds=OLLAMA_DEFAULT_TIMEOUT_SECONDS)
 
     @staticmethod
-    def _ollama_capabilities(
-        model_id: str, registry: ModelRegistry
-    ) -> ModelCapabilities:
+    def _ollama_capabilities(model_id: str, registry: ModelRegistry) -> ModelCapabilities:
         """Return capabilities for an Ollama tag, registering unknown ones.
 
         Users pull arbitrary tags, so an unrecognised name is normal rather
@@ -169,20 +166,30 @@ class EngineConfig:
 
         if caps.provider == "anthropic":
             return cls._build(
-                model_id, registry, policy, api_key=_env("ANTHROPIC_API_KEY"),
+                model_id,
+                registry,
+                policy,
+                api_key=_env("ANTHROPIC_API_KEY"),
                 capabilities=caps,
             )
 
         if caps.provider == "zai":
             return cls._build(
-                model_id, registry, policy, api_key=_env("ZAI_API_KEY"),
+                model_id,
+                registry,
+                policy,
+                api_key=_env("ZAI_API_KEY"),
                 capabilities=caps,
             )
 
         if caps.provider == "openai":
             api_key, base_url = cls._resolve_openai_compatible(model_id)
             return cls._build(
-                model_id, registry, policy, api_key=api_key, base_url=base_url,
+                model_id,
+                registry,
+                policy,
+                api_key=api_key,
+                base_url=base_url,
                 capabilities=caps,
             )
 

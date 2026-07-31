@@ -97,8 +97,13 @@ def forge() -> None:
 
 @forge.command()
 @click.argument("path", default="domains/", type=click.Path())
-@click.option("--output", "output_format", type=click.Choice(["text", "json"]),
-              default="text", help="Output format")
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help="Output format",
+)
 def validate(path: str, output_format: str) -> None:
     """Validate all contracts against their meta-schemas.
 
@@ -115,14 +120,17 @@ def validate(path: str, output_format: str) -> None:
     except Exception as e:
         if output_format == "json":
             import json as json_mod
-            click.echo(json_mod.dumps({
-                "valid": False,
-                "contract_count": 0,
-                "errors": [
-                    {"fqn": "", "path": "", "message": str(e), "severity": "error"}
-                ],
-                "warnings": [],
-            }))
+
+            click.echo(
+                json_mod.dumps(
+                    {
+                        "valid": False,
+                        "contract_count": 0,
+                        "errors": [{"fqn": "", "path": "", "message": str(e), "severity": "error"}],
+                        "warnings": [],
+                    }
+                )
+            )
         else:
             console.print(f"[red]Error loading contracts:[/red] {e}")
         sys.exit(1)
@@ -133,17 +141,26 @@ def validate(path: str, output_format: str) -> None:
 
     if output_format == "json":
         import json as json_mod
+
         result = {
             "valid": len(real_errors) == 0,
             "contract_count": len(contracts),
             "errors": [
-                {"fqn": e.contract_fqn, "path": e.path,
-                 "message": e.message, "severity": e.severity}
+                {
+                    "fqn": e.contract_fqn,
+                    "path": e.path,
+                    "message": e.message,
+                    "severity": e.severity,
+                }
                 for e in real_errors
             ],
             "warnings": [
-                {"fqn": e.contract_fqn, "path": e.path,
-                 "message": e.message, "severity": e.severity}
+                {
+                    "fqn": e.contract_fqn,
+                    "path": e.path,
+                    "message": e.message,
+                    "severity": e.severity,
+                }
                 for e in warnings
             ],
         }
@@ -164,8 +181,13 @@ def validate(path: str, output_format: str) -> None:
 
 @forge.command()
 @click.argument("path", default="domains/", type=click.Path())
-@click.option("--output", "output_format", type=click.Choice(["text", "json"]),
-              default="text", help="Output format")
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help="Output format",
+)
 def compile(path: str, output_format: str) -> None:
     """Compile contracts into IR.
 
@@ -180,6 +202,7 @@ def compile(path: str, output_format: str) -> None:
     except CompilationError as e:
         if output_format == "json":
             import json as json_mod
+
             click.echo(json_mod.dumps({"success": False, "errors": [str(err) for err in e.errors]}))
         else:
             console.print("[red]Compilation failed:[/red]")
@@ -189,6 +212,7 @@ def compile(path: str, output_format: str) -> None:
     except Exception as e:
         if output_format == "json":
             import json as json_mod
+
             click.echo(json_mod.dumps({"success": False, "errors": [str(e)]}))
         else:
             console.print(f"[red]Error:[/red] {e}")
@@ -196,6 +220,7 @@ def compile(path: str, output_format: str) -> None:
 
     if output_format == "json":
         import json as json_mod
+
         result = {
             "success": True,
             "summary": ir.summary(),
@@ -213,10 +238,20 @@ def compile(path: str, output_format: str) -> None:
 
 @forge.command()
 @click.argument("path", default="domains/", type=click.Path())
-@click.option("-t", "--target", multiple=True, default=["prod"],
-              help="Target generators (prod = full stack, or specify individually)")
-@click.option("-o", "--output", default="runtime/", type=click.Path(),
-              help="Output directory for generated files")
+@click.option(
+    "-t",
+    "--target",
+    multiple=True,
+    default=["prod"],
+    help="Target generators (prod = full stack, or specify individually)",
+)
+@click.option(
+    "-o",
+    "--output",
+    default="runtime/",
+    type=click.Path(),
+    help="Output directory for generated files",
+)
 def generate(path: str, target: tuple[str, ...], output: str) -> None:
     """Compile contracts and generate code.
 
@@ -280,14 +315,20 @@ def generate(path: str, target: tuple[str, ...], output: str) -> None:
     env_file = output_path / ".env"
     if env_example.exists() and not env_file.exists():
         import shutil
+
         shutil.copy2(env_example, env_file)
         console.print("[cyan]Created .env from .env.example[/cyan] — edit secrets before deploying")
 
 
 @forge.command()
 @click.argument("path", default="domains/", type=click.Path())
-@click.option("--output", "output_format", type=click.Choice(["text", "json"]),
-              default="text", help="Output format")
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help="Output format",
+)
 def graph(path: str, output_format: str) -> None:
     """Display the contract dependency graph."""
     from forge.parser.graph import build_dependency_graph
@@ -298,6 +339,7 @@ def graph(path: str, output_format: str) -> None:
     except Exception as e:
         if output_format == "json":
             import json as json_mod
+
             click.echo(json_mod.dumps({"nodes": [], "count": 0, "error": str(e)}))
         else:
             console.print(f"[red]Error:[/red] {e}")
@@ -307,14 +349,17 @@ def graph(path: str, output_format: str) -> None:
 
     if output_format == "json":
         import json as json_mod
+
         nodes = []
         for node in sorted(dep_graph.nodes.values(), key=lambda n: n.fqn):
-            nodes.append({
-                "fqn": node.fqn,
-                "kind": node.kind,
-                "dependencies": dep_graph.dependencies_of(node.fqn),
-                "dependents": dep_graph.dependents_of(node.fqn),
-            })
+            nodes.append(
+                {
+                    "fqn": node.fqn,
+                    "kind": node.kind,
+                    "dependencies": dep_graph.dependencies_of(node.fqn),
+                    "dependents": dep_graph.dependents_of(node.fqn),
+                }
+            )
         click.echo(json_mod.dumps({"nodes": nodes, "count": len(nodes)}))
         return
 
@@ -410,8 +455,7 @@ def show(diff_id: str) -> None:
             console.print(f"  [red]-[/red] {change.path}: {change.old_value}")
         else:
             console.print(
-                f"  [yellow]~[/yellow] {change.path}: "
-                f"{change.old_value} -> {change.new_value}"
+                f"  [yellow]~[/yellow] {change.path}: {change.old_value} -> {change.new_value}"
             )
 
 
@@ -422,8 +466,14 @@ def show(diff_id: str) -> None:
 
 @cli.command()
 @click.argument("domain")
-@click.option("--input", "-i", "input_dir", default="domains/", type=click.Path(),
-              help="Base directory for contracts (default: domains/)")
+@click.option(
+    "--input",
+    "-i",
+    "input_dir",
+    default="domains/",
+    type=click.Path(),
+    help="Base directory for contracts (default: domains/)",
+)
 def init(domain: str, input_dir: str) -> None:
     """Scaffold a new domain with starter contracts.
 
@@ -574,9 +624,7 @@ def _get_generators(target_names: tuple[str, ...]) -> list:
     expanded = []
     for name in target_names:
         if name in redirects:
-            console.print(
-                f"[yellow]Target '{name}' now generates '{redirects[name]}'.[/yellow]"
-            )
+            console.print(f"[yellow]Target '{name}' now generates '{redirects[name]}'.[/yellow]")
             console.print(
                 "  The old in-memory target ignored infra/auth and workflow "
                 "state machines. It has been removed."
@@ -605,6 +653,7 @@ def _get_generators(target_names: tuple[str, ...]) -> list:
 def _launch_repl() -> None:
     """Launch the interactive REPL."""
     from forge.cli.repl import main as repl_main
+
     repl_main()
 
 

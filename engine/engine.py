@@ -14,6 +14,7 @@ Example::
     engine = LLMEngine.from_env()
     answer = engine.ask("Summarise this incident.", system="You are an ITSM expert.")
 """
+
 from __future__ import annotations
 
 import logging
@@ -213,9 +214,7 @@ class LLMEngine:
         )
 
         provider_name = self.config.capabilities.provider
-        telemetry.check_gates(
-            model=self.model_id, provider=provider_name, purpose=purpose
-        )
+        telemetry.check_gates(model=self.model_id, provider=provider_name, purpose=purpose)
 
         # Only the transport call goes inside the retry. It has no local side
         # effects, which is the property that makes resending it safe; anything
@@ -247,9 +246,7 @@ class LLMEngine:
             )
             raise
 
-        input_tokens, output_tokens = _normalise_usage(
-            getattr(response, "usage", None)
-        )
+        input_tokens, output_tokens = _normalise_usage(getattr(response, "usage", None))
         self._record(
             purpose=purpose,
             provider=provider_name,
@@ -320,9 +317,7 @@ class LLMEngine:
 
             if not config.api_key:
                 raise EngineConfigError("Anthropic provider requires an API key.")
-            return AnthropicProvider(
-                api_key=config.api_key, model=config.model_id, timeout=timeout
-            )
+            return AnthropicProvider(api_key=config.api_key, model=config.model_id, timeout=timeout)
 
         if provider_name == "openai":
             from engine.providers.openai import OpenAIProvider
@@ -341,17 +336,13 @@ class LLMEngine:
 
             if not config.api_key:
                 raise EngineConfigError("Z.AI provider requires an API key (ZAI_API_KEY).")
-            return ZAIProvider(
-                api_key=config.api_key, model=config.model_id, timeout=timeout
-            )
+            return ZAIProvider(api_key=config.api_key, model=config.model_id, timeout=timeout)
 
         if provider_name == "ollama":
             from engine.providers.ollama import OllamaProvider
 
             # No key check: a local Ollama server has no authentication.
-            return OllamaProvider(
-                model=config.model_id, base_url=config.base_url, timeout=timeout
-            )
+            return OllamaProvider(model=config.model_id, base_url=config.base_url, timeout=timeout)
 
         raise EngineConfigError(
             f"Unsupported provider: {provider_name!r}. "

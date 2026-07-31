@@ -41,7 +41,12 @@ Issues = "https://github.com/syndicalt/specora-core/issues"
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
-    "ruff>=0.4",
+    # Floor, no ceiling. The repository is byte-identical under the formatter in
+    # 0.14.14, 0.15.22 and 0.16.0, so the previous `<0.16` cap was holding back
+    # nothing; 0.16 is the floor only because that is where `[tool.ruff.format]
+    # exclude` has to be honoured for the Markdown carve-out below to mean
+    # anything.
+    "ruff>=0.16",
 ]
 llm = [
     "openai>=1.0",
@@ -140,3 +145,27 @@ ignore = [
 #   UP (pyupgrade) — 93 hits, almost all UP045 (`Optional[X]` -> `X | None`).
 #      Mechanical and auto-fixable, but it would rewrite generated-code
 #      templates whose output is pinned by tests; worth a dedicated pass.
+
+[tool.ruff.format]
+# ruff 0.16 began formatting Python inside Markdown fenced code blocks. This
+# repository's prose is not code samples that happen to be in a file — the
+# alignment in them carries meaning, and the formatter destroys it. In
+# docs/CODEGEN_CONTRACT.md it rewrites
+#
+#     error: str | None            # None on success; otherwise a stable code:
+#                                  # "not_found" | "invalid_transition" | ...
+#
+# into a comment indented to column 4, which reads as a remark about the *next*
+# field rather than a continuation of this one. docs/superpowers/**, separately,
+# is a set of dated design snapshots; reformatting them edits the historical
+# record.
+#
+# So this is a carve-out, not a stopgap: `ruff format` formats Python files, and
+# prose is not a Python file. It lives here rather than as a `--exclude` flag on
+# the CI command so that a developer running `ruff format .` locally gets the
+# same answer CI does — the flag-only version silently rewrote all 20 documents
+# on any local run, and CI never noticed because CI passed the flag.
+#
+# It is scoped to the formatter alone. `ruff check` is unaffected and still
+# reads every path it read before.
+exclude = ["*.md"]

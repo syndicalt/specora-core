@@ -87,6 +87,7 @@ Threats this does not address
 - Anyone with filesystem access to the contracts. The Healer is not the only
   writer.
 """
+
 from __future__ import annotations
 
 import base64
@@ -198,6 +199,7 @@ class Credentials:
 # ---------------------------------------------------------------------------
 # Signed token codec
 # ---------------------------------------------------------------------------
+
 
 def _b64e(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
@@ -378,6 +380,7 @@ def verify_csrf_token(token: str, ticket_id: str, action: str, actor: Actor) -> 
 # Data plane
 # ---------------------------------------------------------------------------
 
+
 def require_ingest_token(credentials: Credentials) -> Actor:
     """Authenticate a data-plane caller (the generated app, the watcher)."""
     configured = os.environ.get(INGEST_TOKEN_ENV, "")
@@ -396,6 +399,7 @@ def require_ingest_token(credentials: Credentials) -> Actor:
 # ---------------------------------------------------------------------------
 # Control plane authenticators
 # ---------------------------------------------------------------------------
+
 
 class ControlPlaneAuthenticator(Protocol):
     """A credential scheme for the public control plane."""

@@ -10,6 +10,7 @@ authority is decided:
 
 Plus <Cls>StateChange for entities that bind a workflow.
 """
+
 from __future__ import annotations
 
 from forge.ir.model import DomainIR, EntityIR, FieldIR
@@ -104,7 +105,7 @@ def _response_model(entity: EntityIR, cls: str) -> list[str]:
         annotation = _annotation(field, optional=not field.required)
         default = "" if field.required else " = None"
         lines.append(f"    {field.name}: {annotation}{default}")
-    lines.append("    links: dict[str, str] = Field(default_factory=dict, alias=\"_links\")")
+    lines.append('    links: dict[str, str] = Field(default_factory=dict, alias="_links")')
     lines.append("")
     # `extra: ignore` is pydantic's default, but it is what drops a sensitive
     # column that a handler passed through, so it is stated rather than relied

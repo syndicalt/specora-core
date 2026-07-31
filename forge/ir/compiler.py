@@ -184,8 +184,7 @@ class Compiler:
             {
                 d
                 for contract in contracts.values()
-                if (d := _as_dict(contract.get("metadata")).get("domain", ""))
-                and d != "stdlib"
+                if (d := _as_dict(contract.get("metadata")).get("domain", "")) and d != "stdlib"
             }
         )
 

@@ -1,4 +1,5 @@
 """Healer data models — tickets, proposals, and enums for the healing pipeline."""
+
 from __future__ import annotations
 
 import uuid
@@ -113,8 +114,7 @@ class HealerProposal:
             "before": self.before,
             "after": self.after,
             "changes": [
-                c.model_dump(mode="json") if hasattr(c, "model_dump") else c
-                for c in self.changes
+                c.model_dump(mode="json") if hasattr(c, "model_dump") else c for c in self.changes
             ],
             "explanation": self.explanation,
             "confidence": self.confidence,

@@ -11,6 +11,7 @@ Only transient transport failures are retried. A 4xx other than 408/409/425/429
 means the request itself is wrong; resending it wastes the budget and, for 401
 or 403, can trip lockouts. Those propagate on the first attempt.
 """
+
 from __future__ import annotations
 
 import logging
@@ -100,12 +101,8 @@ class RetryPolicy:
         return cls(
             timeout_seconds=_num("SPECORA_LLM_TIMEOUT", 60.0, minimum=1.0),
             max_attempts=int(_num("SPECORA_LLM_MAX_ATTEMPTS", 3, minimum=1)),
-            initial_backoff_seconds=_num(
-                "SPECORA_LLM_BACKOFF", 0.5, minimum=0.0
-            ),
-            max_backoff_seconds=_num(
-                "SPECORA_LLM_MAX_BACKOFF", 8.0, minimum=0.0
-            ),
+            initial_backoff_seconds=_num("SPECORA_LLM_BACKOFF", 0.5, minimum=0.0),
+            max_backoff_seconds=_num("SPECORA_LLM_MAX_BACKOFF", 8.0, minimum=0.0),
         )
 
     def backoff_for(self, attempt: int) -> float:

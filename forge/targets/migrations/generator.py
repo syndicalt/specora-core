@@ -14,6 +14,7 @@ construction:
     after a schema.sql bootstrap. Nothing here writes a second ledger for that
     same fact.
 """
+
 from __future__ import annotations
 
 import re
@@ -78,11 +79,13 @@ class MigrationGenerator(BaseGenerator):
         body = changes_to_sql(changes, build_context(ir))
         header = provenance_header("sql", f"domain/{ir.domain}", f"Migration: {description}")
 
-        return [GeneratedFile(
-            path=f"database/migrations/{stem}.sql",
-            content=f"{header}{APPLY_NOTICE}\n\n{body.rstrip()}\n",
-            provenance=f"domain/{ir.domain}",
-        )]
+        return [
+            GeneratedFile(
+                path=f"database/migrations/{stem}.sql",
+                content=f"{header}{APPLY_NOTICE}\n\n{body.rstrip()}\n",
+                provenance=f"domain/{ir.domain}",
+            )
+        ]
 
     def _generate_initial(self, ir: DomainIR, version: int) -> list[GeneratedFile]:
         """Generate the initial migration (CREATE TABLE for all entities)."""
@@ -94,11 +97,13 @@ class MigrationGenerator(BaseGenerator):
         body = changes_to_sql(changes, build_context(ir))
         header = provenance_header("sql", f"domain/{ir.domain}", "Initial schema")
 
-        return [GeneratedFile(
-            path=f"database/migrations/{version:03d}_initial.sql",
-            content=f"{header}{APPLY_NOTICE}\n\n{body.rstrip()}\n",
-            provenance=f"domain/{ir.domain}",
-        )]
+        return [
+            GeneratedFile(
+                path=f"database/migrations/{version:03d}_initial.sql",
+                content=f"{header}{APPLY_NOTICE}\n\n{body.rstrip()}\n",
+                provenance=f"domain/{ir.domain}",
+            )
+        ]
 
     def _next_version(self) -> int:
         """Determine the next migration version number."""

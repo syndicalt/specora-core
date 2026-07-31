@@ -77,7 +77,7 @@ def _dashboard(ctx: FrontendContext) -> GeneratedFile:
         for view in ctx.views
     )
 
-    content = f'''import Link from "next/link";
+    content = f"""import Link from "next/link";
 
 export default function Dashboard() {{
   return (
@@ -90,7 +90,7 @@ export default function Dashboard() {{
     </div>
   );
 }}
-'''
+"""
     return GeneratedFile(
         path="frontend/src/app/page.tsx",
         content=content,
@@ -108,8 +108,20 @@ def _card_description(view) -> str:
 def _dockerfile(ctx: FrontendContext) -> GeneratedFile:
     content = """FROM node:20-slim AS builder
 WORKDIR /app
-COPY package.json ./
-RUN npm install --prefer-offline --no-audit --no-fund
+
+# `npm ci`, not `npm install`. install re-resolves every caret range and quietly
+# rewrites the lockfile when the two disagree, so the image built from a given
+# set of contracts depended on the day it was built. ci installs the lockfile
+# exactly, verifies each package against its recorded integrity hash, and exits
+# non-zero if the lockfile is absent or has drifted from package.json — the
+# failure is the feature.
+#
+# --ignore-scripts because otherwise this line runs lifecycle scripts from 143
+# packages as root, with a network, inside the build. Next.js needs none: its
+# swc binaries and sharp ship prebuilt as per-platform optional dependencies,
+# already hash-pinned by the same lockfile.
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY . .
 
 # Next.js substitutes NEXT_PUBLIC_* into the client bundle during `next build`,

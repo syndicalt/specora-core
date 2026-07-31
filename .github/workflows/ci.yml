@@ -29,15 +29,19 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      # Pinned rather than floating. ruff 0.16 began formatting Python inside
-      # fenced code blocks in Markdown, which reports every doc in this repo
-      # that shows a code sample — a lint gate that fails on prose is a gate
-      # people learn to ignore. Bump this deliberately, not by drift.
-      - run: pip install -e '.[dev]' 'ruff>=0.14,<0.16'
+      # No ruff pin here any more, and no `--exclude` on the format command.
+      # The `<0.16` cap and the flag were a pair of stopgaps for one problem —
+      # 0.16 formats Python inside Markdown fences — and between them they hid
+      # a second: 85 of this repository's own .py files had never been
+      # formatted, under any ruff version, so this gate was red on its own
+      # terms and the cap was not what was holding it. Those files are
+      # formatted now; the version floor and the Markdown carve-out both live
+      # in pyproject.toml, where a local `ruff format` sees them too.
+      - run: pip install -e '.[dev]'
       - name: ruff check
         run: ruff check .
       - name: ruff format --check
-        run: ruff format --check . --exclude '*.md'
+        run: ruff format --check .
 
   test:
     name: pytest (py${{ matrix.python }}, extras=${{ matrix.extras }})
@@ -117,6 +121,19 @@ jobs:
           done
       - name: Generated app must import and serve
         run: python scripts/ci_smoke_generated.py --root build/
+
+      # Applying the schema proves the DDL parses. It says nothing about the
+      # code that queries it, and the two adapters have already diverged once:
+      # the Postgres one accepted `filters` and ignored them while the memory
+      # one honoured them, so the same request returned filtered rows in tests
+      # and every row in production. Nothing in this pipeline could have seen
+      # that, because nothing ran a query against the database it had just
+      # built. This step drives the same API calls against both backends and
+      # fails if their answers differ.
+      - name: Both repository adapters must answer identically
+        env:
+          DATABASE_URL: postgresql://specora:specora@localhost:5432/specora
+        run: python scripts/ci_verify_adapters.py --root build/
 
   security:
     name: dependency + secret scan

@@ -156,8 +156,17 @@ class TestSafeContractName:
 class TestSensitiveNames:
     @pytest.mark.parametrize(
         "name",
-        ["password", "password_hash", "hashed_password", "api_key", "secret", "refresh_token",
-         "ssn", "card_number", "passwordHash"],
+        [
+            "password",
+            "password_hash",
+            "hashed_password",
+            "api_key",
+            "secret",
+            "refresh_token",
+            "ssn",
+            "card_number",
+            "passwordHash",
+        ],
     )
     def test_credentials_are_sensitive(self, name: str) -> None:
         assert is_sensitive_name(name)

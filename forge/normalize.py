@@ -10,6 +10,7 @@ Transforms contract dicts so they conform to meta-schema patterns:
 
 Shared by Factory emitters (auto-apply) and Healer (show diff).
 """
+
 from __future__ import annotations
 
 import re
@@ -145,9 +146,7 @@ def normalize_contract(contract: dict) -> dict:
     # 2. Normalize requires array
     requires = contract.get("requires", [])
     if requires:
-        contract["requires"] = [
-            _normalize_requires_entry(r, domain) for r in requires
-        ]
+        contract["requires"] = [_normalize_requires_entry(r, domain) for r in requires]
 
     # 3-4. Normalize field references
     fields = spec.get("fields") or {}
@@ -165,9 +164,7 @@ def normalize_contract(contract: dict) -> dict:
 
     # 5. Normalize state_machine FQN
     if "state_machine" in spec:
-        spec["state_machine"] = normalize_fqn(
-            spec["state_machine"], "workflow", domain
-        )
+        spec["state_machine"] = normalize_fqn(spec["state_machine"], "workflow", domain)
 
     # 6. Normalize spec.entity (Route/Page contracts)
     if "entity" in spec:

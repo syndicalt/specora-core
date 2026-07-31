@@ -20,6 +20,7 @@ Usage::
     system = prompt.render(commands=table)
     print(prompt.ref)                          # cli_router@v1:0f3c...
 """
+
 from __future__ import annotations
 
 from engine.prompts import library  # noqa: F401  (import populates the registry)

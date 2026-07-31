@@ -17,6 +17,7 @@ Callers must not swallow it: "the model returned prose" and "the model
 returned an object with the wrong shape" need different responses, and a
 generic error string erases the difference.
 """
+
 from __future__ import annotations
 
 import json
@@ -138,6 +139,4 @@ def extract_json_object(text: str) -> dict:
         if isinstance(parsed, dict):
             return parsed
 
-    raise StructuredOutputError(
-        "No JSON object found in the model response.", text
-    )
+    raise StructuredOutputError("No JSON object found in the model response.", text)

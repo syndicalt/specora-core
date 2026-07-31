@@ -388,9 +388,11 @@ specora generate --target all
 # Generate only the frontend
 specora generate --target nextjs
 
-# After generation, install and run
+# After generation, install and run. `npm ci` rather than `npm install`: the
+# generated frontend ships a package-lock.json, and ci installs it exactly
+# instead of re-resolving and rewriting it.
 cd runtime/frontend
-npm install
+npm ci
 npm run dev
 # Frontend available at http://localhost:3000
 ```

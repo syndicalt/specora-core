@@ -42,7 +42,14 @@ Two cases fail at generation time rather than at deploy time (CODEGEN_CONTRACT
 refresh token in an httpOnly, Secure, SameSite=Lax cookie scoped to
 `/auth/refresh`, and `/auth/refresh` accepts it from there when the body omits
 it, so a browser client never has to keep it anywhere script-readable.
+
+`/auth/logout` revokes the calling device's token family, and the whole account
+with `?all_devices=true`. It used to be unconditionally account-wide, because
+without a family id the only alternative was revoking the single presented jti —
+which a thief who had already rotated the stolen token would survive. The family
+gives per-device logout without giving that up; see `gen_auth`.
 """
+
 from __future__ import annotations
 
 import zlib
@@ -100,12 +107,11 @@ def generate_app(ir: DomainIR) -> GeneratedFile:
 # =============================================================================
 
 
-def _imports_section(
-    ir: DomainIR, has_auth: bool, guarded: bool, login: _LoginSpec | None
-) -> str:
+def _imports_section(ir: DomainIR, has_auth: bool, guarded: bool, login: _LoginSpec | None) -> str:
     fastapi_names = ["FastAPI", "Request"]
     if has_auth:
-        fastapi_names.extend(["HTTPException", "Response"])
+        # Query comes with the auth block for /auth/logout?all_devices=.
+        fastapi_names.extend(["HTTPException", "Query", "Response"])
     if login is not None:
         fastapi_names.append("Depends")
 
@@ -141,9 +147,7 @@ def _imports_section(
     local_single: list[str] = []
     if has_auth:
         interface_names = ["TokenPair"] + (["AuthUser"] if login is not None else [])
-        middleware_names = ["get_auth_provider"] + (
-            ["enforce_protected_routes"] if guarded else []
-        )
+        middleware_names = ["get_auth_provider"] + (["enforce_protected_routes"] if guarded else [])
         local_single.append(
             f"from backend.auth.interface import {', '.join(sorted(interface_names))}"
         )
@@ -159,27 +163,27 @@ def _imports_section(
         )
     for route in ir.routes:
         slug = module_slug(_entity_stem(route), route.domain, multi_domain=ir.multi_domain)
-        local_single.append(
-            f"from backend.routes_{slug} import router as {_router_var(route, ir)}"
-        )
+        local_single.append(f"from backend.routes_{slug} import router as {_router_var(route, ir)}")
 
-    return "\n".join([
-        provenance_header("python", f"domain/{ir.domain}", "FastAPI application entrypoint"),
-        "from __future__ import annotations",
-        "",
-        "import logging",
-        "import traceback",
-        "import uuid",
-        "from contextlib import asynccontextmanager",
-        "from pathlib import Path",
-        "",
-        *sorted(third_party),
-        "",
-        *sorted(local_single + ["\n".join(local)]),
-        "",
-        f'logger = logging.getLogger("{ir.domain}")',
-        "",
-    ])
+    return "\n".join(
+        [
+            provenance_header("python", f"domain/{ir.domain}", "FastAPI application entrypoint"),
+            "from __future__ import annotations",
+            "",
+            "import logging",
+            "import traceback",
+            "import uuid",
+            "from contextlib import asynccontextmanager",
+            "from pathlib import Path",
+            "",
+            *sorted(third_party),
+            "",
+            *sorted(local_single + ["\n".join(local)]),
+            "",
+            f'logger = logging.getLogger("{ir.domain}")',
+            "",
+        ]
+    )
 
 
 def _migrations_section(ir: DomainIR) -> str:
@@ -289,22 +293,24 @@ def _lifespan_section(has_auth: bool) -> str:
     ]
     if has_auth:
         lines.append("    await get_refresh_token_store().initialize()")
-    lines.extend([
-        "",
-        "    # A healer that is configured but silently receiving nothing is worse",
-        "    # than one that is obviously not configured, and the ingest endpoint",
-        "    # rejects an unauthenticated report.",
-        "    if HEALER_URL and not HEALER_INGEST_TOKEN:",
-        "        logger.warning(",
-        '            "SPECORA_HEALER_URL is set to %s but SPECORA_HEALER_INGEST_TOKEN "',
-        '            "is empty; the healer will reject every error report and none of "',
-        '            "them will be recorded.",',
-        "            HEALER_URL,",
-        "        )",
-        "",
-        "    yield",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "    # A healer that is configured but silently receiving nothing is worse",
+            "    # than one that is obviously not configured, and the ingest endpoint",
+            "    # rejects an unauthenticated report.",
+            "    if HEALER_URL and not HEALER_INGEST_TOKEN:",
+            "        logger.warning(",
+            '            "SPECORA_HEALER_URL is set to %s but SPECORA_HEALER_INGEST_TOKEN "',
+            '            "is empty; the healer will reject every error report and none of "',
+            '            "them will be recorded.",',
+            "            HEALER_URL,",
+            "        )",
+            "",
+            "    yield",
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -315,29 +321,33 @@ def _app_section(ir: DomainIR, guarded: bool) -> str:
         "",
     ]
     if guarded:
-        lines.extend([
-            "# infra/auth protected_routes, enforced ahead of every handler. Added",
-            "# before CORS so that CORS ends up the outer layer and its headers are",
-            "# present on the 401/403 this can return.",
-            'app.middleware("http")(enforce_protected_routes)',
+        lines.extend(
+            [
+                "# infra/auth protected_routes, enforced ahead of every handler. Added",
+                "# before CORS so that CORS ends up the outer layer and its headers are",
+                "# present on the 401/403 this can return.",
+                'app.middleware("http")(enforce_protected_routes)',
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "# No CORS middleware at all until the deployment names its origins, so a",
+            "# default container emits no CORS headers to be misread. backend.config",
+            "# additionally refuses to boot on '*' together with credentials: an echoed",
+            "# Origin plus allow-credentials lets any site call this API with the",
+            "# browser's cookies attached.",
+            "if CORS_ORIGINS:",
+            "    app.add_middleware(",
+            "        CORSMiddleware,",
+            "        allow_origins=CORS_ORIGINS,",
+            "        allow_credentials=CORS_ALLOW_CREDENTIALS,",
+            '        allow_methods=["*"],',
+            '        allow_headers=["*"],',
+            "    )",
             "",
-        ])
-    lines.extend([
-        "# No CORS middleware at all until the deployment names its origins, so a",
-        "# default container emits no CORS headers to be misread. backend.config",
-        "# additionally refuses to boot on '*' together with credentials: an echoed",
-        "# Origin plus allow-credentials lets any site call this API with the",
-        "# browser's cookies attached.",
-        "if CORS_ORIGINS:",
-        "    app.add_middleware(",
-        "        CORSMiddleware,",
-        "        allow_origins=CORS_ORIGINS,",
-        "        allow_credentials=CORS_ALLOW_CREDENTIALS,",
-        '        allow_methods=["*"],',
-        '        allow_headers=["*"],',
-        "    )",
-        "",
-    ])
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -531,17 +541,30 @@ class LogoutResponse(BaseModel):
 
 @app.post("/auth/logout")
 async def logout(
-    request: Request, response: Response, body: RefreshRequest
+    request: Request,
+    response: Response,
+    body: RefreshRequest,
+    all_devices: bool = Query(
+        default=False,
+        description="Sign out every device for this account, not just this one.",
+    ),
 ) -> LogoutResponse:
-    """Sign out of all devices: revoke every refresh token for this user.
+    """Sign out of this device. Pass `?all_devices=true` for the whole account.
 
-    **This ends every session for the account, not just the calling client.**
-    Any other browser or device signed in as this user must log in again.
+    **By default this ends the calling client's session only.** Other browsers
+    and devices signed in as the same user stay signed in. With
+    `?all_devices=true`, every session for the account is revoked and each of
+    those devices must log in again.
 
-    That is deliberate. If a refresh token was stolen and the thief has already
-    rotated it once, the copy the user holds is the dead one and the thief's is
-    live — revoking only the token presented would leave running precisely the
-    session the user is trying to end.
+    "This device" means the whole sign-in, not the one token in hand. Each login
+    opens a token *family*, and every refresh carries the family forward, so
+    revoking it reaches every token the original has since rotated into. That
+    distinction is the security-relevant one: if the refresh token was stolen
+    and the thief has already rotated it, the copy the user holds is the dead
+    one and the thief's is live, so revoking only the token presented would
+    leave running precisely the session the user is trying to end. Revoking the
+    family reaches the thief's token as well, without touching the account's
+    other devices.
 
     Clearing the cookie alone would only hide the credential from one browser; a
     copy captured beforehand would still be redeemable at `/auth/refresh`. The
@@ -555,7 +578,7 @@ async def logout(
     """
     presented = body.refresh_token or request.cookies.get(REFRESH_COOKIE_NAME)
     if presented:
-        await get_auth_provider().revoke_refresh(presented)
+        await get_auth_provider().revoke_refresh(presented, all_devices=all_devices)
     _clear_refresh_cookie(response)
     return LogoutResponse()
 '''
@@ -568,9 +591,7 @@ def _login_block(login: _LoginSpec) -> str:
     # A deactivated account is checked after the hash comparison, not instead of
     # it, so "deactivated" and "wrong password" stay indistinguishable to a
     # caller and cost the same.
-    active_check = (
-        f' or not record.get("{login.active_field}")' if login.active_field else ""
-    )
+    active_check = f' or not record.get("{login.active_field}")' if login.active_field else ""
     return f'''
 
 class LoginRequest(BaseModel):

@@ -1,4 +1,5 @@
 """Healer CLI commands — fix, status, tickets, show, approve, reject, history."""
+
 from __future__ import annotations
 
 import getpass
@@ -59,8 +60,7 @@ def _resolve_ticket_id(queue: HealerQueue, short_id: str) -> str | None:
         return matches[0].id
     if len(matches) > 1:
         console.print(
-            f"[red]Ambiguous ID prefix '{short_id}' — "
-            f"matches {len(matches)} tickets:[/red]"
+            f"[red]Ambiguous ID prefix '{short_id}' — matches {len(matches)} tickets:[/red]"
         )
         for t in matches:
             console.print(f"  {t.id[:8]}  {t.status.value}  {t.raw_error[:40]}")
@@ -106,8 +106,7 @@ def fix(path: str) -> None:
     warnings = [e for e in errors if e.severity != "error"]
 
     console.print(
-        f"Found [red]{len(real_errors)} errors[/red] and "
-        f"[yellow]{len(warnings)} warnings[/yellow]"
+        f"Found [red]{len(real_errors)} errors[/red] and [yellow]{len(warnings)} warnings[/yellow]"
     )
 
     # Create tickets for real errors
@@ -145,8 +144,7 @@ def fix(path: str) -> None:
         console.print(f"  [green]{applied} fixes applied automatically[/green]")
     if proposed:
         console.print(
-            f"  [yellow]{proposed} fixes awaiting approval[/yellow] "
-            "(run: specora healer tickets)"
+            f"  [yellow]{proposed} fixes awaiting approval[/yellow] (run: specora healer tickets)"
         )
     if failed:
         console.print(f"  [red]{failed} tickets failed[/red]")
@@ -154,8 +152,11 @@ def fix(path: str) -> None:
 
 @healer.command()
 @click.option(
-    "--output", "output_format", type=click.Choice(["text", "json"]),
-    default="text", help="Output format",
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help="Output format",
 )
 def status(output_format: str) -> None:
     """Show queue statistics."""
@@ -165,6 +166,7 @@ def status(output_format: str) -> None:
 
     if output_format == "json":
         import json as json_mod
+
         click.echo(json_mod.dumps({"by_status": by_status, "total": stats["total"]}))
         return
 
@@ -194,16 +196,32 @@ def status(output_format: str) -> None:
 
 
 @healer.command()
-@click.option("--status", "status_filter", type=click.Choice(
-    ["queued", "analyzing", "proposed", "approved", "applied", "failed", "rejected"],
-    case_sensitive=False,
-), default=None, help="Filter by ticket status")
-@click.option("--priority", "priority_filter", type=click.Choice(
-    ["critical", "high", "medium", "low"], case_sensitive=False,
-), default=None, help="Filter by priority")
 @click.option(
-    "--output", "output_format", type=click.Choice(["text", "json"]),
-    default="text", help="Output format",
+    "--status",
+    "status_filter",
+    type=click.Choice(
+        ["queued", "analyzing", "proposed", "approved", "applied", "failed", "rejected"],
+        case_sensitive=False,
+    ),
+    default=None,
+    help="Filter by ticket status",
+)
+@click.option(
+    "--priority",
+    "priority_filter",
+    type=click.Choice(
+        ["critical", "high", "medium", "low"],
+        case_sensitive=False,
+    ),
+    default=None,
+    help="Filter by priority",
+)
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help="Output format",
 )
 def tickets(status_filter: str | None, priority_filter: str | None, output_format: str) -> None:
     """List healer tickets with optional filters."""
@@ -216,6 +234,7 @@ def tickets(status_filter: str | None, priority_filter: str | None, output_forma
 
     if output_format == "json":
         import json as json_mod
+
         result = [
             {
                 "id": t.id,
@@ -339,8 +358,7 @@ def approve(ticket_id: str) -> None:
         ticket = queue.get_ticket(full_id)
         if ticket and ticket.status != TicketStatus.PROPOSED:
             console.print(
-                f"[red]Cannot approve:[/red] ticket is '{ticket.status.value}' "
-                f"(must be 'proposed')"
+                f"[red]Cannot approve:[/red] ticket is '{ticket.status.value}' (must be 'proposed')"
             )
         else:
             console.print("[red]Failed to approve ticket[/red]")
@@ -369,8 +387,7 @@ def reject(ticket_id: str, reason: str) -> None:
         ticket = queue.get_ticket(full_id)
         if ticket and ticket.status != TicketStatus.PROPOSED:
             console.print(
-                f"[red]Cannot reject:[/red] ticket is '{ticket.status.value}' "
-                f"(must be 'proposed')"
+                f"[red]Cannot reject:[/red] ticket is '{ticket.status.value}' (must be 'proposed')"
             )
         else:
             console.print("[red]Failed to reject ticket[/red]")

@@ -35,9 +35,7 @@ class TestProposeEntity:
         "name", ["../../../../tmp/pwn", "..", "a/b", "", "1abc", None, {"name": "x"}]
     )
     def test_unusable_name_writes_nothing(self, contracts_base: Path, name: object) -> None:
-        result = chat._propose_entity(
-            {"name": name, "fields": {"a": {"type": "string"}}}, "shop"
-        )
+        result = chat._propose_entity({"name": name, "fields": {"a": {"type": "string"}}}, "shop")
         assert result.startswith("Rejected")
         assert list(contracts_base.rglob("*.contract.yaml")) == []
 
@@ -67,9 +65,7 @@ class TestProposeEntity:
         assert (contracts_base / "shop" / "routes" / "widgets.contract.yaml").exists()
         assert (contracts_base / "shop" / "pages" / "widgets.contract.yaml").exists()
 
-    def test_workflow_binding_reaches_the_route(
-        self, contracts_base: Path, monkeypatch
-    ) -> None:
+    def test_workflow_binding_reaches_the_route(self, contracts_base: Path, monkeypatch) -> None:
         _answer_yes(monkeypatch)
         chat._propose_entity(
             {
@@ -85,9 +81,7 @@ class TestProposeEntity:
         assert "workflow/shop/widget_lifecycle" in route["requires"]
         assert any(ep["path"] == "/{id}/state" for ep in route["spec"]["endpoints"])
 
-    def test_existing_contract_is_never_clobbered(
-        self, contracts_base: Path, monkeypatch
-    ) -> None:
+    def test_existing_contract_is_never_clobbered(self, contracts_base: Path, monkeypatch) -> None:
         target = contracts_base / "shop" / "entities" / "widget.contract.yaml"
         target.write_text("original", encoding="utf-8")
         _answer_yes(monkeypatch)
@@ -98,9 +92,7 @@ class TestProposeEntity:
         assert result.startswith("Rejected")
         assert target.read_text(encoding="utf-8") == "original"
 
-    def test_declined_proposal_writes_nothing(
-        self, contracts_base: Path, monkeypatch
-    ) -> None:
+    def test_declined_proposal_writes_nothing(self, contracts_base: Path, monkeypatch) -> None:
         monkeypatch.setattr(chat.console, "input", lambda *_a, **_k: "n")
         chat._propose_entity({"name": "widget", "fields": {"a": {"type": "string"}}}, "shop")
         assert list(contracts_base.rglob("*.contract.yaml")) == []

@@ -22,6 +22,7 @@ Breaker
 Both read from the ticket database, so the sidecar and the CLI see the same
 accounting rather than each keeping a private counter.
 """
+
 from __future__ import annotations
 
 import json

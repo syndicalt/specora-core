@@ -1,4 +1,5 @@
 """Tests for the Next.js frontend generator."""
+
 import json
 
 import pytest
@@ -72,9 +73,9 @@ def helpdesk_ir() -> DomainIR:
 
 
 class TestGenScaffold:
-
     def test_generates_package_json(self, helpdesk_ir: DomainIR) -> None:
         from forge.targets.nextjs.gen_scaffold import generate_scaffold
+
         files = generate_scaffold(helpdesk_ir)
         pkg = next(f for f in files if f.path == "frontend/package.json")
         data = json.loads(pkg.content)
@@ -85,6 +86,7 @@ class TestGenScaffold:
 
     def test_generates_tailwind_config(self, helpdesk_ir: DomainIR) -> None:
         from forge.targets.nextjs.gen_scaffold import generate_scaffold
+
         files = generate_scaffold(helpdesk_ir)
         tw = next(f for f in files if f.path == "frontend/tailwind.config.js")
         assert "content" in tw.content
@@ -92,6 +94,7 @@ class TestGenScaffold:
 
     def test_generates_utils(self, helpdesk_ir: DomainIR) -> None:
         from forge.targets.nextjs.gen_scaffold import generate_scaffold
+
         files = generate_scaffold(helpdesk_ir)
         utils = next(f for f in files if f.path == "frontend/src/lib/utils.ts")
         assert "cn(" in utils.content
@@ -110,7 +113,6 @@ def _file(files, path: str):
 
 
 class TestGenAPIClient:
-
     def test_generates_api_client(self, helpdesk_ir: DomainIR) -> None:
         files = _api_client_files(helpdesk_ir)
         # The base URL lives in config.ts so that session.ts can read it
@@ -147,9 +149,9 @@ class TestGenAPIClient:
 
 
 class TestNextJSGenerator:
-
     def test_generates_complete_frontend(self, helpdesk_ir: DomainIR) -> None:
         from forge.targets.nextjs.generator import NextJSGenerator
+
         gen = NextJSGenerator()
         files = gen.generate(helpdesk_ir)
 
@@ -184,6 +186,7 @@ class TestNextJSGenerator:
 
     def test_no_pages_returns_empty(self) -> None:
         from forge.targets.nextjs.generator import NextJSGenerator
+
         gen = NextJSGenerator()
         files = gen.generate(DomainIR(domain="empty"))
         assert files == []
@@ -276,7 +279,6 @@ class TestMultiDomain:
 
 
 class TestAuth:
-
     @pytest.fixture
     def authed_ir(self, helpdesk_ir: DomainIR) -> DomainIR:
         from forge.ir.model import InfraIR
@@ -312,9 +314,7 @@ class TestAuth:
     def test_access_token_is_never_persisted(self, authed_ir: DomainIR) -> None:
         from forge.targets.nextjs.generator import NextJSGenerator
 
-        session = _file(
-            NextJSGenerator().generate(authed_ir), "frontend/src/lib/session.ts"
-        )
+        session = _file(NextJSGenerator().generate(authed_ir), "frontend/src/lib/session.ts")
         # localStorage is never acceptable here (the prose says so; assert no
         # code touches it), and the access token lives only in the closure.
         assert "window.localStorage" not in session.content
@@ -333,9 +333,7 @@ class TestAuth:
     def test_sign_out_goes_through_the_logout_endpoint(self, authed_ir: DomainIR) -> None:
         from forge.targets.nextjs.generator import NextJSGenerator
 
-        session = _file(
-            NextJSGenerator().generate(authed_ir), "frontend/src/lib/session.ts"
-        )
+        session = _file(NextJSGenerator().generate(authed_ir), "frontend/src/lib/session.ts")
         assert "/auth/logout" in session.content
         assert 'credentials: "include"' in session.content
         # The tab-scoped signed-out marker existed only because nothing could
@@ -358,9 +356,7 @@ class TestAuth:
     def test_open_redirect_is_rejected(self, authed_ir: DomainIR) -> None:
         from forge.targets.nextjs.generator import NextJSGenerator
 
-        session = _file(
-            NextJSGenerator().generate(authed_ir), "frontend/src/lib/session.ts"
-        )
+        session = _file(NextJSGenerator().generate(authed_ir), "frontend/src/lib/session.ts")
         assert 'raw.startsWith("//")' in session.content
 
 
@@ -378,9 +374,7 @@ class TestImmutableFields:
         helpdesk_ir.pages[0].views = [{"type": "table", "columns": ["subject"]}]
         return helpdesk_ir
 
-    def test_immutable_fields_appear_on_the_create_form(
-        self, append_only_ir: DomainIR
-    ) -> None:
+    def test_immutable_fields_appear_on_the_create_form(self, append_only_ir: DomainIR) -> None:
         from forge.targets.nextjs.generator import NextJSGenerator
 
         form = _file(
@@ -393,9 +387,7 @@ class TestImmutableFields:
         # ...and each is gated off the edit form, where it cannot be changed.
         assert form.content.count("{!isEdit && (") == 2
 
-    def test_no_edit_page_when_nothing_is_updatable(
-        self, append_only_ir: DomainIR
-    ) -> None:
+    def test_no_edit_page_when_nothing_is_updatable(self, append_only_ir: DomainIR) -> None:
         from forge.targets.nextjs.generator import NextJSGenerator
 
         files = NextJSGenerator().generate(append_only_ir)
@@ -413,13 +405,10 @@ class TestImmutableFields:
         form = _file(files, "frontend/src/components/TicketForm.tsx")
         assert 'name="subject"' in form.content
         assert "{!isEdit && (" not in form.content
-        assert "frontend/src/app/tickets/[id]/edit/page.tsx" in {
-            f.path for f in files
-        }
+        assert "frontend/src/app/tickets/[id]/edit/page.tsx" in {f.path for f in files}
 
 
 class TestContractDefectsFailLoudly:
-
     def test_column_naming_a_missing_field_is_rejected(self, helpdesk_ir: DomainIR) -> None:
         from forge.targets.base import GenerationError
         from forge.targets.nextjs.generator import NextJSGenerator
@@ -442,3 +431,235 @@ class TestContractDefectsFailLoudly:
         # Still writable: it belongs on the create/edit form.
         assert 'name="api_secret"' in form.content
         assert 'type="password"' in form.content
+
+
+class TestFrontendIsReproducible:
+    """The dependency graph must be a function of the contracts, not of the clock.
+
+    `package.json` used to declare caret ranges and ship no lockfile, so the
+    `npm install` inside Dockerfile.frontend re-resolved 143 packages on every
+    build. Two builds of identical contracts could ship different code.
+    """
+
+    def test_no_dependency_is_a_range(self, helpdesk_ir: DomainIR) -> None:
+        from forge.targets.nextjs.gen_scaffold import generate_scaffold
+
+        pkg = json.loads(_file(generate_scaffold(helpdesk_ir), "frontend/package.json").content)
+        declared = {**pkg["dependencies"], **pkg["devDependencies"]}
+        assert declared, "the frontend must declare dependencies"
+        ranged = {n: v for n, v in declared.items() if not v[0].isdigit()}
+        assert ranged == {}, f"these are ranges, not versions: {ranged}"
+
+    def test_a_lockfile_is_emitted(self, helpdesk_ir: DomainIR) -> None:
+        from forge.targets.nextjs.gen_scaffold import generate_scaffold
+
+        files = generate_scaffold(helpdesk_ir)
+        lock = json.loads(_file(files, "frontend/package-lock.json").content)
+        assert lock["lockfileVersion"] >= 3
+        # Named for the project it sits in, not for the template it came from.
+        assert lock["name"] == "helpdesk-frontend"
+        assert lock["packages"][""]["name"] == "helpdesk-frontend"
+
+    def test_every_locked_package_carries_an_integrity_hash(self, helpdesk_ir: DomainIR) -> None:
+        """A pinned version without a hash still trusts the registry's bytes."""
+        from forge.targets.nextjs.gen_scaffold import generate_scaffold
+
+        files = generate_scaffold(helpdesk_ir)
+        lock = json.loads(_file(files, "frontend/package-lock.json").content)
+        unhashed = [k for k, v in lock["packages"].items() if k and not v.get("integrity")]
+        assert unhashed == []
+        assert len(lock["packages"]) > 100, "the point is the transitive tree, not the 13 direct"
+
+    def test_lockfile_and_manifest_agree(self, helpdesk_ir: DomainIR) -> None:
+        """`npm ci` aborts when they disagree, so disagreement must not generate."""
+        from forge.targets.nextjs.gen_scaffold import generate_scaffold
+
+        files = generate_scaffold(helpdesk_ir)
+        pkg = json.loads(_file(files, "frontend/package.json").content)
+        lock = json.loads(_file(files, "frontend/package-lock.json").content)
+        for group in ("dependencies", "devDependencies"):
+            assert lock["packages"][""][group] == pkg[group]
+            for name, version in pkg[group].items():
+                assert lock["packages"][f"node_modules/{name}"]["version"] == version
+
+    def test_a_lockfile_that_drifted_from_the_pins_fails_generation(self) -> None:
+        from forge.targets.base import GenerationError
+        from forge.targets.nextjs import npm_deps
+
+        stale = json.loads(npm_deps._LOCKFILE.read_text(encoding="utf-8"))
+        stale["packages"]["node_modules/next"]["version"] = "0.0.1"
+        with pytest.raises(GenerationError, match="regen_frontend_lock"):
+            npm_deps._verify(stale)
+
+    def test_a_lockfile_missing_an_integrity_hash_fails_generation(self) -> None:
+        from forge.targets.base import GenerationError
+        from forge.targets.nextjs import npm_deps
+
+        stripped = json.loads(npm_deps._LOCKFILE.read_text(encoding="utf-8"))
+        del stripped["packages"]["node_modules/next"]["integrity"]
+        with pytest.raises(GenerationError, match="integrity"):
+            npm_deps._verify(stripped)
+
+    def test_dockerfile_installs_from_the_lockfile(self, helpdesk_ir: DomainIR) -> None:
+        from forge.targets.nextjs.generator import NextJSGenerator
+
+        dockerfile = _file(
+            NextJSGenerator().generate(helpdesk_ir), "frontend/Dockerfile.frontend"
+        ).content
+        # The RUN lines, not the comments around them — the comments name
+        # `npm install` precisely to say why it is not used.
+        runs = [ln for ln in dockerfile.splitlines() if ln.startswith("RUN ") and "npm" in ln]
+        install = next(ln for ln in runs if " ci" in ln or " install" in ln)
+        # `npm install` would re-resolve and silently rewrite the lockfile;
+        # `npm ci` installs it exactly and fails if it is absent or has drifted.
+        assert "npm ci" in install
+        assert "npm install" not in install
+        # Otherwise the install runs lifecycle scripts from 143 packages as root.
+        assert "--ignore-scripts" in install
+        # ci is only reproducible if the lockfile actually reaches the image.
+        assert "COPY package.json package-lock.json ./" in dockerfile
+
+
+def _referencing_ir() -> DomainIR:
+    """An `entry` entity with two columns pointing at the same `account`."""
+    from forge.ir.model import ReferenceIR
+
+    account = EntityIR(
+        fqn="entity/ledger/account",
+        name="account",
+        domain="ledger",
+        table_name="accounts",
+        fields=[
+            FieldIR(name="id", type="uuid", computed="uuid"),
+            FieldIR(name="name", type="string", required=True),
+        ],
+    )
+    entry = EntityIR(
+        fqn="entity/ledger/entry",
+        name="entry",
+        domain="ledger",
+        table_name="entries",
+        fields=[
+            FieldIR(name="id", type="uuid", computed="uuid"),
+            FieldIR(
+                name="debit_account_id",
+                type="uuid",
+                reference=ReferenceIR(target_entity="entity/ledger/account", display_field="name"),
+            ),
+            FieldIR(
+                name="credit_account_id",
+                type="uuid",
+                reference=ReferenceIR(target_entity="entity/ledger/account", display_field="name"),
+            ),
+        ],
+    )
+    page = PageIR(
+        fqn="page/ledger/entries",
+        name="entries",
+        domain="ledger",
+        route="/entries",
+        entity_fqn="entity/ledger/entry",
+        views=[
+            {
+                "type": "table",
+                "columns": ["debit_account_id", "credit_account_id"],
+            }
+        ],
+    )
+    routes = [
+        RouteIR(
+            fqn=f"route/ledger/{name}s",
+            name=f"{name}s",
+            domain="ledger",
+            entity_fqn=f"entity/ledger/{name}",
+            base_path=f"/{name}s",
+            endpoints=[
+                EndpointIR(method="GET", path="/", summary="List"),
+                EndpointIR(method="GET", path="/{id}", summary="Get"),
+            ],
+        )
+        for name in ("account", "entry")
+    ]
+    return DomainIR(domain="ledger", entities=[account, entry], pages=[page], routes=routes)
+
+
+def _components(ir: DomainIR):
+    from forge.targets.nextjs.context import FrontendContext
+    from forge.targets.nextjs.gen_components import generate_components
+
+    return generate_components(FrontendContext(ir))
+
+
+class TestReferenceResolution:
+    """Pins: display names were resolved from the referenced collection's first
+    page, so any id outside it rendered as `unresolved` forever — and looked
+    correct in every fixture small enough to fit in one page."""
+
+    def test_the_lookup_asks_for_the_ids_on_screen(self) -> None:
+        table = _file(_components(_referencing_ir()), "frontend/src/components/EntryTable.tsx")
+
+        assert "referenceKey(" in table.content
+        assert ".list({ limit: ids.length, ids })" in table.content
+        assert "limit: 200" not in table.content
+
+    def test_two_columns_on_one_target_share_a_lookup_that_covers_both(self) -> None:
+        """A single lookup built from only the first column leaves the second
+        rendering against a map that never contained its ids."""
+        table = _file(_components(_referencing_ir()), "frontend/src/components/EntryTable.tsx")
+
+        assert (
+            "referenceKey(items.flatMap((item) => "
+            "[item.debit_account_id, item.credit_account_id]))" in table.content
+        )
+        assert table.content.count("const accountKey = useMemo(") == 1
+
+    def test_the_effect_reruns_only_when_the_ids_change(self) -> None:
+        """Depending on the rows themselves refetches on every render that
+        hands the component an equal-but-new array."""
+        table = _file(_components(_referencing_ir()), "frontend/src/components/EntryTable.tsx")
+
+        assert "}, [accountKey]);" in table.content
+        assert "}, []);" not in table.content
+
+    def test_the_detail_view_resolves_its_own_record(self) -> None:
+        detail = _file(_components(_referencing_ir()), "frontend/src/components/EntryDetail.tsx")
+
+        assert "referenceKey([data.debit_account_id, data.credit_account_id])" in detail.content
+
+    def test_an_entity_with_no_references_imports_no_hooks(self, helpdesk_ir: DomainIR) -> None:
+        """Generated modules import exactly what they use."""
+        table = _file(_components(helpdesk_ir), "frontend/src/components/TicketTable.tsx")
+
+        assert "useEffect" not in table.content
+        assert "referenceKey" not in table.content
+
+    def test_the_form_picker_still_loads_a_page_of_choices(self) -> None:
+        """A picker has to offer choices the record does not yet point at, so
+        it is the one place a page of the target is still the right request."""
+        from forge.targets.nextjs.gen_components import REFERENCE_OPTIONS_LIMIT
+
+        form = _file(_components(_referencing_ir()), "frontend/src/components/EntryForm.tsx")
+
+        assert f".list({{ limit: {REFERENCE_OPTIONS_LIMIT} }})" in form.content
+
+
+class TestBatchLookupClient:
+    def test_the_client_sends_one_parameter_per_id(self, helpdesk_ir: DomainIR) -> None:
+        """Repeated parameters, not a delimited value: an identifier is opaque
+        and could contain whatever separator was chosen."""
+        api = _file(_api_client_files(helpdesk_ir), "frontend/src/lib/api.ts")
+
+        assert 'query.append("id__in", String(id))' in api.content
+        assert "ids?: readonly string[];" in api.content
+
+    def test_the_client_bounds_the_batch_at_the_servers_own_ceiling(
+        self, helpdesk_ir: DomainIR
+    ) -> None:
+        from forge.targets.fastapi_prod.gen_routes import MAX_FILTER_IDS
+
+        files = _api_client_files(helpdesk_ir)
+        config = _file(files, "frontend/src/lib/config.ts")
+        api = _file(files, "frontend/src/lib/api.ts")
+
+        assert f"export const MAX_LOOKUP_IDS = {MAX_FILTER_IDS};" in config.content
+        assert ".slice(0, MAX_LOOKUP_IDS)" in api.content

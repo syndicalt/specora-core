@@ -106,9 +106,7 @@ export interface Book {
         assert set(_fields(entities["Book"])) == {"title"}
 
     def test_reference_fields(self, tmp_path: Path) -> None:
-        entities, _ = _analyze(
-            tmp_path, "export interface Order {\n  customerId: string;\n}\n"
-        )
+        entities, _ = _analyze(tmp_path, "export interface Order {\n  customerId: string;\n}\n")
         field = _fields(entities["Order"])["customerId"]
         assert field.reference_entity == "customer"
         assert field.type == "uuid"

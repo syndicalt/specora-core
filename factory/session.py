@@ -190,8 +190,7 @@ class Session:
 
         if not isinstance(data, dict):
             raise SessionError(
-                f"Session file {self._session_path} holds a "
-                f"{type(data).__name__}, not an object."
+                f"Session file {self._session_path} holds a {type(data).__name__}, not an object."
             )
 
         self.state = SessionState.from_dict(data)

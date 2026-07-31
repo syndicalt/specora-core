@@ -7,6 +7,7 @@ Usage:
     specora-init helpdesk
     specora-init my_app --path C:/projects/
 """
+
 from __future__ import annotations
 
 import shutil
@@ -112,6 +113,7 @@ def init_project(name: str, path: str) -> None:
     # .env.example — generate a comprehensive one
     from forge.ir.model import DomainIR
     from forge.targets.fastapi_prod.gen_docker import _generate_env_example
+
     env_file = _generate_env_example(DomainIR(domain=domain), has_auth=False)
     (project_dir / ".env.example").write_text(env_file.content, encoding="utf-8")
 

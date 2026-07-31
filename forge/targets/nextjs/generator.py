@@ -1,4 +1,5 @@
 """Next.js frontend generator — orchestrates all sub-generators."""
+
 from __future__ import annotations
 
 from forge.ir.model import DomainIR

@@ -1,4 +1,5 @@
 """Pipeline orchestrator — analyze, propose, apply, notify."""
+
 from __future__ import annotations
 
 import logging
@@ -31,7 +32,6 @@ AUTO_ACTOR = "healer:auto"
 
 
 class HealerPipeline:
-
     def __init__(
         self,
         queue: HealerQueue,
@@ -55,9 +55,7 @@ class HealerPipeline:
         try:
             return float(raw)
         except ValueError:
-            logger.warning(
-                "%s is not a number (%r); using default", AUTO_APPLY_CONFIDENCE_ENV, raw
-            )
+            logger.warning("%s is not a number (%r); using default", AUTO_APPLY_CONFIDENCE_ENV, raw)
             return DEFAULT_AUTO_APPLY_MIN_CONFIDENCE
 
     def process_next(self) -> bool:
@@ -108,33 +106,40 @@ class HealerPipeline:
         fixable_by = getattr(classification, "fixable_by", "contract")
         if fixable_by == "generator":
             self.queue.update_status(
-                ticket.id, TicketStatus.FAILED,
+                ticket.id,
+                TicketStatus.FAILED,
                 resolution_note=(
-                    "Generator bug — not fixable by contract. "
-                    "Fix the generator and regenerate."
+                    "Generator bug — not fixable by contract. Fix the generator and regenerate."
                 ),
             )
-            self.notifier.notify(ticket, event="failed",
-                message=f"⚙️ Generator bug (not a contract issue): {ticket.raw_error[:100]}")
+            self.notifier.notify(
+                ticket,
+                event="failed",
+                message=f"⚙️ Generator bug (not a contract issue): {ticket.raw_error[:100]}",
+            )
             return
 
         if fixable_by == "data":
             self.queue.update_status(
-                ticket.id, TicketStatus.FAILED,
+                ticket.id,
+                TicketStatus.FAILED,
                 resolution_note=(
-                    "Data issue — not fixable by contract. "
-                    "Check the data or database constraints."
+                    "Data issue — not fixable by contract. Check the data or database constraints."
                 ),
             )
-            self.notifier.notify(ticket, event="failed",
-                message=f"💾 Data issue (not a contract issue): {ticket.raw_error[:100]}")
+            self.notifier.notify(
+                ticket,
+                event="failed",
+                message=f"💾 Data issue (not a contract issue): {ticket.raw_error[:100]}",
+            )
             return
 
         # Stage 3: Propose (only for contract-fixable errors)
         proposal = self._propose(ticket)
         if proposal is None:
             self.queue.update_status(
-                ticket.id, TicketStatus.FAILED,
+                ticket.id,
+                TicketStatus.FAILED,
                 resolution_note="No contract fix could be proposed",
             )
             self.notifier.notify(ticket, event="failed", message="No contract fix proposed")
@@ -154,7 +159,9 @@ class HealerPipeline:
             if ticket.tier == 1:
                 logger.info(
                     "Ticket %s held for approval: confidence %.2f < %.2f",
-                    ticket.id[:8], proposal.confidence, threshold,
+                    ticket.id[:8],
+                    proposal.confidence,
+                    threshold,
                 )
             self.notifier.notify(ticket, event="proposed", message=proposal.explanation)
 
@@ -203,7 +210,10 @@ class HealerPipeline:
         from healer.proposer.llm_proposer import propose_llm_fix
 
         return propose_llm_fix(
-            ticket, contract, diff_root=self.diff_root, governor=self.governor,
+            ticket,
+            contract,
+            diff_root=self.diff_root,
+            governor=self.governor,
         )
 
     def _apply_and_notify(self, ticket: HealerTicket, actor: str = "") -> None:
@@ -214,15 +224,19 @@ class HealerPipeline:
         contract_path = self._find_contract_path(ticket.contract_fqn or "")
         if contract_path is None:
             self.queue.update_status(
-                ticket.id, TicketStatus.FAILED,
+                ticket.id,
+                TicketStatus.FAILED,
                 resolution_note=f"Contract file not found for {ticket.contract_fqn}",
             )
             self.notifier.notify(ticket, event="failed", message="Contract file not found")
             return
 
         result = apply_fix(
-            ticket.proposal, contract_path,
-            diff_root=self.diff_root, ticket_id=ticket.id, actor=actor,
+            ticket.proposal,
+            contract_path,
+            diff_root=self.diff_root,
+            ticket_id=ticket.id,
+            actor=actor,
         )
         if result.success:
             note = f"Fix applied (approved by {actor or 'unattributed'})"
@@ -234,8 +248,9 @@ class HealerPipeline:
             # Auto-regenerate code from updated contracts
             regen_result = self._auto_regenerate()
             if regen_result:
-                self.notifier.notify(ticket, event="applied",
-                    message=f"🔄 Auto-regenerated: {regen_result}")
+                self.notifier.notify(
+                    ticket, event="applied", message=f"🔄 Auto-regenerated: {regen_result}"
+                )
         else:
             self.queue.update_status(ticket.id, TicketStatus.FAILED, resolution_note=result.error)
             self.notifier.notify(ticket, event="failed", message=result.error)
@@ -254,8 +269,7 @@ class HealerPipeline:
 
             # Find the domain directory (parent of entities/workflows/etc.)
             domain_dirs = [
-                d for d in self.domains_root.iterdir()
-                if d.is_dir() and not d.name.startswith(".")
+                d for d in self.domains_root.iterdir() if d.is_dir() and not d.name.startswith(".")
             ]
             if not domain_dirs:
                 logger.warning("No domain directories found for regeneration")
@@ -306,9 +320,13 @@ class HealerPipeline:
             return None
         kind, domain, name = parts
         kind_dirs = {
-            "entity": "entities", "workflow": "workflows",
-            "page": "pages", "route": "routes",
-            "agent": "agents", "mixin": "mixins", "infra": "infra",
+            "entity": "entities",
+            "workflow": "workflows",
+            "page": "pages",
+            "route": "routes",
+            "agent": "agents",
+            "mixin": "mixins",
+            "infra": "infra",
         }
         subdir = kind_dirs.get(kind, kind + "s")
         path = self.domains_root / domain / subdir / f"{name}.contract.yaml"

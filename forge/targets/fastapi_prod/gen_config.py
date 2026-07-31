@@ -12,6 +12,7 @@ happily with no security:
     declares an auth contract; otherwise every token in the deployment is
     forgeable by anyone who has read the repository.
 """
+
 from __future__ import annotations
 
 from forge.ir.model import DomainIR
@@ -91,62 +92,66 @@ def generate_config(ir: DomainIR) -> GeneratedFile:
     ]
 
     if has_auth:
-        lines.extend([
-            "# Auth",
-            "# AUTH_ENABLED is not a kill switch. The domain declares authentication in",
-            f"# infra/{ir.domain}/auth, so an image that can turn it off at boot is an",
-            "# image that can ship with none.",
-            "AUTH_ENABLED = True",
-            'if not _flag("AUTH_ENABLED", "true"):',
-            "    raise RuntimeError(",
-            '        "AUTH_ENABLED=false, but this application\'s contracts declare "',
-            '        "authentication. Remove the override; there is no unauthenticated "',
-            '        "mode for this build."',
-            "    )",
-            "",
-            'AUTH_PROVIDER = os.getenv("AUTH_PROVIDER", "jwt")',
-            'AUTH_SECRET = os.getenv("AUTH_SECRET", "")',
-            f'if AUTH_SECRET in ("", "{PLACEHOLDER_SECRET}"):',
-            "    raise RuntimeError(",
-            '        "AUTH_SECRET is unset or still the placeholder shipped in "',
-            '        ".env.example. Every JWT this process issues would be forgeable. "',
-            "        \"Generate one with: openssl rand -hex 32\"",
-            "    )",
-            "# RFC 7518 §3.2: an HMAC-SHA256 key shorter than the hash output weakens",
-            "# the signature to something worth brute-forcing offline.",
-            f"if len(AUTH_SECRET) < {MIN_SECRET_LENGTH}:",
-            "    raise RuntimeError(",
-            "        f\"AUTH_SECRET is {len(AUTH_SECRET)} characters; "
-            f'at least {MIN_SECRET_LENGTH} "',
-            "        \"are required. Generate one with: openssl rand -hex 32\"",
-            "    )",
-            "",
-            "# Bound into every token and required on every token it verifies, so a",
-            "# token minted for another Specora deployment sharing this secret is not",
-            "# accepted here.",
-            f'AUTH_ISSUER = os.getenv("AUTH_ISSUER", "specora:{ir.domain}")',
-            f'AUTH_AUDIENCE = os.getenv("AUTH_AUDIENCE", "specora:{ir.domain}")',
-            "",
-            "# Access tokens are short-lived because they cannot be revoked; the",
-            "# refresh token is the revocable half of the pair (see auth/token_store).",
-            'AUTH_TOKEN_EXPIRE_MINUTES = int(os.getenv("AUTH_TOKEN_EXPIRE_MINUTES", "15"))',
-            "AUTH_REFRESH_TOKEN_EXPIRE_DAYS = int(",
-            '    os.getenv("AUTH_REFRESH_TOKEN_EXPIRE_DAYS", "14")',
-            ")",
-            "",
-            "# The refresh cookie is Secure by default. Browsers exempt",
-            "# http://localhost, so this does not need relaxing for local work — only",
-            "# for a deployment deliberately served over plain HTTP.",
-            'AUTH_COOKIE_SECURE = _flag("AUTH_COOKIE_SECURE", "true")',
-            "",
-        ])
+        lines.extend(
+            [
+                "# Auth",
+                "# AUTH_ENABLED is not a kill switch. The domain declares authentication in",
+                f"# infra/{ir.domain}/auth, so an image that can turn it off at boot is an",
+                "# image that can ship with none.",
+                "AUTH_ENABLED = True",
+                'if not _flag("AUTH_ENABLED", "true"):',
+                "    raise RuntimeError(",
+                '        "AUTH_ENABLED=false, but this application\'s contracts declare "',
+                '        "authentication. Remove the override; there is no unauthenticated "',
+                '        "mode for this build."',
+                "    )",
+                "",
+                'AUTH_PROVIDER = os.getenv("AUTH_PROVIDER", "jwt")',
+                'AUTH_SECRET = os.getenv("AUTH_SECRET", "")',
+                f'if AUTH_SECRET in ("", "{PLACEHOLDER_SECRET}"):',
+                "    raise RuntimeError(",
+                '        "AUTH_SECRET is unset or still the placeholder shipped in "',
+                '        ".env.example. Every JWT this process issues would be forgeable. "',
+                '        "Generate one with: openssl rand -hex 32"',
+                "    )",
+                "# RFC 7518 §3.2: an HMAC-SHA256 key shorter than the hash output weakens",
+                "# the signature to something worth brute-forcing offline.",
+                f"if len(AUTH_SECRET) < {MIN_SECRET_LENGTH}:",
+                "    raise RuntimeError(",
+                '        f"AUTH_SECRET is {len(AUTH_SECRET)} characters; '
+                f'at least {MIN_SECRET_LENGTH} "',
+                '        "are required. Generate one with: openssl rand -hex 32"',
+                "    )",
+                "",
+                "# Bound into every token and required on every token it verifies, so a",
+                "# token minted for another Specora deployment sharing this secret is not",
+                "# accepted here.",
+                f'AUTH_ISSUER = os.getenv("AUTH_ISSUER", "specora:{ir.domain}")',
+                f'AUTH_AUDIENCE = os.getenv("AUTH_AUDIENCE", "specora:{ir.domain}")',
+                "",
+                "# Access tokens are short-lived because they cannot be revoked; the",
+                "# refresh token is the revocable half of the pair (see auth/token_store).",
+                'AUTH_TOKEN_EXPIRE_MINUTES = int(os.getenv("AUTH_TOKEN_EXPIRE_MINUTES", "15"))',
+                "AUTH_REFRESH_TOKEN_EXPIRE_DAYS = int(",
+                '    os.getenv("AUTH_REFRESH_TOKEN_EXPIRE_DAYS", "14")',
+                ")",
+                "",
+                "# The refresh cookie is Secure by default. Browsers exempt",
+                "# http://localhost, so this does not need relaxing for local work — only",
+                "# for a deployment deliberately served over plain HTTP.",
+                'AUTH_COOKIE_SECURE = _flag("AUTH_COOKIE_SECURE", "true")',
+                "",
+            ]
+        )
     else:
-        lines.extend([
-            "# Auth — no infra auth contract in this domain, so no auth code is",
-            "# generated and nothing reads this beyond diagnostics.",
-            "AUTH_ENABLED = False",
-            "",
-        ])
+        lines.extend(
+            [
+                "# Auth — no infra auth contract in this domain, so no auth code is",
+                "# generated and nothing reads this beyond diagnostics.",
+                "AUTH_ENABLED = False",
+                "",
+            ]
+        )
 
     return GeneratedFile(
         path="backend/config.py",

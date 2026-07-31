@@ -47,11 +47,7 @@ def creatable_fields(entity: EntityIR) -> list[FieldIR]:
     creation, and write-only means write-*able* — a password hash that could not
     be set would leave the account with no credential.
     """
-    return [
-        f
-        for f in entity.fields
-        if not f.computed and not is_lifecycle_managed(entity, f)
-    ]
+    return [f for f in entity.fields if not f.computed and not is_lifecycle_managed(entity, f)]
 
 
 def updatable_fields(entity: EntityIR) -> list[FieldIR]:

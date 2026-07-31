@@ -9,6 +9,7 @@ Local models are a first-class target for Specora because contract healing
 sends whole contracts to the model, and a self-hosted endpoint is the only
 configuration where that never leaves the machine.
 """
+
 from __future__ import annotations
 
 import logging

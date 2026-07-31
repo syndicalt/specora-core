@@ -56,9 +56,7 @@ class TestReferences:
             _entity(
                 "ticket",
                 fields=[
-                    ExtractedField(
-                        name="assigned_agent_id", reference_entity="assigned_agent"
-                    )
+                    ExtractedField(name="assigned_agent_id", reference_entity="assigned_agent")
                 ],
             ),
         ]
@@ -121,9 +119,7 @@ class TestWorkflows:
 class TestRoutes:
     def test_route_entity_names_are_normalized(self) -> None:
         routes = [
-            ExtractedRoute(
-                path="/x", method="GET", entity_name="MyThing", source_file="r.py"
-            )
+            ExtractedRoute(path="/x", method="GET", entity_name="MyThing", source_file="r.py")
         ]
         _, routes, _ = cross_reference([], routes, "shop")
         assert routes[0].entity_name == "my_thing"

@@ -1,5 +1,6 @@
 # healer/queue.py
 """SQLite-backed priority queue for healer tickets."""
+
 from __future__ import annotations
 
 import json
@@ -121,21 +122,27 @@ class HealerQueue:
                 resolved_at, resolution_note)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                d["id"], d["source"], d["contract_fqn"], d["error_type"],
-                d["raw_error"], json.dumps(d["context"]),
-                d["status"], d["tier"], d["priority"],
+                d["id"],
+                d["source"],
+                d["contract_fqn"],
+                d["error_type"],
+                d["raw_error"],
+                json.dumps(d["context"]),
+                d["status"],
+                d["tier"],
+                d["priority"],
                 PRIORITY_ORDER.get(ticket.priority, 2),
                 json.dumps(d["proposal"]) if d["proposal"] else None,
-                d["created_at"], d["resolved_at"], d["resolution_note"],
+                d["created_at"],
+                d["resolved_at"],
+                d["resolution_note"],
             ),
         )
         self._conn.commit()
         return ticket.id
 
     def get_ticket(self, ticket_id: str) -> Optional[HealerTicket]:
-        row = self._conn.execute(
-            "SELECT * FROM tickets WHERE id = ?", (ticket_id,)
-        ).fetchone()
+        row = self._conn.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
         if row is None:
             return None
         return self._row_to_ticket(row)
@@ -295,9 +302,16 @@ class HealerQueue:
                 output_tokens, latency_ms, cost_usd, ok, error, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                ticket_id, usage.model_id, usage.provider, usage.prompt_version,
-                usage.input_tokens, usage.output_tokens, usage.latency_ms,
-                usage.cost_usd, 1 if usage.ok else 0, usage.error,
+                ticket_id,
+                usage.model_id,
+                usage.provider,
+                usage.prompt_version,
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.latency_ms,
+                usage.cost_usd,
+                1 if usage.ok else 0,
+                usage.error,
                 datetime.now(timezone.utc).isoformat(),
             ),
         )

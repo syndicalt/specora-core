@@ -1,4 +1,5 @@
 """Save and load DomainIR snapshots for migration diffing."""
+
 from __future__ import annotations
 
 import json

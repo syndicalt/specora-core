@@ -103,9 +103,7 @@ class TestEntityInterviewFallback:
 
 class TestWorkflowInterviewFallback:
     def test_user_states_survive_a_provider_outage(self, monkeypatch) -> None:
-        monkeypatch.setattr(
-            Interview, "ask_user", lambda self, prompt: "todo, in progress, done"
-        )
+        monkeypatch.setattr(Interview, "ask_user", lambda self, prompt: "todo, in progress, done")
 
         data = workflow_interview.run_workflow_interview(
             FakeEngine(error=RuntimeError("provider down")), "task_lifecycle", "todo", "task"

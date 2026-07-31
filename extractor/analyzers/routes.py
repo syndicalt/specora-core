@@ -138,8 +138,8 @@ def _router_prefixes(tree: ast.Module) -> dict[str, str]:
         if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
             continue
         factory = node.value.func
-        factory_name = factory.attr if isinstance(factory, ast.Attribute) else getattr(
-            factory, "id", ""
+        factory_name = (
+            factory.attr if isinstance(factory, ast.Attribute) else getattr(factory, "id", "")
         )
         if factory_name not in ("APIRouter", "Blueprint", "FastAPI", "Flask", "Router"):
             continue

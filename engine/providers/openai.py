@@ -6,6 +6,7 @@ message in the conversation (OpenAI's chat completions expect this).
 Also works with OpenAI-compatible endpoints (xAI, Google Gemini, etc.)
 by accepting an optional ``base_url``.
 """
+
 from __future__ import annotations
 
 import json

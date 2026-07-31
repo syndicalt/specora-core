@@ -6,6 +6,7 @@ Webhook auto-detects format from URL:
   - Teams (webhook.office.com) → {"text": "..."}
   - Everything else → raw JSON payload
 """
+
 from __future__ import annotations
 
 import json
@@ -31,13 +32,16 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 ICONS = {
-    "queued": "📥", "applied": "✅", "failed": "❌",
-    "proposed": "💡", "rejected": "🚫", "approved": "👍",
+    "queued": "📥",
+    "applied": "✅",
+    "failed": "❌",
+    "proposed": "💡",
+    "rejected": "🚫",
+    "approved": "👍",
 }
 
 
 class Notifier:
-
     def __init__(
         self,
         log_path: Path = Path(".forge/healer/notifications.jsonl"),
@@ -78,8 +82,11 @@ class Notifier:
         event = payload["event"]
         fqn = payload.get("contract_fqn") or "unknown"
         colors = {
-            "queued": "yellow", "applied": "green", "failed": "red",
-            "proposed": "cyan", "rejected": "red",
+            "queued": "yellow",
+            "applied": "green",
+            "failed": "red",
+            "proposed": "cyan",
+            "rejected": "red",
         }
         color = colors.get(event, "white")
         message = payload.get("message", "")[:80]

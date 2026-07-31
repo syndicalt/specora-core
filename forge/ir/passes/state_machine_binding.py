@@ -44,7 +44,8 @@ def bind_state_machines(ir: DomainIR) -> DomainIR:
             # nothing to bind.
             logger.debug(
                 "Entity '%s' references workflow '%s' which was not found",
-                entity.fqn, workflow_ref,
+                entity.fqn,
+                workflow_ref,
             )
             continue
 

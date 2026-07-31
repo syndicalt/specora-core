@@ -42,6 +42,7 @@ from dataclasses import dataclass
 
 from forge.ir.model import DomainIR, EntityIR, FieldIR
 from forge.targets.base import BaseGenerator, GeneratedFile, GenerationError, provenance_header
+from forge.targets.filters import declared_filter_fields
 from forge.targets.naming import sql_ident, sql_literal
 from forge.targets.typemap import pg_column_type
 
@@ -105,39 +106,7 @@ class SchemaContext:
                 if f.name == KEYSET_TIEBREAK_FIELD and f.type == "uuid":
                     primary_keys[entity.fqn] = (f.name, pg_column_type(f.type, f.constraints))
                     break
-        return cls(tables, primary_keys, _declared_filter_fields(ir))
-
-
-def _declared_filter_fields(ir: DomainIR) -> dict[str, frozenset[str]]:
-    """Collect, per entity, the field names some contract declares filterable.
-
-    Sources are the Page contract's `filters` block and its views' `filterable`
-    lists, plus a Route contract's `global_behaviors.filters`. Everything is
-    intersected with the entity's real field names, because those blocks also
-    carry named saved-filter identifiers (`quick: [my_checkouts]`) that are not
-    columns at all.
-    """
-    fields_by_entity = {e.fqn: {f.name for f in e.fields} for e in ir.entities}
-    declared: dict[str, set[str]] = {fqn: set() for fqn in fields_by_entity}
-
-    def record(entity_fqn: str, candidates: object) -> None:
-        if entity_fqn not in declared or not isinstance(candidates, list):
-            return
-        declared[entity_fqn].update(
-            c for c in candidates if isinstance(c, str) and c in fields_by_entity[entity_fqn]
-        )
-
-    for page in ir.pages:
-        for group in page.filters.values():
-            record(page.entity_fqn, group)
-        for view in page.views:
-            if isinstance(view, dict):
-                record(page.entity_fqn, view.get("filterable"))
-
-    for route in ir.routes:
-        record(route.entity_fqn, route.global_behaviors.get("filters"))
-
-    return {fqn: frozenset(names) for fqn, names in declared.items()}
+        return cls(tables, primary_keys, declared_filter_fields(ir))
 
 
 def default_clause(field: FieldIR) -> str:
@@ -395,9 +364,7 @@ def updated_at_trigger_statements(entities: list[EntityIR], *, replace: bool) ->
     `updated_at`) because plpgsql cannot assign to a `NEW` field chosen at
     runtime without dynamic SQL.
     """
-    columns = sorted(
-        {f.name for e in entities for f in e.fields if f.computed == "now_on_update"}
-    )
+    columns = sorted({f.name for e in entities for f in e.fields if f.computed == "now_on_update"})
     if not columns:
         return []
 

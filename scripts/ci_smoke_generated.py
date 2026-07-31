@@ -92,13 +92,13 @@ def smoke_one(app_root: Path) -> None:
         )
 
     # A login endpoint must never issue a token without verifying a credential.
-    login = client.post(
-        "/auth/login", json={"id": "anon", "email": "a@b.c", "role": "admin"}
-    )
+    login = client.post("/auth/login", json={"id": "anon", "email": "a@b.c", "role": "admin"})
     if login.status_code == 200:
-        body = login.json() if login.headers.get("content-type", "").startswith(
-            "application/json"
-        ) else {}
+        body = (
+            login.json()
+            if login.headers.get("content-type", "").startswith("application/json")
+            else {}
+        )
         check(
             "access_token" not in body,
             f"{label}: POST /auth/login issued a token with no credential check",
@@ -140,8 +140,7 @@ def smoke_one(app_root: Path) -> None:
     ]
     check(
         bool(collections),
-        f"{label}: no generated collection endpoint found to test the "
-        f"pagination bound against",
+        f"{label}: no generated collection endpoint found to test the pagination bound against",
     )
     for path in collections:
         huge = client.get(f"{path}?limit=999999999", headers=auth_headers)
