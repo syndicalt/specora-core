@@ -64,7 +64,7 @@ spc = "forge.cli.main:cli"
 specora-init = "forge.cli.init_project:init_project"
 
 [tool.setuptools.packages.find]
-include = ["forge*", "factory*", "engine*", "healer*", "advisor*", "extractor*", "spec*"]
+include = ["forge*", "factory*", "engine*", "healer*", "extractor*", "spec*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.yaml", "*.json", "*.meta.yaml", "*.contract.yaml"]
@@ -95,14 +95,48 @@ select = [
     "N",     # pep8 naming
     "RSE",   # raise with unnecessary parentheses
     "YTT",   # sys.version comparisons
+    "B",     # bugbear — B904 exception chaining matters here, see below
+    "S",     # bandit security rules, minus the nine listed under `ignore`
 ]
+
+# The nine bandit rules below are switched off individually rather than by
+# dropping the whole `S` family. That keeps 98 of bandit's 107 rules live —
+# weak hashes (S324), disabled certificate verification (S501), `yaml.load`
+# (S506), `pickle` (S301), bind-all-interfaces (S104) — instead of the zero a
+# blanket exclusion would leave. Each exclusion below is a false positive for
+# this codebase, verified rather than assumed, and named so a future reader can
+# re-test the claim instead of trusting the list.
+ignore = [
+    # `assert` is what a pytest suite is made of. 809 of the 847 S hits.
+    "S101",
+    # S105/S106 match on the *identifier*, not the value. Every hit is a
+    # constant naming an environment variable or a contract field —
+    # INGEST_TOKEN_ENV, PLACEHOLDER_SECRET, _DEFAULT_PASSWORD_FIELD. No secret
+    # is hardcoded anywhere; the app refuses to boot on a placeholder secret.
+    "S105",
+    "S106",
+    # A literal "/tmp/x" inside a test's assertion string.
+    "S108",
+    # One hit: retry backoff jitter in engine/retry.py, so concurrent healer
+    # tickets do not wake on the same tick. Spreading retries is not a
+    # cryptographic use and `secrets` would be the wrong tool.
+    "S311",
+    # forge/cli/repl.py's `/shell` escape hatch. `shell=True` survives there
+    # deliberately and only for text the user typed at the prompt: cmd_shell
+    # raises RuntimeError unless called with typed_by_user=True, and the
+    # LLM-routing path dispatches through an allowlist that never builds a
+    # command string. os.system is the constant "cls"/"clear". Editor launch is
+    # an argv list via shlex.split, never a shell.
+    "S602",
+    "S603",
+    "S605",
+    # Generated SQL. Identifiers are compile-time constants routed through
+    # naming.sql_ident (which always quotes); values are always $n placeholders.
+    # That is the safe construction, and it is what these rules cannot see.
+    "S608",
+]
+
 # Not enabled, and why:
-#   B  (bugbear) — 2 outstanding: engine/providers/zai.py:40 B904 loses the
-#      exception chain, forge/targets/migrations/differ.py:85 B007. Worth
-#      turning on once both are fixed.
-#   S  (bandit) — 679 of the 714 hits are S101 (`assert` in tests), which is
-#      what a test suite is made of. Enabling it would require a blanket
-#      per-file ignore for tests/, i.e. enabling nothing.
 #   UP (pyupgrade) — 93 hits, almost all UP045 (`Optional[X]` -> `X | None`).
-#      Mechanical and auto-fixable, but the affected files span workstreams
-#      still in flight.
+#      Mechanical and auto-fixable, but it would rewrite generated-code
+#      templates whose output is pinned by tests; worth a dedicated pass.

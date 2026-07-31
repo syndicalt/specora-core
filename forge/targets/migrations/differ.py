@@ -82,7 +82,7 @@ def _diff_entity_fields(old: EntityIR, new: EntityIR) -> list[SchemaChange]:
             ))
 
     # Removed fields
-    for name, f in old_fields.items():
+    for name in old_fields:
         if name not in new_fields:
             changes.append(SchemaChange(
                 change_type="drop_column",

@@ -36,11 +36,15 @@ def sign_zai_token(api_key: str) -> str:
     """
     try:
         import jwt
-    except ImportError:
+    except ImportError as exc:
+        # Chained deliberately: without `from exc` the original ImportError is
+        # discarded, so a *transitive* import failure inside an installed pyjwt
+        # is reported as "pyjwt is not installed" and the user reinstalls a
+        # package that was there all along.
         raise ImportError(
             "The 'pyjwt' package is required for Z.AI. "
             "Install it with: pip install pyjwt"
-        )
+        ) from exc
 
     parts = api_key.split(".", 1)
     if len(parts) != 2:
