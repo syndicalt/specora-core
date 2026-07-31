@@ -212,10 +212,16 @@ def _generate_dockerfile(ir: DomainIR) -> GeneratedFile:
 ARG PYTHON_IMAGE={_PYTHON_IMAGE}
 
 # ── Build stage ──────────────────────────────────────────────────────────────
-# Everything needed to *install* dependencies stays here: pip, setuptools, and
-# a C toolchain for the architectures where asyncpg or argon2-cffi have no
-# wheel. None of it reaches the runtime image, so an attacker with code
-# execution in the container has no compiler and no package installer.
+# The C toolchain lives here and nowhere else. asyncpg and argon2-cffi publish
+# wheels for the common platforms but not for all of them, and the alternative
+# to a build stage is either a runtime image that ships gcc or a build that
+# fails on any architecture without a prebuilt wheel.
+#
+# This does not remove pip from the runtime image — the Python base image
+# provides its own, and deleting it would mean hardcoding a site-packages path
+# that PYTHON_IMAGE can be overridden out from under. What actually denies an
+# attacker somewhere to install to is the read-only root filesystem set in
+# docker-compose.yml.
 FROM ${{PYTHON_IMAGE}} AS builder
 
 # Ahead of the COPY so a requirements change does not re-run apt.
@@ -345,7 +351,15 @@ exec uvicorn backend.app:app \\
     --no-server-header
 '''
     )
-    return GeneratedFile(path="entrypoint.sh", content=content, provenance=f"domain/{ir.domain}")
+    return GeneratedFile(
+        path="entrypoint.sh",
+        content=content,
+        provenance=f"domain/{ir.domain}",
+        # The Dockerfile chmods its own copy, so the image works either way. On
+        # disk it must be executable too: a script that runs in the container
+        # and not in the bundle is a difference an operator finds the hard way.
+        executable=True,
+    )
 
 
 # =============================================================================
@@ -820,8 +834,12 @@ def _generate_env_example(ir: DomainIR, has_auth: bool) -> GeneratedFile:
         "# Database",
         "# =============================================================================",
         "",
-        "# Under docker-compose this comes from secrets/database_url instead.",
-        "DATABASE_URL=postgresql://specora:specora@localhost:5432/specora",
+        "# Left commented out on purpose. Under docker-compose the DSN — which",
+        "# carries the database password — comes from secrets/database_url, and",
+        "# setting both DATABASE_URL and DATABASE_URL_FILE is a boot failure by",
+        "# design. Uncomment only for a deployment that is not using the compose",
+        "# stack, and put a real password in it.",
+        "# DATABASE_URL=postgresql://specora:CHANGEME@localhost:5432/specora",
         "DATABASE_BACKEND=postgres  # postgres | memory",
         "",
         "# Pool ceiling is this container's concurrency limit for database work.",

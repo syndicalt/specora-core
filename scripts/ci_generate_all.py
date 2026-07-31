@@ -35,6 +35,7 @@ def main() -> int:
     args = ap.parse_args()
 
     sys.path.insert(0, str(args.repo))
+    from forge.bundle import copy_contracts
     from forge.ir.compiler import Compiler
     from forge.targets.fastapi_prod.generator import (
         DockerGenerator,
@@ -75,7 +76,13 @@ def main() -> int:
                     p = target / f.path
                     p.parent.mkdir(parents=True, exist_ok=True)
                     p.write_text(f.content, encoding="utf-8")
+                    if getattr(f, "executable", False):
+                        p.chmod(p.stat().st_mode | 0o111)
                     count += 1
+            # The Healer sidecar mounts ./domains and heals the contracts it
+            # finds there. Without this the generated stack ships a self-healing
+            # loop with nothing to heal, and CI would never notice.
+            count += len(copy_contracts(domain_dir, target))
             print(f"  ok    {name}: {count} files")
         except Exception as e:
             failures.append(f"{name}: {type(e).__name__}: {e}")

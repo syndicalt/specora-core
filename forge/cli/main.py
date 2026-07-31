@@ -43,6 +43,7 @@ from factory.cli.migrate import factory_migrate
 from factory.cli.new import factory_new
 from factory.cli.refine import factory_refine
 from factory.cli.visualize import factory_visualize
+from forge.bundle import copy_contracts
 from forge.cli.init_project import init_project
 from healer.cli.commands import healer as healer_group
 
@@ -256,10 +257,21 @@ def generate(path: str, target: tuple[str, ...], output: str) -> None:
                 # Shell scripts must use LF line endings for Linux containers
                 newline = "\n" if f.path.endswith(".sh") else None
                 file_path.write_text(f.content, encoding="utf-8", newline=newline)
+                if getattr(f, "executable", False):
+                    file_path.chmod(file_path.stat().st_mode | 0o111)
                 console.print(f"  [green]wrote[/green] {f.path}")
                 total_files += 1
         except Exception as e:
             console.print(f"  [red]Error in {gen.name()}:[/red] {e}")
+
+    # Ship the contracts alongside the code they produced. The generated stack
+    # mounts ./domains into the Healer, which has nothing to heal without them.
+    try:
+        contracts = copy_contracts(Path(path), output_path)
+        console.print(f"  [green]bundled[/green] {len(contracts)} contracts")
+        total_files += len(contracts)
+    except (OSError, ValueError) as e:
+        console.print(f"  [red]Could not bundle contracts:[/red] {e}")
 
     console.print(f"\n[green]Generated {total_files} files[/green] in {output_path}")
 

@@ -62,11 +62,18 @@ class GeneratedFile:
         path: Relative path for the output file (e.g., "backend/models.py").
         content: The full file content including provenance header.
         provenance: FQN(s) of the contract(s) that produced this file.
+        executable: Whether the written file should carry the execute bit. A
+            generator that emits an operator-facing script (`init-secrets.sh`)
+            otherwise produces something the instructions tell you to run and
+            the filesystem refuses to, and the only workaround is to document
+            `bash script.sh` — which quietly teaches operators to run scripts
+            through an interpreter rather than trusting the shebang.
     """
 
     path: str
     content: str
     provenance: str
+    executable: bool = False
 
 
 def validate_generated_files(files: list[GeneratedFile]) -> list[GeneratedFile]:

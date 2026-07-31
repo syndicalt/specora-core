@@ -78,7 +78,7 @@ class TestApplicationImage:
         assert "COPY database/ database/" in dockerfile
         assert "--chown" not in dockerfile
 
-    def test_build_tooling_does_not_reach_the_runtime_image(self) -> None:
+    def test_the_c_toolchain_does_not_reach_the_runtime_image(self) -> None:
         dockerfile = _files()["Dockerfile"]
         assert "AS builder" in dockerfile
         assert "AS runtime" in dockerfile
@@ -307,3 +307,21 @@ class TestEnvExample:
 
     def test_it_points_operators_at_the_file_based_convention(self) -> None:
         assert "_FILE" in _files()[".env.example"]
+
+    def test_it_sets_nothing_the_compose_secrets_also_supply(self) -> None:
+        # `spc forge generate` copies this file to .env, compose loads .env into
+        # the app container, and setting both a secret and its _FILE form is a
+        # boot failure. A shipped DATABASE_URL therefore broke `up` outright.
+        compose = _compose(auth=True)
+        file_backed = {
+            key[: -len("_FILE")]
+            for service in compose["services"].values()
+            for key in (service.get("environment") or {})
+            if key.endswith("_FILE")
+        }
+        assigned = {
+            line.split("=", 1)[0]
+            for line in _files(auth=True)[".env.example"].splitlines()
+            if "=" in line and not line.startswith("#") and line.split("=", 1)[1].strip()
+        }
+        assert not (file_backed & assigned)
