@@ -6,9 +6,12 @@ between runs.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-from factory.session import Session
+import pytest
+
+from factory.session import Session, SessionError
 
 
 class TestSessionCreate:
@@ -105,3 +108,45 @@ class TestSessionAddWorkflowData:
         assert session.state.workflow_data["book_lifecycle"] == {
             "states": ["available", "checked_out"]
         }
+
+
+class TestSessionDurability:
+    """The session is saved after every interview answer, including on Ctrl-C."""
+
+    def test_failed_save_leaves_the_previous_session_intact(self, tmp_path: Path) -> None:
+        session = Session(root=tmp_path)
+        session.start(domain="library", description="first")
+        session.save()
+
+        session.state.description = "second"
+
+        def boom(*_args, **_kwargs):
+            raise OSError("disk full")
+
+        original_replace = os.replace
+        os.replace = boom
+        try:
+            with pytest.raises(SessionError):
+                session.save()
+        finally:
+            os.replace = original_replace
+
+        reloaded = Session(root=tmp_path)
+        reloaded.resume()
+        assert reloaded.state.description == "first"
+
+    def test_resume_rejects_a_non_object_session_file(self, tmp_path: Path) -> None:
+        path = tmp_path / Session.SESSION_DIR / Session.SESSION_FILE
+        path.parent.mkdir(parents=True)
+        path.write_text('["not", "an", "object"]', encoding="utf-8")
+
+        with pytest.raises(SessionError, match="not an object"):
+            Session(root=tmp_path).resume()
+
+    def test_resume_reports_a_corrupt_session_file(self, tmp_path: Path) -> None:
+        path = tmp_path / Session.SESSION_DIR / Session.SESSION_FILE
+        path.parent.mkdir(parents=True)
+        path.write_text("{not json", encoding="utf-8")
+
+        with pytest.raises(SessionError, match="Failed to parse"):
+            Session(root=tmp_path).resume()

@@ -50,7 +50,7 @@ See [Healer Documentation](healer.md) for the full pipeline.
 
 ### Tier 4: Extractor (Reverse-Engineering)
 
-The Extractor analyzes existing Python and TypeScript codebases to produce Specora contracts. It scans source files, extracts entities and routes, cross-references relationships, detects workflows, and emits `.contract.yaml` files.
+The Extractor analyzes existing Python and TypeScript codebases to produce Specora contracts. It scans source files, extracts entities and routes, cross-references relationships, detects workflows, and emits `.contract.yaml` files. Analysis is pure static reading — Python via `ast`, TypeScript via a brace-matching declaration reader — with no imports, no execution, and no network calls. Everything it cannot read is reported, and every emitted contract is validated against its meta-schema before it is written.
 
 See [Extractor Documentation](extractor.md) for details.
 

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from forge.ir.model import DomainIR, EntityIR, FieldIR
 from forge.targets.base import BaseGenerator, GeneratedFile, provenance_header
+from forge.targets.fields import creatable_fields, disclosable_fields
 from forge.targets.naming import class_name
 from forge.targets.typemap import ts_type
 
@@ -102,7 +103,13 @@ class TypeScriptGenerator(BaseGenerator):
 
         lines.append(f"export interface {interface_name} {{")
 
-        for field in entity.fields:
+        # The response shape, so write-only fields are absent. Emitting every
+        # field here declared `password_hash: string` — non-optional — on an
+        # interface describing a payload the API strips the field from. Client
+        # code reading it type-checks and is `undefined` at runtime, which is
+        # the worst of both: the type asserts a guarantee the server
+        # deliberately breaks, and TypeScript reports nothing.
+        for field in disclosable_fields(entity):
             lines.extend(self._generate_field(field, interface_by_fqn))
 
         # Add _links for HATEOAS
@@ -111,6 +118,20 @@ class TypeScriptGenerator(BaseGenerator):
 
         lines.append("}")
         lines.append("")
+
+        # Write-only fields still have to be *sendable*, so the create shape is
+        # emitted separately rather than folded into the response interface.
+        writable = creatable_fields(entity)
+        if any(f.sensitive for f in writable):
+            lines.append(
+                f"/** Request body for creating a {entity.name}. Carries the "
+                f"write-only fields that {interface_name} deliberately omits. */"
+            )
+            lines.append(f"export interface {interface_name}Create {{")
+            for field in writable:
+                lines.extend(self._generate_field(field, interface_by_fqn))
+            lines.append("}")
+            lines.append("")
 
         return "\n".join(lines)
 

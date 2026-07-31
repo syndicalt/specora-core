@@ -111,6 +111,15 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install --prefer-offline --no-audit --no-fund
 COPY . .
+
+# Next.js substitutes NEXT_PUBLIC_* into the client bundle during `next build`,
+# so this has to arrive as a build argument. Passing it at run time instead —
+# which is what docker-compose.yml used to do — leaves the fallback in
+# src/lib/config.ts baked into the JavaScript the browser runs, and the
+# override is silently ignored. The value must be an address the *browser* can
+# reach, never a compose-internal service name.
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 RUN npm run build
 
 FROM node:20-slim AS runner

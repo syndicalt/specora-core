@@ -26,7 +26,32 @@ def normalize_name(name: str) -> str:
     camelCase   → snake_case:  todoList → todo_list
     Mixed_Case  → snake_case:  Task_lifecycle → task_lifecycle
     Already ok  → unchanged:   task → task
+
+    **This is a formatting pass, not a validation gate, and its output is not
+    safe to put in a filesystem path.** It fixes casing; it does not remove
+    path separators or traversal segments, so `../../etc/passwd` and
+    `/abs/path` come back materially unchanged.
+
+    That is deliberate. Silently rewriting `../../etc/passwd` into
+    `etc_passwd` would hand back a name nobody asked for and leave the caller
+    believing its input was fine — the same silent-degradation failure this
+    engine exists to eliminate. A name carrying a path separator is an error to
+    be reported, not a formatting problem to be tidied away.
+
+    Callers turning a name into a path MUST gate the result:
+    `factory.paths.safe_name` normalizes and then rejects anything that does
+    not match `^[a-z][a-z0-9_]*$`. Both the Factory (LLM tool-call output) and
+    the Extractor (names scanned out of a third-party codebase) reached a file
+    write without that gate and were one join away from writing outside the
+    contracts root.
+
+    Raises:
+        ValueError: If *name* is not a string. `str(some_dict)` would otherwise
+            produce a plausible-looking name from a malformed LLM response.
     """
+    if not isinstance(name, str):
+        raise ValueError(f"Contract name must be a string, got {type(name).__name__}")
+
     # Split on PascalCase/camelCase boundaries
     parts = _PASCAL_SPLIT.sub("_", name).lower()
     # Collapse multiple underscores

@@ -9,61 +9,100 @@ from extractor.analyzers.python_models import analyze_python_models
 from extractor.analyzers.routes import analyze_routes
 from extractor.analyzers.typescript_types import analyze_typescript_types
 from extractor.cross_ref import cross_reference
-from extractor.models import AnalysisReport, FileRole
-from extractor.scanner import scan_directory
+from extractor.models import AnalysisReport, ExtractedEntity, FileRole, safe_contract_name
+from extractor.scanner import ScanLimits, scan_directory
 
 
-def synthesize(source_path: Path, domain: str) -> AnalysisReport:
+def synthesize(
+    source_path: Path,
+    domain: str,
+    *,
+    limits: ScanLimits | None = None,
+) -> AnalysisReport:
     """Run the full 4-pass extraction pipeline.
 
     Pass 1: Scan and classify files
     Pass 2: Extract entities from model files, routes from route files
     Pass 3: Cross-reference and detect workflows
     Pass 4: Build the AnalysisReport
-    """
-    # Pass 1: Scan
-    files = scan_directory(source_path)
 
-    # Group by role and language
+    Every file the pipeline declines to analyze — unreadable, unparseable, over
+    the size limit, outside the scan root — lands in `report.warnings`. The
+    report is a claim about a codebase, so what it could not see is part of it.
+    """
+    warnings: list[str] = []
+
+    files = scan_directory(source_path, limits=limits, warnings=warnings)
+
     python_models = [f.path for f in files if f.role == FileRole.MODEL and f.language == "python"]
     ts_models = [f.path for f in files if f.role == FileRole.MODEL and f.language == "typescript"]
     route_files = [f.path for f in files if f.role == FileRole.ROUTE]
 
-    # Pass 2: Extract
-    entities = []
-    if python_models:
-        entities.extend(analyze_python_models(python_models, source_path))
-    if ts_models:
-        entities.extend(analyze_typescript_types(ts_models, source_path))
+    unsupported = {
+        f.language for f in files if f.role == FileRole.MODEL and f.language in ("sql", "prisma")
+    }
+    for language in sorted(unsupported):
+        warnings.append(f"{language} schema files were found but there is no {language} analyzer")
 
-    routes = []
-    if route_files:
-        routes = analyze_routes(route_files, source_path)
+    entities = analyze_python_models(python_models, source_path, warnings=warnings)
+    entities.extend(analyze_typescript_types(ts_models, source_path, warnings=warnings))
+    routes = analyze_routes(route_files, source_path, warnings=warnings)
 
-    # Pass 3: Cross-reference
-    entities, routes, workflows = cross_reference(entities, routes, domain)
+    # Merging runs before cross-referencing: a model, its DTO projections, and
+    # its TypeScript interface all normalize to one name, and cross-referencing
+    # a pre-merge list produced one duplicate workflow (and one duplicate
+    # warning) per occurrence.
+    for entity in entities:
+        entity.name = safe_contract_name(entity.name)
+    entities = _merge_duplicates(entities)
+    entities, routes, workflows = cross_reference(entities, routes, domain, warnings=warnings)
 
-    # Deduplicate entities by name
-    seen: dict[str, int] = {}
-    unique_entities = []
-    for e in entities:
-        if e.name not in seen:
-            seen[e.name] = len(unique_entities)
-            unique_entities.append(e)
-        else:
-            # Merge fields from duplicate into existing
-            existing = unique_entities[seen[e.name]]
-            existing_field_names = {f.name for f in existing.fields}
-            for f in e.fields:
-                if f.name not in existing_field_names:
-                    existing.fields.append(f)
-
-    # Pass 4: Build report
     return AnalysisReport(
         domain=domain,
-        entities=unique_entities,
+        entities=entities,
         routes=routes,
         workflows=workflows,
         files_scanned=len(files),
         files_analyzed=len(python_models) + len(ts_models) + len(route_files),
+        warnings=warnings,
     )
+
+
+def _merge_duplicates(entities: list[ExtractedEntity]) -> list[ExtractedEntity]:
+    """Fold same-named entities together, keeping the richest description.
+
+    A model, its Create/Update/Response projections, and its TypeScript
+    interface all normalize to one name. Their fields are unioned; a field seen
+    as required anywhere is required, because a projection that omits it is a
+    narrower view, not a contradiction.
+    """
+    merged: dict[str, ExtractedEntity] = {}
+
+    for entity in entities:
+        existing = merged.get(entity.name)
+        if existing is None:
+            merged[entity.name] = entity
+            continue
+
+        by_name = {f.name: f for f in existing.fields}
+        for field in entity.fields:
+            current = by_name.get(field.name)
+            if current is None:
+                existing.fields.append(field)
+                by_name[field.name] = field
+                continue
+            current.required = current.required or field.required
+            current.sensitive = current.sensitive or field.sensitive
+            current.description = current.description or field.description
+            current.enum_values = current.enum_values or field.enum_values
+            current.reference_entity = current.reference_entity or field.reference_entity
+            current.reference_edge = current.reference_edge or field.reference_edge
+            if not current.constraints:
+                current.constraints = field.constraints
+
+        existing.description = existing.description or entity.description
+        if not existing.state_field and entity.state_field:
+            existing.state_field = entity.state_field
+            existing.state_values = entity.state_values
+
+    return list(merged.values())

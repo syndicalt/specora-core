@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import yaml
-
-from forge.normalize import normalize_contract
+from factory.emitters.base import EmitterError, render
 
 
 def emit_workflow(name: str, domain: str, data: dict) -> str:
@@ -14,16 +12,54 @@ def emit_workflow(name: str, domain: str, data: dict) -> str:
         name: Workflow name (snake_case).
         domain: Domain namespace.
         data: Interview data with keys: initial, states, transitions,
-              guards, description.
+              guards, side_effects, description.
 
     Returns:
         Valid YAML string matching the Workflow meta-schema envelope.
-    """
-    spec: dict = {}
 
-    spec["initial"] = data["initial"]
-    spec["states"] = data["states"]
-    spec["transitions"] = data["transitions"]
+    Raises:
+        EmitterError: If the state machine is incoherent — a missing key, or
+            an initial state or transition target that is not declared. The
+            meta-schema cannot see those, so an unchecked contract would pass
+            validation and then fail the compiler's semantic pass instead.
+    """
+    for key in ("initial", "states", "transitions"):
+        if key not in data:
+            raise EmitterError(f"workflow '{name}': missing required key '{key}'")
+
+    states = data["states"]
+    transitions = data["transitions"]
+    if not isinstance(states, dict) or not states:
+        raise EmitterError(f"workflow '{name}': 'states' must be a non-empty mapping")
+    if not isinstance(transitions, dict):
+        raise EmitterError(f"workflow '{name}': 'transitions' must be a mapping")
+
+    declared = set(states)
+    initial = data["initial"]
+    if initial not in declared:
+        raise EmitterError(
+            f"workflow '{name}': initial state {initial!r} is not declared. "
+            f"Declared states: {sorted(declared)}"
+        )
+
+    undeclared = set()
+    for source, targets in transitions.items():
+        if source not in declared:
+            undeclared.add(source)
+        for target in targets if isinstance(targets, list) else [targets]:
+            if target not in declared:
+                undeclared.add(target)
+    if undeclared:
+        raise EmitterError(
+            f"workflow '{name}': transitions reference undeclared state(s) "
+            f"{sorted(undeclared)}. Declared states: {sorted(declared)}"
+        )
+
+    spec: dict = {
+        "initial": initial,
+        "states": states,
+        "transitions": transitions,
+    }
 
     if data.get("guards"):
         spec["guards"] = data["guards"]
@@ -43,6 +79,4 @@ def emit_workflow(name: str, domain: str, data: dict) -> str:
         "spec": spec,
     }
 
-    normalize_contract(contract)
-
-    return yaml.dump(contract, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    return render(contract, what=f"workflow/{domain}/{name}")

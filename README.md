@@ -60,10 +60,12 @@ runtime error --> classify --> trace to contract --> propose fix --> approve -->
 
 ### Extractor -- The Reverse Engineer
 
-Point it at an existing codebase. It scans Python files, TypeScript files, route definitions, and database schemas, then synthesizes contracts that describe what already exists. Migration path from legacy code to contract-driven development.
+Point it at an existing codebase. It reads Python with `ast` (Pydantic, SQLAlchemy, dataclasses, TypedDict) and TypeScript declarations with a brace-matching parser, then synthesizes contracts that validate and compile. Nothing in the scanned tree is imported, executed, or sent anywhere. Everything it could not read is reported rather than dropped, and every entity is reviewed by you before it is written. Migration path from legacy code to contract-driven development.
+
+SQL and Prisma schemas are scanned and reported but not yet extracted; JavaScript is read only for route registrations. See [docs/extractor.md](docs/extractor.md) for what it does and does not recognise.
 
 ```bash
-spc extractor synthesize /path/to/existing/app --domain my_app
+spc extract /path/to/existing/app --domain my_app
 ```
 
 ---

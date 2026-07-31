@@ -2,7 +2,7 @@
 
 > **Note**: LLM providers are needed for Healer Tier 2-3 fixes, Factory contract authoring, and interactive chat. The Forge compiler (Tier 1) is purely deterministic and does not require an LLM. Your LLM coding agent (Claude Code, Cursor, Windsurf) is separate from the provider configured here -- the provider here is used by Specora Core's internal features.
 
-Specora Core supports six LLM providers for features that require AI: the Factory (contract authoring), the Healer (Tier 2-3 structural fixes), the Extractor (future enhancements), and interactive chat.
+Specora Core supports six LLM providers for features that require AI: the Factory (contract authoring), the Healer (Tier 2-3 structural fixes), and interactive chat. The Extractor does not use one: it is pure static analysis, and pointing an LLM at a codebase you are migrating would mean uploading it.
 
 The Forge compiler (Tier 1) does not use LLMs. It is purely deterministic.
 

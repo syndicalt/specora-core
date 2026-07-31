@@ -9,10 +9,11 @@ import click
 from rich.console import Console
 from rich.rule import Rule
 
-from extractor.emitter import emit_contracts
+from extractor.emitter import EmissionError, emit_contracts
+from extractor.models import safe_contract_name
 from extractor.reporter import display_report
+from extractor.scanner import ScanLimits
 from extractor.synthesizer import synthesize
-from forge.normalize import normalize_name
 
 console = Console()
 
@@ -23,7 +24,19 @@ console = Console()
     "--domain", "-d", default="", help="Domain name (auto-inferred from directory name if omitted)"
 )
 @click.option("--output", "-o", default="domains/", help="Output base directory")
-def extract(path: str, domain: str, output: str) -> None:
+@click.option(
+    "--max-file-kb",
+    default=ScanLimits().max_file_bytes // 1024,
+    show_default=True,
+    help="Skip source files larger than this.",
+)
+@click.option(
+    "--max-files",
+    default=ScanLimits().max_files,
+    show_default=True,
+    help="Stop scanning after this many source files.",
+)
+def extract(path: str, domain: str, output: str, max_file_kb: int, max_files: int) -> None:
     """Reverse-engineer a codebase into Specora contracts.
 
     Analyzes Python and TypeScript source files, extracts entities,
@@ -32,9 +45,8 @@ def extract(path: str, domain: str, output: str) -> None:
     source_path = Path(path)
 
     # Auto-infer domain name
-    if not domain:
-        domain = normalize_name(source_path.name)
-    domain = normalize_name(domain)
+    domain = safe_contract_name(domain or source_path.name, fallback="extracted")
+    limits = ScanLimits(max_file_bytes=max_file_kb * 1024, max_files=max_files)
 
     console.print()
     console.print(Rule(f"[bold magenta]Extracting: {source_path}[/bold magenta]", style="magenta"))
@@ -44,7 +56,7 @@ def extract(path: str, domain: str, output: str) -> None:
     # Run the 4-pass pipeline
     start = time.time()
     with console.status("[magenta]Scanning files…[/magenta]", spinner="dots"):
-        report = synthesize(source_path, domain)
+        report = synthesize(source_path, domain, limits=limits)
     elapsed = time.time() - start
 
     console.print(
@@ -83,7 +95,11 @@ def extract(path: str, domain: str, output: str) -> None:
         return
 
     # Emit
-    written = emit_contracts(report, output_dir, accepted_entities=accepted)
+    try:
+        written = emit_contracts(report, output_dir, accepted_entities=accepted)
+    except EmissionError as e:
+        console.print(f"  [bold red]Nothing written:[/bold red] {e}")
+        raise SystemExit(1) from e
 
     console.print()
     for p in written:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -12,6 +13,17 @@ from rich.syntax import Syntax
 from forge.parser.loader import load_all_contracts
 
 console = Console()
+
+# Mermaid node and edge names are bare tokens. Field names in particular have
+# no pattern in entity.meta.yaml, so anything outside this set has to be
+# folded away or the whole diagram fails to render.
+_IDENT_UNSAFE = re.compile(r"[^A-Za-z0-9_]+")
+
+
+def _ident(value: object) -> str:
+    """Fold an arbitrary contract value into a Mermaid-safe token."""
+    cleaned = _IDENT_UNSAFE.sub("_", str(value)).strip("_")
+    return cleaned or "unnamed"
 
 
 @click.command("visualize")
@@ -66,25 +78,27 @@ def _generate_er_diagram(contracts: dict[str, dict]) -> str:
     lines = ["erDiagram"]
 
     for _fqn, contract in sorted(entities.items()):
-        name = contract.get("metadata", {}).get("name", "?")
-        fields = contract.get("spec", {}).get("fields", {})
+        name = _ident((contract.get("metadata") or {}).get("name", "?"))
+        fields = (contract.get("spec") or {}).get("fields") or {}
 
         # Entity block
         lines.append(f"    {name} {{")
         for field_name, field_def in fields.items():
-            ftype = field_def.get("type", "string")
+            if not isinstance(field_def, dict):
+                continue
+            ftype = _ident(field_def.get("type", "string"))
             required = "PK" if field_name == "id" else ("FK" if field_def.get("references") else "")
-            lines.append(f"        {ftype} {field_name} {required}".rstrip())
+            lines.append(f"        {ftype} {_ident(field_name)} {required}".rstrip())
         lines.append("    }")
 
         # Relationships from references
         for field_name, field_def in fields.items():
-            ref = field_def.get("references", {})
-            if ref and "entity" in ref:
-                target_fqn = ref["entity"]
-                # Extract target name from FQN
-                target_name = target_fqn.split("/")[-1] if "/" in target_fqn else target_fqn
-                edge_label = ref.get("graph_edge", field_name)
+            if not isinstance(field_def, dict):
+                continue
+            ref = field_def.get("references") or {}
+            if isinstance(ref, dict) and "entity" in ref:
+                target_name = _ident(str(ref["entity"]).rsplit("/", 1)[-1])
+                edge_label = _ident(ref.get("graph_edge", field_name))
                 lines.append(f"    {name} ||--o{{ {target_name} : {edge_label}")
 
     return "\n".join(lines)
@@ -108,25 +122,17 @@ def _generate_state_diagrams(contracts: dict[str, dict]) -> str:
         if initial:
             lines.append(f"    [*] --> {initial}")
 
+        # workflow.meta.yaml declares transitions as a map of source state to
+        # a list of target states; nothing else is a valid contract.
         if isinstance(transitions, dict):
-            # Dict-of-lists format: { available: [checked_out, reserved], ... }
             for src, targets in transitions.items():
-                if isinstance(targets, list):
-                    for dst in targets:
-                        lines.append(f"    {src} --> {dst}")
-                elif isinstance(targets, str):
-                    lines.append(f"    {src} --> {targets}")
-        elif isinstance(transitions, list):
-            # List-of-dicts format: [{ from: x, to: y, label: z }, ...]
-            for t in transitions:
-                if isinstance(t, dict):
-                    src = t.get("from", "?")
-                    dst = t.get("to", "?")
-                    label = t.get("label", "")
-                    if label:
-                        lines.append(f"    {src} --> {dst} : {label}")
-                    else:
-                        lines.append(f"    {src} --> {dst}")
+                for dst in targets if isinstance(targets, list) else [targets]:
+                    lines.append(f"    {_ident(src)} --> {_ident(dst)}")
+        elif transitions:
+            console.print(
+                f"[yellow]{name}: spec.transitions is a "
+                f"{type(transitions).__name__}, not a mapping — skipping its edges.[/yellow]"
+            )
 
         diagrams.append("\n".join(lines))
 
@@ -138,7 +144,7 @@ def _generate_deps_diagram(contracts: dict[str, dict]) -> str:
     lines = ["graph TD"]
 
     for fqn, contract in sorted(contracts.items()):
-        short = fqn.split("/")[-1]
+        short = _ident(fqn.rsplit("/", 1)[-1])
         kind = contract.get("kind", "?")
         shape = {
             "Entity": f"[{short}]",
@@ -146,10 +152,9 @@ def _generate_deps_diagram(contracts: dict[str, dict]) -> str:
             "Route": f"[/{short}/]",
             "Page": f">{short}]",
         }.get(kind, f"[{short}]")
-        lines.append(f"    {short.replace('-', '_')}{shape}")
+        lines.append(f"    {short}{shape}")
 
-        for req in contract.get("requires", []):
-            req_short = req.split("/")[-1]
-            lines.append(f"    {short.replace('-', '_')} --> {req_short.replace('-', '_')}")
+        for req in contract.get("requires") or []:
+            lines.append(f"    {short} --> {_ident(str(req).rsplit('/', 1)[-1])}")
 
     return "\n".join(lines)

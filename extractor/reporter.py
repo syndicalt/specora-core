@@ -31,8 +31,20 @@ def display_report(report: AnalysisReport) -> list[ExtractedEntity]:
     table.add_row("Entities found", f"[green]{len(report.entities)}[/green]")
     table.add_row("Routes found", str(len(report.routes)))
     table.add_row("Workflows detected", str(len(report.workflows)))
+    if report.warnings:
+        table.add_row("Not analyzed", f"[yellow]{len(report.warnings)}[/yellow]")
     console.print(table)
     console.print()
+
+    if report.warnings:
+        # Anything the pipeline could not read is part of the answer: the user
+        # is about to treat this report as a map of their codebase.
+        console.print(Rule("[bold yellow]Gaps[/bold yellow]", style="yellow"))
+        for note in report.warnings[:25]:
+            console.print(f"  [yellow]![/yellow] [dim]{note}[/dim]")
+        if len(report.warnings) > 25:
+            console.print(f"  [dim]… and {len(report.warnings) - 25} more[/dim]")
+        console.print()
 
     if not report.entities:
         console.print("  [yellow]No entities found.[/yellow]")

@@ -7,21 +7,24 @@ execute them directly. Every action is confirmed before execution.
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
-import yaml
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.rule import Rule
 from rich.syntax import Syntax
 
 from engine.config import EngineConfigError
 from engine.engine import LLMEngine
 from engine.providers.base import Message, ToolDefinition
+from factory.paths import UnsafeNameError, contract_path, safe_name, write_atomic
+from forge.targets.naming import pluralize
 
+logger = logging.getLogger(__name__)
 console = Console()
 
 # Module-level contracts base directory — set by the CLI command
@@ -45,8 +48,13 @@ def _build_domain_context(domain: str) -> str:
         return f"Domain '{domain}' has no contracts yet."
     try:
         contracts = load_all_contracts(domain_path)
-    except Exception:
-        return f"Domain '{domain}' exists but contracts could not be loaded."
+    except Exception as exc:
+        # The model plans against this context; "could not be loaded" with the
+        # cause discarded left both the model and the developer guessing at a
+        # broken YAML file they were never shown.
+        logger.warning("Could not load contracts for domain '%s'", domain, exc_info=True)
+        console.print(f"  [red]Could not load contracts for '{domain}':[/red] {exc}")
+        return f"Domain '{domain}' exists but its contracts could not be loaded: {exc}"
     if not contracts:
         return f"Domain '{domain}' has no contracts."
 
@@ -62,15 +70,6 @@ def _build_domain_context(domain: str) -> str:
         if field_str:
             lines.append(f"    {field_str}")
     return "\n".join(lines)
-
-
-def _load_contract_yaml(domain: str, kind: str, name: str) -> Optional[str]:
-    kind_dirs = {"entity": "entities", "workflow": "workflows", "route": "routes", "page": "pages"}
-    subdir = kind_dirs.get(kind, f"{kind}s")
-    path = _contracts_base / domain / subdir / f"{name}.contract.yaml"
-    if path.exists():
-        return path.read_text(encoding="utf-8")
-    return None
 
 
 # ─── Tool Definitions ────────────────────────────────────────────────
@@ -98,8 +97,11 @@ TOOLS = [
                     "type": "object",
                     "description": (
                         "Map of field_name to field definition. Each field has 'type' "
-                        "(string/integer/text/boolean/date/datetime/uuid/email/number/array) "
-                        "and optionally 'required', 'description', 'enum', 'references'."
+                        "(string/integer/number/decimal/text/boolean/date/datetime/uuid/"
+                        "email/array/object) and optionally 'required', 'description', "
+                        "'enum', 'references', 'constraints', and 'sensitive' (true for "
+                        "credentials, which are then never returned by the API). Use "
+                        "'decimal' for money, never 'number'."
                     ),
                     "additionalProperties": {"type": "object"},
                 },
@@ -164,7 +166,14 @@ You don't need to ask "shall I create this?" — just use the tool. The system h
 
 Rules for contract content:
 - Entity names: snake_case (e.g., review, todo_item)
-- Field types: string, integer, number, boolean, text, array, object, datetime, date, uuid, email
+- Field types: string, integer, number, decimal, boolean, text, array, object,
+  datetime, date, uuid, email
+- Use `decimal` for money and every other exact quantity, with
+  constraints.precision and constraints.scale (defaults 18 and 2). `number` is
+  inexact floating point — never use it for money.
+- Mark any credential, secret, token, or password field `sensitive: true`.
+  Response models are built from the entity's full field list, so a field
+  without that flag is published by the API.
 - References to other entities use:
   {{"references": {{"entity": "entity/DOMAIN/NAME", "display": "name",
   "graph_edge": "RELATIONSHIP_NAME"}}}}
@@ -179,48 +188,95 @@ Be concise. Propose concrete changes. Let the tools do the work.
 
 
 def _execute_tool(tool_name: str, tool_input: dict, domain: str) -> str:
-    """Execute a tool call, always asking the user first. Returns result message."""
+    """Execute a tool call, always asking the user first. Returns result message.
 
-    if tool_name == "propose_entity":
-        return _propose_entity(tool_input, domain)
-    elif tool_name == "propose_modification":
-        return _propose_modification(tool_input, domain)
-    elif tool_name == "validate_domain":
-        return _validate_domain(domain)
-    else:
+    Every path returns a string. The conversation requires one tool result per
+    tool call, so an exception escaping here would desynchronise the message
+    history for the remainder of the session, not just fail this turn.
+    """
+    handlers = {
+        "propose_entity": lambda: _propose_entity(tool_input, domain),
+        "propose_modification": lambda: _propose_modification(tool_input, domain),
+        "validate_domain": lambda: _validate_domain(domain),
+    }
+    handler = handlers.get(tool_name)
+    if handler is None:
         return f"Unknown tool: {tool_name}"
+
+    if not isinstance(tool_input, dict):
+        return f"Rejected: {tool_name} arguments must be an object, got {type(tool_input).__name__}"
+
+    try:
+        return handler()
+    except KeyError as exc:
+        return f"Rejected: {tool_name} is missing required argument {exc}."
+    except Exception as exc:
+        logger.exception("Tool %s failed", tool_name)
+        console.print(f"  [red]{tool_name} failed:[/red] {exc}")
+        return f"{tool_name} failed: {exc}"
 
 
 def _propose_entity(params: dict, domain: str) -> str:
+    from factory.emitters.base import EmitterError
     from factory.emitters.entity_emitter import emit_entity
-    from forge.parser.validator import validate_contract
+    from factory.emitters.page_emitter import emit_page, page_columns
+    from factory.emitters.route_emitter import emit_route
 
-    name = params["name"]
+    fields = params.get("fields") or {}
+    state_machine = params.get("state_machine") or ""
+
+    # `name` and `state_machine` arrive from a tool call the model composed
+    # from the developer's prose, so both are untrusted: `name` reaches a file
+    # path and `state_machine` reaches a `requires` entry.
+    try:
+        name = safe_name(params.get("name"), what="entity name")
+        entity_path = contract_path(_contracts_base, domain, "entity", name)
+        plural = pluralize(name)
+        route_path = contract_path(_contracts_base, domain, "route", plural)
+        page_path = contract_path(_contracts_base, domain, "page", plural)
+    except UnsafeNameError as exc:
+        console.print(f"  [red]Rejected proposal:[/red] {escape(str(exc))}")
+        return f"Rejected: {exc}. Propose a snake_case name."
+
     data = {
         "description": params.get("description", f"A {name} entity"),
-        "fields": params.get("fields", {}),
+        "fields": fields,
         "mixins": params.get("mixins", ["mixin/stdlib/timestamped", "mixin/stdlib/identifiable"]),
     }
-    if params.get("state_machine"):
-        data["state_machine"] = params["state_machine"]
+    if state_machine:
+        data["state_machine"] = state_machine
 
-    yaml_str = emit_entity(name, domain, data)
-    contract = yaml.safe_load(yaml_str)
+    entity_fqn = f"entity/{domain}/{name}"
 
-    # Show proposal
-    console.print()
-    console.print(Rule(f"[bold cyan]Proposed: entity/{domain}/{name}[/bold cyan]", style="cyan"))
-    console.print(Syntax(yaml_str, "yaml", theme="monokai", line_numbers=True, padding=1))
+    # Emit everything before writing anything. The emitters validate against
+    # the meta-schemas and raise, so a contract that would not compile never
+    # reaches disk — this path previously printed schema errors as "validation
+    # warnings ... will be auto-healed" and wrote the file regardless.
+    try:
+        yaml_str = emit_entity(name, domain, data)
+        route_yaml = emit_route(plural, domain, entity_fqn, state_machine)
+        page_yaml = emit_page(plural, domain, entity_fqn, page_columns(fields))
+    except EmitterError as exc:
+        console.print(f"  [red]Rejected proposal:[/red] {escape(str(exc))}")
+        return f"Rejected, nothing was written: {exc}"
 
-    # Validate
-    errors = validate_contract(contract)
-    real_errors = [e for e in errors if e.severity == "error"]
-    if real_errors:
-        console.print(
-            f"  [yellow]⚠ {len(real_errors)} validation warning(s) — will be auto-healed[/yellow]"
+    existing = [p for p in (entity_path, route_path, page_path) if p.exists()]
+    if existing:
+        console.print(f"  [red]Refusing to overwrite:[/red] {', '.join(str(p) for p in existing)}")
+        return (
+            f"Rejected: {name} already exists. Use propose_modification to change "
+            "an existing contract."
         )
 
-    # Ask
+    console.print()
+    console.print(Rule(f"[bold cyan]Proposed: {entity_fqn}[/bold cyan]", style="cyan"))
+    console.print(Syntax(yaml_str, "yaml", theme="monokai", line_numbers=True, padding=1))
+    if state_machine:
+        console.print(
+            f"  [yellow]Note:[/yellow] this entity binds {state_machine}, which must exist "
+            "before the domain will compile."
+        )
+
     console.print()
     try:
         response = console.input("  [bold]Write this contract? [Y/n] [/bold]").strip().lower()
@@ -230,50 +286,40 @@ def _propose_entity(params: dict, domain: str) -> str:
     if response not in ("", "y", "yes"):
         return "User declined. Contract was NOT created."
 
-    # Write
-    from forge.normalize import normalize_name
-
-    safe_name = normalize_name(name)
-    path = _contracts_base / domain / "entities" / f"{safe_name}.contract.yaml"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml_str, encoding="utf-8")
-    console.print(f"  [green]✓ Wrote {path}[/green]")
-
-    # Also generate route + page
-    from factory.emitters.page_emitter import emit_page
-    from factory.emitters.route_emitter import emit_route
-
-    entity_fqn = f"entity/{domain}/{safe_name}"
-    plural = safe_name + "s"
-    field_names = list(params.get("fields", {}).keys())
-
-    route_path = _contracts_base / domain / "routes" / f"{plural}.contract.yaml"
-    route_path.parent.mkdir(parents=True, exist_ok=True)
-    route_path.write_text(emit_route(plural, domain, entity_fqn), encoding="utf-8")
-    console.print(f"  [green]✓ Wrote {route_path}[/green]")
-
-    page_path = _contracts_base / domain / "pages" / f"{plural}.contract.yaml"
-    page_path.parent.mkdir(parents=True, exist_ok=True)
-    page_path.write_text(emit_page(plural, domain, entity_fqn, field_names), encoding="utf-8")
-    console.print(f"  [green]✓ Wrote {page_path}[/green]")
+    for path, content in (
+        (entity_path, yaml_str),
+        (route_path, route_yaml),
+        (page_path, page_yaml),
+    ):
+        write_atomic(path, content)
+        console.print(f"  [green]✓ Wrote {path}[/green]")
 
     console.print()
-    return f"Created entity/{domain}/{safe_name} with route and page contracts."
+    return f"Created {entity_fqn} with route and page contracts."
 
 
 def _propose_modification(params: dict, domain: str) -> str:
     fqn = params["contract_fqn"]
     instruction = params["instruction"]
 
-    # Find the contract
     parts = fqn.split("/")
     if len(parts) != 3:
         return f"Invalid FQN: {fqn}"
 
     kind, dom, name = parts
-    kind_dirs = {"entity": "entities", "workflow": "workflows", "route": "routes", "page": "pages"}
-    subdir = kind_dirs.get(kind, f"{kind}s")
-    path = _contracts_base / dom / subdir / f"{name}.contract.yaml"
+    if dom != domain:
+        # The chat session is scoped to one domain; letting the model reach
+        # into another one silently edits contracts the developer is not
+        # looking at.
+        return f"Rejected: {fqn} is not in domain '{domain}', which this session is scoped to."
+
+    # `dom` and `name` come straight from the model. Before this check,
+    # "entity/../secrets" resolved to a path outside the contracts tree and
+    # the refine step below would have rewritten whatever was there.
+    try:
+        path = contract_path(_contracts_base, dom, kind, name)
+    except UnsafeNameError as exc:
+        return f"Rejected: {exc}"
 
     if not path.exists():
         return f"Contract not found: {path}"
@@ -309,7 +355,15 @@ def _validate_domain(domain: str) -> str:
     from forge.parser.validator import validate_all
 
     domain_path = _contracts_base / domain
-    contracts = load_all_contracts(domain_path)
+    try:
+        contracts = load_all_contracts(domain_path)
+    except Exception as exc:
+        # A tool call must always return a result; letting this escape would
+        # break the assistant/tool message pairing for the rest of the session.
+        logger.warning("validate_domain could not load '%s'", domain, exc_info=True)
+        console.print(f"  [red]✗ Could not load contracts:[/red] {exc}")
+        return f"Could not load contracts for '{domain}': {exc}"
+
     errors = validate_all(contracts)
     real_errors = [e for e in errors if e.severity == "error"]
 
@@ -319,7 +373,7 @@ def _validate_domain(domain: str) -> str:
     else:
         console.print(f"  [red]✗ {len(real_errors)} error(s)[/red]")
         for e in real_errors[:5]:
-            console.print(f"    {e.contract_fqn}: {e.message}")
+            console.print(f"    {e.contract_fqn}: {escape(e.message)}")
         return f"{len(real_errors)} validation error(s) found."
 
 

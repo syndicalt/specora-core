@@ -1,5 +1,9 @@
 """Tests for extractor.models — data structures for codebase analysis."""
 
+import re
+
+import pytest
+
 from extractor.models import (
     AnalysisReport,
     Confidence,
@@ -9,6 +13,8 @@ from extractor.models import (
     ExtractedWorkflow,
     FileClassification,
     FileRole,
+    is_sensitive_name,
+    safe_contract_name,
 )
 
 
@@ -80,16 +86,108 @@ class TestExtractedWorkflow:
             entity_name="order",
             states=["pending", "shipped", "delivered"],
             initial="pending",
-            transitions=[
-                {"from": "pending", "to": "shipped"},
-                {"from": "shipped", "to": "delivered"},
-            ],
+            transitions={"pending": ["shipped"], "shipped": ["delivered"]},
             source_file="models.py",
         )
         data = wf.to_emitter_data()
         assert data["initial"] == "pending"
         assert len(data["states"]) == 3
-        assert len(data["transitions"]) == 2
+        # workflow.meta.yaml declares spec.transitions as a map of source state
+        # to target states. Emitting a list of {from, to} pairs made every
+        # extraction that found a state machine fail validation.
+        assert data["transitions"] == {"pending": ["shipped"], "shipped": ["delivered"]}
+
+    def test_terminal_state_is_marked(self) -> None:
+        wf = ExtractedWorkflow(
+            name="order_lifecycle",
+            entity_name="order",
+            states=["pending", "shipped"],
+            initial="pending",
+            source_file="models.py",
+        )
+        data = wf.to_emitter_data()
+        assert data["states"]["shipped"]["terminal"] is True
+        assert "terminal" not in data["states"]["pending"]
+
+    def test_unknown_transition_targets_are_dropped(self) -> None:
+        wf = ExtractedWorkflow(
+            name="order_lifecycle",
+            entity_name="order",
+            states=["pending", "shipped"],
+            initial="pending",
+            transitions={"pending": ["shipped", "vaporized"], "elsewhere": ["pending"]},
+            source_file="models.py",
+        )
+        data = wf.to_emitter_data()
+        assert data["transitions"] == {"pending": ["shipped"]}
+
+    def test_initial_outside_states_falls_back(self) -> None:
+        wf = ExtractedWorkflow(
+            name="order_lifecycle",
+            entity_name="order",
+            states=["pending", "shipped"],
+            initial="nonexistent",
+            source_file="models.py",
+        )
+        assert wf.to_emitter_data()["initial"] == "pending"
+
+
+class TestSafeContractName:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("TicketCreate", "ticket_create"),
+            ("../../etc/passwd", "etc_passwd"),
+            ("/absolute/path", "absolute_path"),
+            ("has spaces", "has_spaces"),
+            ("kebab-case", "kebab_case"),
+            ("9lives", "extracted_9lives"),
+            ("", "extracted"),
+            ("..", "extracted"),
+            ("__dunder__", "dunder"),
+        ],
+    )
+    def test_always_matches_the_meta_schema_pattern(self, raw: str, expected: str) -> None:
+        result = safe_contract_name(raw)
+        assert result == expected
+        assert re.fullmatch(r"[a-z][a-z0-9_]*", result)
+
+
+class TestSensitiveNames:
+    @pytest.mark.parametrize(
+        "name",
+        ["password", "password_hash", "hashed_password", "api_key", "secret", "refresh_token",
+         "ssn", "card_number", "passwordHash"],
+    )
+    def test_credentials_are_sensitive(self, name: str) -> None:
+        assert is_sensitive_name(name)
+
+    @pytest.mark.parametrize(
+        "name", ["token_count", "password_expires_at", "api_key_id", "name", "email", "title"]
+    )
+    def test_metadata_about_credentials_is_not(self, name: str) -> None:
+        assert not is_sensitive_name(name)
+
+    def test_emitter_data_marks_a_credential_write_only(self) -> None:
+        entity = ExtractedEntity(
+            name="user",
+            source_file="m.py",
+            fields=[
+                ExtractedField(name="password_hash", type="string"),
+                ExtractedField(name="email", type="email"),
+            ],
+        )
+        fields = entity.to_emitter_data()["fields"]
+        assert fields["password_hash"]["sensitive"] is True
+        assert "sensitive" not in fields["email"]
+
+    def test_emitter_data_sanitizes_field_names(self) -> None:
+        entity = ExtractedEntity(
+            name="user",
+            source_file="m.py",
+            fields=[ExtractedField(name="customerId", type="uuid")],
+        )
+        assert list(entity.to_emitter_data()["fields"]) == ["customer_id"]
 
 
 class TestAnalysisReport:

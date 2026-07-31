@@ -97,13 +97,23 @@ def _preview_in_editor(
 
         # Read back (possibly modified) content
         result = {}
+        dropped: list[str] = []
         for rel_path in contracts.keys():
             file_path = tmp / rel_path
             if file_path.exists():
                 result[rel_path] = file_path.read_text(encoding="utf-8")
             else:
-                # User deleted the file — skip it
+                dropped.append(rel_path)
                 logger.info("File removed during preview: %s", rel_path)
+
+        if dropped:
+            # Dropping a contract can leave a route or page pointing at an
+            # entity that no longer exists, so the confirmation below has to be
+            # given with this on screen rather than buried in a log record.
+            console.print()
+            console.print("[yellow]Removed in the editor and will NOT be written:[/yellow]")
+            for rel_path in dropped:
+                console.print(f"  [yellow]-[/yellow] {rel_path}")
 
         # Ask for confirmation
         console.print()

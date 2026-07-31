@@ -38,7 +38,11 @@ FIELD_TYPES_REFERENCE = """
 Valid field types:
   string   — Short text (names, codes, identifiers)
   integer  — Whole numbers (counts, years, IDs)
-  number   — Decimal numbers (weights, prices, percentages)
+  number   — INEXACT floating point (weights, coordinates, ratings)
+  decimal  — EXACT numbers. Use for money and anything else that must not
+             round: prices, balances, tax, quantities that are billed.
+             Size it with constraints: {precision: 12, scale: 2}.
+             Never use `number` for money — it is a float and loses precision.
   boolean  — True/false flags
   text     — Long text (descriptions, notes, content)
   array    — Lists (tags, items)
@@ -50,10 +54,16 @@ Valid field types:
 
 Special field features:
   required: true    — Must be provided on creation
-  immutable: true   — Cannot change after creation
+  immutable: true   — Cannot change AFTER creation (still set when creating)
+  sensitive: true   — Write-only. Accepted on create/update and stored, but
+                      NEVER returned by the API and never logged. REQUIRED for
+                      password hashes, API key secrets, and tokens. Without it
+                      the generated API publishes the value to every client.
   enum: [a, b, c]   — Fixed set of allowed values
-  computed: "now"    — Auto-set to current timestamp
-  computed: "uuid"   — Auto-generated UUID
+  computed: "now"           — Auto-set to current timestamp
+  computed: "now_on_update" — Refreshed on every write
+  computed: "current_user"  — The authenticated user's id
+  computed: "sequence(FMT)" — Sequential number with the given format
   references:        — Link to another entity
     entity: entity/domain/name    (FQN, all lowercase)
     display: field_name

@@ -16,6 +16,7 @@ import logging
 from engine.context import build_system_prompt
 from engine.engine import LLMEngine
 from factory.interviews.base import Interview, InterviewLLMError, InterviewParseError
+from factory.paths import UnsafeNameError, safe_name
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,19 @@ entities:
 
     domain_name = structured.get("domain", "my_domain")
     description = structured.get("description", purpose)
-    entities = structured.get("entities", [])
+    entities = _clean_entities(structured.get("entities"), interview)
+
+    try:
+        domain_name = safe_name(domain_name, what="domain name")
+    except UnsafeNameError as exc:
+        # The domain name becomes a directory under domains/, so an
+        # unconstrained one from the model is a path, not just a label.
+        interview.show(f"[yellow]The model suggested an unusable domain name:[/yellow] {exc}")
+        return _manual_domain_input(interview)
+
+    if not entities:
+        interview.show("[yellow]The model named no usable entities.[/yellow]")
+        return _manual_domain_input(interview)
 
     # Show what we inferred and confirm
     interview.show(f"\n  [bold]Domain:[/bold] {domain_name}")
@@ -80,22 +93,43 @@ entities:
         interview.show(f"    - {e['name']}: {e.get('description', '')}")
 
     if not interview.confirm("\n  Does this look right?"):
-        domain_name = interview.ask_user("Domain name (snake_case):")
-        description = interview.ask_user("Description:")
-        entities_raw = interview.ask_user("Entities (comma-separated):")
-        entities = [
-            {"name": e.strip().lower().replace(" ", "_"), "description": ""}
-            for e in entities_raw.split(",")
-        ]
+        return _manual_domain_input(interview)
 
     return domain_name, description, entities
 
 
+def _clean_entities(raw: object, interview: Interview) -> list[dict]:
+    """Keep only the entities the model named with a usable snake_case name."""
+    if not isinstance(raw, list):
+        return []
+
+    cleaned: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict) or "name" not in item:
+            interview.show(f"[yellow]Ignoring malformed entity from the model:[/yellow] {item!r}")
+            continue
+        try:
+            name = safe_name(item["name"], what="entity name")
+        except UnsafeNameError as exc:
+            interview.show(f"[yellow]Ignoring entity with an unusable name:[/yellow] {exc}")
+            continue
+        cleaned.append({"name": name, "description": str(item.get("description", ""))})
+    return cleaned
+
+
 def _manual_domain_input(interview: Interview) -> tuple[str, str, list[dict]]:
-    """Collect domain info manually with helpful examples."""
-    domain_name = interview.ask_user(
+    """Collect domain info manually with helpful examples.
+
+    Raises:
+        InterviewInputError: If the user cannot supply a usable domain name or
+            any usable entity name. Proceeding with a placeholder would put
+            contracts in a directory the user did not ask for.
+    """
+    domain_name = _ask_until_valid(
+        interview,
         "Domain name (one word, snake_case)\n"
-        '  [dim]Examples: "todolist", "veterinary", "ecommerce", "helpdesk"[/dim]'
+        '  [dim]Examples: "todolist", "veterinary", "ecommerce", "helpdesk"[/dim]',
+        what="domain name",
     )
     desc = interview.ask_user(
         "Describe what this system does in one sentence\n"
@@ -111,9 +145,38 @@ def _manual_domain_input(interview: Interview) -> tuple[str, str, list[dict]]:
         "  [dim]  E-commerce:  product, order, customer, review, category[/dim]\n"
         "  [dim]  Help desk:   ticket, agent, customer, knowledge_article[/dim]"
     )
-    entities = [
-        {"name": e.strip().lower().replace(" ", "_"), "description": ""}
-        for e in entities_raw.split(",")
-        if e.strip()
-    ]
+    entities: list[dict] = []
+    for chunk in entities_raw.split(","):
+        label = chunk.strip()
+        if not label:
+            continue
+        try:
+            name = safe_name(label.replace(" ", "_"), what="entity name")
+        except UnsafeNameError as exc:
+            interview.show(f"[yellow]Skipping '{label}':[/yellow] {exc}")
+            continue
+        if not any(e["name"] == name for e in entities):
+            entities.append({"name": name, "description": ""})
+
+    if not entities:
+        raise InterviewInputError("No usable entity names were given; nothing to build.")
+
     return domain_name, desc, entities
+
+
+def _ask_until_valid(interview: Interview, prompt: str, *, what: str, attempts: int = 3) -> str:
+    """Ask for a snake_case identifier, re-prompting on a bad answer.
+
+    Bounded because the caller may be running against a closed stdin, where an
+    unbounded loop would spin instead of reporting the problem.
+    """
+    for _ in range(attempts):
+        try:
+            return safe_name(interview.ask_user(prompt), what=what)
+        except UnsafeNameError as exc:
+            interview.show(f"[red]{exc}[/red]")
+    raise InterviewInputError(f"No usable {what} after {attempts} attempts.")
+
+
+class InterviewInputError(Exception):
+    """Raised when the user cannot supply an input the Factory requires."""
