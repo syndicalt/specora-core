@@ -195,6 +195,30 @@ class HealerQueue:
         )
         self._conn.commit()
 
+    def set_classification(
+        self,
+        ticket_id: str,
+        *,
+        error_type: str,
+        tier: int,
+        priority: Priority,
+    ) -> None:
+        """Persist what the classifier decided, before anything can fail.
+
+        The pipeline set these on the in-memory ticket only, so a ticket that
+        failed later was stored with the defaults it was enqueued with. An
+        operator reading the queue saw `tier 0` on a ticket the classifier had
+        put in tier 2, which makes the stored record actively misleading about
+        why the ticket took the path it took.
+        """
+        self._conn.execute(
+            """UPDATE tickets
+               SET error_type = ?, tier = ?, priority = ?, priority_order = ?
+               WHERE id = ?""",
+            (error_type, tier, priority.value, PRIORITY_ORDER.get(priority, 2), ticket_id),
+        )
+        self._conn.commit()
+
     def set_proposal(self, ticket_id: str, proposal: HealerProposal) -> None:
         self._conn.execute(
             "UPDATE tickets SET proposal = ? WHERE id = ?",

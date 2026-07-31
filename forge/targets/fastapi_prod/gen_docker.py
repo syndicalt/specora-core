@@ -192,6 +192,7 @@ def generate_docker(ir: DomainIR) -> list[GeneratedFile]:
         _generate_healer_dockerfile(ir),
         _generate_healer_entrypoint(ir),
         _generate_compose(ir, has_auth),
+        _generate_state_dir_readme(ir),
         _generate_init_secrets(ir, has_auth),
         _generate_env_example(ir, has_auth),
         _generate_requirements(ir, has_auth),
@@ -450,7 +451,10 @@ exec python -m forge.cli.main healer serve \\
 '''
     )
     return GeneratedFile(
-        path="entrypoint.healer.sh", content=content, provenance=f"domain/{ir.domain}"
+        path="entrypoint.healer.sh",
+        content=content,
+        provenance=f"domain/{ir.domain}",
+        executable=True,
     )
 
 
@@ -472,11 +476,19 @@ def _generate_compose(ir: DomainIR, has_auth: bool) -> GeneratedFile:
 #
 # Before the first `docker compose up`, create the secret files:
 #
-#     bash init-secrets.sh
+#     ./init-secrets.sh
 #
 # Nothing in this file carries a default credential, so the stack refuses to
 # start until that has been done. That is deliberate: a stack that boots with a
 # built-in password is a stack that reaches production with one.
+#
+# Credentials reach each service as files under /run/secrets, which its
+# entrypoint reads and exports. One consequence worth knowing before it
+# surprises you: `docker compose exec app <cmd>` starts a process that does not
+# go through the entrypoint, so it will not see AUTH_SECRET or DATABASE_URL.
+# That is the point — those values are not in the container's declared
+# environment — but a one-off command that needs them has to read
+# /run/secrets/<name> itself.
 #
 # Every service here is non-root, drops all capabilities, cannot gain new
 # privileges, has a read-only root filesystem with its writable paths named
@@ -732,6 +744,46 @@ secrets:
     )
 
 
+def _generate_state_dir_readme(ir: DomainIR) -> GeneratedFile:
+    """Ship a file under `.forge/` so the directory exists before compose mounts it.
+
+    Docker creates a missing bind-mount source itself, as **root**. The healer
+    runs unprivileged, so on a stock deploy it started, answered its health
+    probe, and then crashed on every queue drain with
+    `PermissionError: '.forge/healer'` — a sidecar reporting healthy while the
+    self-healing loop was dead. Writing anything into the directory from the
+    generator means it exists, owned by whoever generated the bundle, which is
+    the uid the compose `user:` key defaults to.
+    """
+    content = f"""# `.forge/` — Healer state for {ir.domain}
+
+Runtime state, not generated code. Nothing here is derived from the contracts,
+so regenerating the bundle will not recreate it.
+
+`healer/healer.db`
+: The ticket queue: every error report, proposal and decision.
+
+`healer/inbox/`
+: Error payloads dropped as files, for callers that cannot reach the HTTP
+  ingest endpoint.
+
+`diffs/`
+: The audit trail. One JSON record per applied contract change, including
+  which actor approved it.
+
+This directory is bind-mounted into the healer container, which runs as an
+unprivileged uid. It is committed to the bundle with this file because Docker
+creates a missing bind-mount source as root, and the healer would then be
+unable to write its own queue.
+
+Back up `diffs/` with the contracts. It is the only record of who changed the
+source of truth and why; the contracts themselves show only the result.
+"""
+    return GeneratedFile(
+        path=".forge/README.md", content=content, provenance=f"domain/{ir.domain}"
+    )
+
+
 def _generate_init_secrets(ir: DomainIR, has_auth: bool) -> GeneratedFile:
     auth_block = ""
     if has_auth:
@@ -805,7 +857,11 @@ echo "Back them up: losing auth_secret invalidates every issued token, and"
 echo "losing db_password locks you out of the pgdata volume."
 '''
     return GeneratedFile(
-        path="init-secrets.sh", content=content, provenance=f"domain/{ir.domain}"
+        path="init-secrets.sh",
+        content=content,
+        provenance=f"domain/{ir.domain}",
+        # Nothing else in the bundle runs before this does.
+        executable=True,
     )
 
 
@@ -824,7 +880,7 @@ def _generate_env_example(ir: DomainIR, has_auth: bool) -> GeneratedFile:
         "# Secrets do NOT belong here. docker-compose.yml reads every credential",
         "# from ./secrets/ via the *_FILE convention, because anything set through",
         "# `environment:` or `env_file:` is readable with `docker inspect` and is",
-        "# copied into crash reports. Run `bash init-secrets.sh` once to create them.",
+        "# copied into crash reports. Run ./init-secrets.sh once to create them.",
         "#",
         "# Every variable below also accepts a <NAME>_FILE form pointing at a file,",
         "# which the entrypoint reads and exports. Setting both forms is an error.",

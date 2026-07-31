@@ -92,6 +92,18 @@ class HealerPipeline:
         ticket.tier = classification.tier
         ticket.priority = classification.priority
 
+        # Persist the classification immediately. It was only ever set on the
+        # in-memory object, so a ticket that failed downstream was stored with
+        # `tier 0` and its recorded error_type unset — the queue disagreed with
+        # what the classifier had actually decided, and the stored record could
+        # not explain why a ticket took the path it took.
+        self.queue.set_classification(
+            ticket.id,
+            error_type=ticket.error_type,
+            tier=ticket.tier,
+            priority=ticket.priority,
+        )
+
         # Check if this is fixable by contract modification
         fixable_by = getattr(classification, "fixable_by", "contract")
         if fixable_by == "generator":
@@ -161,17 +173,38 @@ class HealerPipeline:
         )
 
     def _propose(self, ticket: HealerTicket) -> Optional[HealerProposal]:
-        if ticket.contract_fqn:
-            contract = self._load_contract(ticket.contract_fqn)
-            if contract:
-                if ticket.tier == 1:
-                    return propose_deterministic_fix(ticket.contract_fqn, contract)
-                else:
-                    from healer.proposer.llm_proposer import propose_llm_fix
-                    return propose_llm_fix(
-                        ticket, contract, diff_root=self.diff_root, governor=self.governor,
-                    )
-        return None
+        """Propose a fix, cheapest and most certain option first.
+
+        The deterministic proposer is tried for every contract ticket, not only
+        tier 1. It is a pure function of the contract with confidence 1.0 and no
+        sampling, so when it produces a change that change is correct by
+        construction — there is no tier at which asking a model first is the
+        better trade.
+
+        Gating it on `tier == 1` meant a tier-2 `structural` ticket went
+        straight to `propose_llm_fix`, which returns None without a provider
+        key. A stock deployment configured with no LLM could therefore propose
+        nothing, ever, while the deterministic proposer sitting behind that
+        branch would have repaired the same contract for free — a denormalised
+        `graph_edge` of `authenticates` is exactly the case it exists for.
+        """
+        if not ticket.contract_fqn:
+            return None
+
+        contract = self._load_contract(ticket.contract_fqn)
+        if not contract:
+            return None
+
+        deterministic = propose_deterministic_fix(ticket.contract_fqn, contract)
+        if deterministic is not None:
+            return deterministic
+
+        # Nothing normalization could repair, so the error needs judgement.
+        from healer.proposer.llm_proposer import propose_llm_fix
+
+        return propose_llm_fix(
+            ticket, contract, diff_root=self.diff_root, governor=self.governor,
+        )
 
     def _apply_and_notify(self, ticket: HealerTicket, actor: str = "") -> None:
         if ticket.proposal is None:

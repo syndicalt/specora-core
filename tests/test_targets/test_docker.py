@@ -51,6 +51,10 @@ def _files(*, auth: bool = False) -> dict[str, str]:
     return {f.path: f.content for f in generate_docker(ir=_ir(auth=auth))}
 
 
+def _executable(*, auth: bool = False) -> set[str]:
+    return {f.path for f in generate_docker(ir=_ir(auth=auth)) if f.executable}
+
+
 def _compose(*, auth: bool = False) -> dict:
     return yaml.safe_load(_files(auth=auth)["docker-compose.yml"])
 
@@ -262,6 +266,13 @@ class TestComposeSecrets:
         # Re-running it after adding a service must not rotate live keys.
         assert "already exists" in _files()["init-secrets.sh"]
 
+    def test_the_secret_generator_is_documented_as_directly_runnable(self) -> None:
+        # `bash init-secrets.sh` was a workaround for GeneratedFile having no
+        # mode. It teaches operators to run scripts through an interpreter
+        # rather than trusting the shebang, and the constraint is gone.
+        assert "./init-secrets.sh" in _files()["docker-compose.yml"]
+        assert "bash init-secrets.sh" not in _files()["docker-compose.yml"]
+
     def test_the_build_context_excludes_the_secret_directory(self) -> None:
         dockerignore = _files()[".dockerignore"]
         assert "secrets/" in dockerignore
@@ -288,6 +299,42 @@ class TestComposeFrontend:
         bind = ipaddress.ip_address(frontend["environment"]["HOSTNAME"])
         assert bind.is_unspecified, f"binds {bind}, so loopback goes unserved"
         assert "127.0.0.1:3000" in " ".join(frontend["healthcheck"]["test"])
+
+
+class TestBindMountSources:
+    def test_the_healer_state_directory_ships_with_the_bundle(self) -> None:
+        # Docker creates a missing bind-mount source as root. The healer runs
+        # unprivileged, so without this it booted, passed its health probe, and
+        # died on every queue drain with PermissionError: '.forge/healer'.
+        assert ".forge/README.md" in _files()
+
+    def test_every_relative_bind_mount_source_exists_in_the_bundle(self) -> None:
+        emitted = set(_files())
+        # Directories the generated bundle provides, whether from this
+        # generator or another one in the same build.
+        provided = {".forge", "backend", "database", "frontend", "domains"}
+        for service in _compose()["services"].values():
+            for mount in service.get("volumes") or []:
+                source = mount.split(":", 1)[0]
+                if not source.startswith("./"):
+                    continue  # a variable, or an absolute host path
+                top = source[2:].split("/", 1)[0]
+                assert top in provided or any(p.startswith(f"{top}/") for p in emitted), source
+
+
+class TestFileModes:
+    def test_every_shell_script_is_written_executable(self) -> None:
+        # A script the instructions tell you to run and the filesystem refuses
+        # to. The entrypoints work inside the image either way because the
+        # Dockerfiles chmod their own copies, but a bundle whose scripts only
+        # run in the container is a trap for anyone running one locally.
+        scripts = {p for p in _files(auth=True) if p.endswith(".sh")}
+        assert scripts == _executable(auth=True)
+
+    def test_nothing_else_is_marked_executable(self) -> None:
+        # The execute bit on a Dockerfile or a .env is meaningless noise, and
+        # on a secret-adjacent file it is a signal in the wrong direction.
+        assert all(p.endswith(".sh") for p in _executable(auth=True))
 
 
 class TestEnvExample:

@@ -23,6 +23,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import yaml
+
 CONTRACT_EXTENSION = ".contract.yaml"
 
 # Where the generated docker-compose.yml expects to find them.
@@ -32,9 +34,23 @@ BUNDLE_SUBDIR = "domains"
 def copy_contracts(contract_root: Path, output_root: Path) -> list[str]:
     """Copy every contract under *contract_root* into *output_root*/domains.
 
-    The tree layout is preserved, because a contract's directory carries
-    meaning the file name does not (`entities/`, `routes/`, `workflows/`), and
-    the Healer resolves paths by walking that structure.
+    The destination is `domains/<declared domain>/<kind dir>/<file>`, taken from
+    the contract's own `metadata.domain` rather than from where the file
+    happened to sit. That matters because `HealerPipeline._find_contract_path`
+    reconstructs a path from the FQN — `domains_root / domain / subdir /
+    name.contract.yaml` — so a bundle laid out any other way is one the Healer
+    can load but cannot locate.
+
+    An earlier version mirrored the source tree relative to `contract_root`,
+    which for the usual `domains/saas_platform` root produced
+    `domains/entities/...` and dropped the domain segment entirely. The failure
+    was quiet and asymmetric: `load_all_contracts` rglobs, so the Healer
+    reported all 39 contracts loaded, while every attempt to actually repair one
+    resolved to a path that did not exist. "Finds them" and "can fix them" had
+    different answers.
+
+    The kind directory (`entities/`, `routes/`, `workflows/`) is preserved from
+    the source, since that is the convention the resolver walks.
 
     Args:
         contract_root: The directory the domain was compiled from.
@@ -44,9 +60,9 @@ def copy_contracts(contract_root: Path, output_root: Path) -> list[str]:
         Bundle-relative paths of the contracts written, sorted.
 
     Raises:
-        ValueError: If the destination would land outside *output_root*. A
-            contract path is attacker-influenced in the Extractor's case, and a
-            copy that escapes the bundle is never intended.
+        ValueError: If a destination would land outside the bundle. A contract
+            path is attacker-influenced in the Extractor's case, and a copy that
+            escapes the bundle is never intended.
     """
     contract_root = Path(contract_root).resolve()
     destination_root = Path(output_root).resolve() / BUNDLE_SUBDIR
@@ -55,7 +71,19 @@ def copy_contracts(contract_root: Path, output_root: Path) -> list[str]:
     for source in sorted(contract_root.rglob(f"*{CONTRACT_EXTENSION}")):
         if not source.is_file():
             continue
-        relative = source.resolve().relative_to(contract_root)
+
+        domain = _declared_domain(source)
+        if domain is None:
+            # Unreadable or domain-less: the compiler has already validated
+            # everything reachable from this root, so this is a stray file
+            # rather than a contract in the build. Skipping it silently would
+            # be the pattern this whole effort removes, so it is surfaced.
+            raise ValueError(
+                f"{source} has no readable metadata.domain, so it cannot be "
+                f"placed in the bundle where the Healer will look for it."
+            )
+
+        relative = Path(domain) / source.parent.name / source.name
         destination = (destination_root / relative).resolve()
 
         if not destination.is_relative_to(destination_root):
@@ -68,4 +96,18 @@ def copy_contracts(contract_root: Path, output_root: Path) -> list[str]:
         shutil.copy2(source, destination)
         written.append(str(Path(BUNDLE_SUBDIR) / relative))
 
-    return written
+    return sorted(written)
+
+
+def _declared_domain(source: Path) -> str | None:
+    """Read `metadata.domain` from a contract file, or None if unreadable."""
+    try:
+        data = yaml.safe_load(source.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    domain = data.get("metadata", {}).get("domain") if isinstance(
+        data.get("metadata"), dict
+    ) else None
+    return domain if isinstance(domain, str) and domain else None
